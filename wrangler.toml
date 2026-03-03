@@ -1,0 +1,67 @@
+# Runics Search - Cloudflare Workers Configuration
+name = "runics-search"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+
+[observability]
+enabled = true
+
+# KV for caching search results
+[[kv_namespaces]]
+binding = "SEARCH_CACHE"
+# Replace with actual KV namespace ID: wrangler kv:namespace create SEARCH_CACHE
+id = "2e63a7085ae54de895da31048e50cf8b"
+
+# Hyperdrive for Postgres connection pooling
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+# Replace with actual Hyperdrive ID after creating it
+id = "501e216abba04c13993a75ae2e97c110"
+# For local development: Add your direct Neon connection string below
+# Uncomment and replace with your actual connection string from Neon dashboard
+localConnectionString = "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-river-akx7s38p-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
+# Workers AI binding for embeddings, LLM, reranking, content safety
+[ai]
+binding = "AI"
+
+# Environment variables (configurable per environment)
+[vars]
+ENVIRONMENT = "development"
+
+# Model configuration
+EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
+RERANKER_MODEL = "@cf/baai/bge-reranker-base"
+LLM_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
+
+# Content safety (set to "true" to disable for dev/testing)
+DISABLE_CONTENT_SAFETY = "true"
+
+# Confidence tier thresholds (derived from eval data in Phase 1)
+# Based on actual score distribution: P75=0.509, P50=0.480, P25=0.449
+# Target: Tier 1 ~60%, Tier 2 ~30%, Tier 3 ~10%
+CONFIDENCE_TIER1_THRESHOLD = "0.40"  # High confidence (target ~60%)
+CONFIDENCE_TIER2_THRESHOLD = "0.35"  # Medium confidence (target ~30%)
+
+# Cache configuration (Tier 1: 120s, Tier 2/3: 60s - KV minimum)
+CACHE_TTL_SECONDS = "120"
+
+# Default search parameters
+DEFAULT_APPETITE = "balanced"
+
+# Score fusion weights (vector + full-text)
+VECTOR_WEIGHT = "0.7"
+FULLTEXT_WEIGHT = "0.3"
+
+# Production environment overrides
+[env.production]
+[env.production.vars]
+ENVIRONMENT = "production"
+CACHE_TTL_SECONDS = "120"
+
+# Staging environment
+[env.staging]
+[env.staging.vars]
+ENVIRONMENT = "staging"
+CACHE_TTL_SECONDS = "120"
