@@ -11,16 +11,15 @@ import { SearchCache } from './cache/kv-cache';
 import { SearchLogger } from './monitoring/search-logger';
 import { QualityTracker } from './monitoring/quality-tracker';
 import { PerfMonitor } from './monitoring/perf-monitor';
+import { ConfidenceGate } from './intelligence/confidence-gate';
 import type {
   Env,
   FindSkillRequest,
-  FindSkillResponse,
   SkillInput,
-  SearchFilters,
   QualityFeedback,
   SkillResult,
+  Appetite,
 } from './types';
-import { appetiteToTrustThreshold as getAppetiteThreshold } from './types';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // App Initialization
@@ -50,7 +49,19 @@ function initComponents(env: Env) {
   const logger = new SearchLogger(pool);
   const qualityTracker = new QualityTracker(pool);
 
-  return { provider, embedPipeline, cache, logger, qualityTracker, pool };
+  // Embed function for the intelligence layer
+  const embedFn = (text: string) => embedPipeline['embed'](text);
+
+  const gate = new ConfidenceGate(
+    env,
+    provider,
+    embedFn,
+    cache,
+    logger,
+    pool
+  );
+
+  return { provider, embedPipeline, cache, logger, qualityTracker, pool, gate };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -115,14 +126,12 @@ app.get('/health', async (c) => {
  * POST /v1/search
  * Main search endpoint — findSkill
  *
- * Query flow (Section 10):
- * 1. Cache check → 2. Embed query → 3. Provider search →
- * 4. Log event (non-blocking) → 5. Cache result (non-blocking) → 6. Return
+ * Phase 2: Routes through ConfidenceGate for three-tier routing.
+ * Tier 1: Return immediately (~50ms)
+ * Tier 2: Return + async LLM enrichment
+ * Tier 3: Full LLM deep search before responding (~500-1000ms)
  */
 app.post('/v1/search', async (c) => {
-  const perf = new PerfMonitor();
-  perf.mark('start');
-
   try {
     const body = await c.req.json<FindSkillRequest>();
 
@@ -131,104 +140,18 @@ app.post('/v1/search', async (c) => {
       return c.json({ error: 'Missing required fields: query, tenantId' }, 400);
     }
 
-    const { provider, embedPipeline, cache, logger } = initComponents(c.env);
+    const { gate } = initComponents(c.env);
 
-    const appetite = body.appetite || (c.env.DEFAULT_APPETITE as any) || 'balanced';
-    const limit = body.limit || 10;
-
-    // ── 1. Cache Check ──
-    perf.mark('cache_check');
-    const cached = await cache.get(body.query, body.tenantId, appetite);
-
-    if (cached) {
-      // Cache hit — return immediately
-      const cacheLatencyMs = perf.total();
-
-      // Update latency in cached response
-      cached.meta.latencyMs = cacheLatencyMs;
-
-      return c.json(cached);
-    }
-
-    // ── 2. Embed Query ──
-    perf.mark('embed_query');
-    const embedding = await embedPipeline['embed'](body.query);
-
-    // ── 3. Provider Search ──
-    perf.mark('provider_search');
-
-    const filters: SearchFilters = {
-      tenantId: body.tenantId,
-      tags: body.tags,
-      category: body.category,
-      minTrustScore: getAppetiteThreshold(appetite as any),
-      contentSafetyRequired: true,
-    };
-
-    const searchResult = await provider.search(body.query, embedding, filters, {
-      limit,
-    });
-
-    // ── 4. Build Response ──
-    perf.mark('build_response');
-
-    // Fetch full skill metadata for results
-    const skillResults = await buildSkillResults(
-      searchResult.results,
-      provider['pool']
-    );
-
-    const response: FindSkillResponse = {
-      results: skillResults,
-      confidence: tierToConfidence(searchResult.confidence.tier),
-      enriched: false,
-      meta: {
-        matchSources: searchResult.results
-          .slice(0, 3)
-          .map((r) => r.matchSource),
-        latencyMs: perf.total(),
-        tier: searchResult.confidence.tier,
-        cacheHit: false,
-        llmInvoked: false,
+    const response = await gate.findSkill(
+      body.query,
+      body.tenantId,
+      {
+        limit: body.limit,
+        appetite: body.appetite as Appetite,
+        tags: body.tags,
+        category: body.category,
       },
-    };
-
-    // ── 5. Log Event (Non-Blocking) ──
-    const logEntry = logger.buildLogEntry({
-      query: body.query,
-      tenantId: body.tenantId,
-      appetite,
-      tier: searchResult.confidence.tier,
-      cacheHit: false,
-      topScore: searchResult.confidence.topScore,
-      gapToSecond: searchResult.confidence.gapToSecond,
-      clusterDensity: searchResult.confidence.clusterDensity,
-      keywordHits: searchResult.confidence.keywordHits,
-      resultCount: skillResults.length,
-      matchSource: searchResult.results[0]?.matchSource,
-      resultSkillIds: skillResults.map((r) => r.id),
-      totalLatencyMs: perf.total(),
-      vectorSearchMs: searchResult.meta.vectorSearchMs,
-      fullTextSearchMs: searchResult.meta.fullTextSearchMs,
-      fusionStrategy: searchResult.meta.fusionStrategy,
-      llmInvoked: false,
-      embeddingCost: logger.estimateEmbeddingCost(body.query.length),
-      llmCost: 0,
-      compositionDetected: false,
-      generationHintReturned: false,
-    });
-
-    c.executionCtx.waitUntil(logger.log(logEntry));
-
-    // ── 6. Cache Result (Non-Blocking) ──
-    c.executionCtx.waitUntil(
-      cache.set(
-        body.query,
-        body.tenantId,
-        appetite,
-        response,
-        searchResult.confidence.tier
-      )
+      c.executionCtx
     );
 
     return c.json(response);
@@ -533,84 +456,6 @@ app.get('/v1/eval/results/:runId', async (c) => {
       'Run POST /v1/eval/run to execute the eval suite and get immediate results',
   });
 });
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
-async function buildSkillResults(
-  scoredSkills: any[],
-  pool: Pool
-): Promise<SkillResult[]> {
-  if (scoredSkills.length === 0) {
-    return [];
-  }
-
-  const skillIds = scoredSkills.map((s) => s.skillId);
-
-  const sql = `
-    SELECT
-      id,
-      name,
-      slug,
-      agent_summary,
-      trust_score,
-      execution_layer,
-      capabilities_required
-    FROM skills
-    WHERE id = ANY($1::uuid[])
-  `;
-
-  const result = await pool.query(sql, [skillIds]);
-
-  // Create lookup map
-  const skillMap = new Map(
-    result.rows.map((row) => [
-      row.id,
-      {
-        id: row.id,
-        name: row.name,
-        slug: row.slug,
-        agentSummary: row.agent_summary,
-        trustScore: parseFloat(row.trust_score),
-        executionLayer: row.execution_layer,
-        capabilitiesRequired: row.capabilities_required ?? [],
-      },
-    ])
-  );
-
-  // Merge with scores
-  const results: SkillResult[] = [];
-  for (const ss of scoredSkills) {
-    const skill = skillMap.get(ss.skillId);
-    if (!skill) continue;
-
-    const result: SkillResult = {
-      ...skill,
-      score: ss.fusedScore,
-      matchSource: ss.matchSource,
-    };
-
-    if (ss.matchText) {
-      result.matchText = ss.matchText;
-    }
-
-    results.push(result);
-  }
-
-  return results;
-}
-
-function tierToConfidence(tier: 1 | 2 | 3): FindSkillResponse['confidence'] {
-  switch (tier) {
-    case 1:
-      return 'high';
-    case 2:
-      return 'medium';
-    case 3:
-      return 'low_enriched';
-  }
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // 404 Handler

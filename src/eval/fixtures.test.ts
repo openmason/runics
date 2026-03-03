@@ -9,8 +9,8 @@ describe('Eval Fixtures', () => {
       expect(result.errors).toEqual([]);
     });
 
-    it('should have at least 30 fixtures', () => {
-      expect(evalFixtures.length).toBeGreaterThanOrEqual(30);
+    it('should have at least 80 fixtures', () => {
+      expect(evalFixtures.length).toBeGreaterThanOrEqual(80);
     });
 
     it('should have no duplicate IDs', () => {

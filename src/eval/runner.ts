@@ -78,6 +78,20 @@ export async function runEvalSuite(
         avgTopScore: 0,
         tierDistribution: { 1: 0, 2: 0, 3: 0 },
         byPattern: {},
+        tierAccuracy: {
+          1: { total: 0, correct: 0, accuracy: 0 },
+          2: { total: 0, correct: 0, accuracy: 0 },
+          3: { total: 0, correct: 0, accuracy: 0 },
+        },
+        latencyByTier: {
+          1: { p50: 0, p95: 0, p99: 0 },
+          2: { p50: 0, p95: 0, p99: 0 },
+          3: { p50: 0, p95: 0, p99: 0 },
+        },
+        llmFallbackLift: {
+          tier2: { total: 0, enrichedImproved: 0, liftRate: 0 },
+          tier3: { total: 0, enrichedImproved: 0, liftRate: 0 },
+        },
       },
       fixtureCount: 0,
       passed: 0,
@@ -107,13 +121,15 @@ export async function runEvalSuite(
     }
 
     try {
+      const queryStart = Date.now();
       const response = await executeQuery(searchEndpoint, {
         query: fixture.query,
         tenantId,
         limit,
       });
+      const latencyMs = Date.now() - queryStart;
 
-      const result = buildEvalResult(fixture, response);
+      const result = buildEvalResult(fixture, response, latencyMs);
       results.push(result);
 
       if (verbose) {
@@ -122,7 +138,7 @@ export async function runEvalSuite(
           : result.foundInTop5
             ? `⚠️  Rank ${result.correctSkillRank}`
             : '❌ Not found';
-        console.log(` ${status}`);
+        console.log(` ${status} (${latencyMs}ms, T${result.response.meta.tier})`);
       }
     } catch (error) {
       const errorMsg = `Fixture ${fixture.id} failed: ${(error as Error).message}`;

@@ -144,17 +144,21 @@ export class PgVectorProvider implements SearchProvider {
 
     const whereClause = conditions.join(' AND ');
 
-    // Vector search with DISTINCT ON to get best match per skill
+    // Vector search: get best embedding per skill, then rank by score
     const sql = `
-      SELECT DISTINCT ON (se.skill_id)
-        se.skill_id,
-        1 - (se.embedding <=> $2::vector) AS score,
-        se.source AS match_source,
-        se.source_text AS match_text
-      FROM skill_embeddings se
-      INNER JOIN skills s ON s.id = se.skill_id
-      WHERE ${whereClause}
-      ORDER BY se.skill_id, (se.embedding <=> $2::vector) ASC
+      SELECT skill_id, score, match_source, match_text
+      FROM (
+        SELECT DISTINCT ON (se.skill_id)
+          se.skill_id,
+          1 - (se.embedding <=> $2::vector) AS score,
+          se.source AS match_source,
+          se.source_text AS match_text
+        FROM skill_embeddings se
+        INNER JOIN skills s ON s.id = se.skill_id
+        WHERE ${whereClause}
+        ORDER BY se.skill_id, (se.embedding <=> $2::vector) ASC
+      ) ranked
+      ORDER BY score DESC
       LIMIT $3
     `;
 
@@ -208,23 +212,27 @@ export class PgVectorProvider implements SearchProvider {
 
     const whereClause = conditions.join(' AND ');
 
-    // Full-text search using tsvector
-    // ts_rank_cd returns relevance score, normalize to 0-1 range
+    // Full-text search: get best match per skill, then rank by score
+    ++paramCount;
     const sql = `
-      SELECT DISTINCT ON (se.skill_id)
-        se.skill_id,
-        ts_rank_cd(se.tsv, plainto_tsquery('english', $${++paramCount})) AS raw_score,
-        ts_rank_cd(se.tsv, plainto_tsquery('english', $${paramCount}), 32) AS normalized_score,
-        (
-          SELECT COUNT(*)
-          FROM unnest(tsvector_to_array(se.tsv)) AS term
-          WHERE term = ANY(string_to_array(lower($${paramCount}), ' '))
-        ) AS keyword_hits
-      FROM skill_embeddings se
-      INNER JOIN skills s ON s.id = se.skill_id
-      WHERE ${whereClause}
-        AND se.tsv @@ plainto_tsquery('english', $${paramCount})
-      ORDER BY se.skill_id, raw_score DESC
+      SELECT skill_id, raw_score, normalized_score, keyword_hits
+      FROM (
+        SELECT DISTINCT ON (se.skill_id)
+          se.skill_id,
+          ts_rank_cd(se.tsv, plainto_tsquery('english', $${paramCount})) AS raw_score,
+          ts_rank_cd(se.tsv, plainto_tsquery('english', $${paramCount}), 32) AS normalized_score,
+          (
+            SELECT COUNT(*)
+            FROM unnest(tsvector_to_array(se.tsv)) AS term
+            WHERE term = ANY(string_to_array(lower($${paramCount}), ' '))
+          ) AS keyword_hits
+        FROM skill_embeddings se
+        INNER JOIN skills s ON s.id = se.skill_id
+        WHERE ${whereClause}
+          AND se.tsv @@ plainto_tsquery('english', $${paramCount})
+        ORDER BY se.skill_id, raw_score DESC
+      ) ranked
+      ORDER BY raw_score DESC
       LIMIT $2
     `;
 

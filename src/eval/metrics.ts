@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════════════════
-// Eval Metrics — Recall@K, MRR, Pattern Analysis
+// Eval Metrics — Recall@K, MRR, Pattern Analysis, Phase 2 Enhanced
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // Computes search quality metrics from eval results.
@@ -11,6 +11,11 @@
 // - Tier distribution: % of queries in each tier
 // - By-pattern breakdown: Metrics per phrasing pattern
 //
+// Phase 2 additions:
+// - Per-tier accuracy: what % of each tier's results are actually correct
+// - Latency by tier: p50, p95, p99 per tier
+// - LLM fallback lift: for Tier 2/3, did enrichment improve rank
+//
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { EvalMetrics, EvalFixture, FindSkillResponse } from '../types';
@@ -21,6 +26,7 @@ export interface EvalResult {
   correctSkillRank: number | null; // null if not found
   foundInTop5: boolean;
   foundInTop1: boolean;
+  latencyMs: number; // query round-trip time
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -28,15 +34,31 @@ export interface EvalResult {
 // ──────────────────────────────────────────────────────────────────────────────
 
 export function computeMetrics(results: EvalResult[]): EvalMetrics {
+  const empty: EvalMetrics = {
+    recall1: 0,
+    recall5: 0,
+    mrr: 0,
+    avgTopScore: 0,
+    tierDistribution: { 1: 0, 2: 0, 3: 0 },
+    byPattern: {},
+    tierAccuracy: {
+      1: { total: 0, correct: 0, accuracy: 0 },
+      2: { total: 0, correct: 0, accuracy: 0 },
+      3: { total: 0, correct: 0, accuracy: 0 },
+    },
+    latencyByTier: {
+      1: { p50: 0, p95: 0, p99: 0 },
+      2: { p50: 0, p95: 0, p99: 0 },
+      3: { p50: 0, p95: 0, p99: 0 },
+    },
+    llmFallbackLift: {
+      tier2: { total: 0, enrichedImproved: 0, liftRate: 0 },
+      tier3: { total: 0, enrichedImproved: 0, liftRate: 0 },
+    },
+  };
+
   if (results.length === 0) {
-    return {
-      recall1: 0,
-      recall5: 0,
-      mrr: 0,
-      avgTopScore: 0,
-      tierDistribution: { 1: 0, 2: 0, 3: 0 },
-      byPattern: {},
-    };
+    return empty;
   }
 
   // Overall metrics
@@ -49,6 +71,11 @@ export function computeMetrics(results: EvalResult[]): EvalMetrics {
   // Per-pattern breakdown
   const byPattern = computeByPattern(results);
 
+  // Phase 2: Enhanced metrics
+  const tierAccuracy = computeTierAccuracy(results);
+  const latencyByTier = computeLatencyByTier(results);
+  const llmFallbackLift = computeLLMFallbackLift(results);
+
   return {
     recall1,
     recall5,
@@ -56,6 +83,9 @@ export function computeMetrics(results: EvalResult[]): EvalMetrics {
     avgTopScore,
     tierDistribution,
     byPattern,
+    tierAccuracy,
+    latencyByTier,
+    llmFallbackLift,
   };
 }
 
@@ -159,6 +189,105 @@ function computeByPattern(
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Per-Tier Accuracy: What % of each tier's results are correct
+// ──────────────────────────────────────────────────────────────────────────────
+
+function computeTierAccuracy(
+  results: EvalResult[]
+): Record<1 | 2 | 3, { total: number; correct: number; accuracy: number }> {
+  const acc: Record<1 | 2 | 3, { total: number; correct: number }> = {
+    1: { total: 0, correct: 0 },
+    2: { total: 0, correct: 0 },
+    3: { total: 0, correct: 0 },
+  };
+
+  for (const result of results) {
+    const tier = result.response.meta.tier;
+    acc[tier].total++;
+    if (result.foundInTop1) {
+      acc[tier].correct++;
+    }
+  }
+
+  return {
+    1: { ...acc[1], accuracy: acc[1].total > 0 ? acc[1].correct / acc[1].total : 0 },
+    2: { ...acc[2], accuracy: acc[2].total > 0 ? acc[2].correct / acc[2].total : 0 },
+    3: { ...acc[3], accuracy: acc[3].total > 0 ? acc[3].correct / acc[3].total : 0 },
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Latency By Tier: p50, p95, p99
+// ──────────────────────────────────────────────────────────────────────────────
+
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = Math.ceil((p / 100) * sorted.length) - 1;
+  return sorted[Math.max(0, idx)];
+}
+
+function computeLatencyByTier(
+  results: EvalResult[]
+): Record<1 | 2 | 3, { p50: number; p95: number; p99: number }> {
+  const latencies: Record<1 | 2 | 3, number[]> = { 1: [], 2: [], 3: [] };
+
+  for (const result of results) {
+    const tier = result.response.meta.tier;
+    latencies[tier].push(result.latencyMs);
+  }
+
+  const compute = (arr: number[]) => {
+    const sorted = [...arr].sort((a, b) => a - b);
+    return {
+      p50: percentile(sorted, 50),
+      p95: percentile(sorted, 95),
+      p99: percentile(sorted, 99),
+    };
+  };
+
+  return {
+    1: compute(latencies[1]),
+    2: compute(latencies[2]),
+    3: compute(latencies[3]),
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// LLM Fallback Lift: Did enrichment improve results for Tier 2/3?
+// ──────────────────────────────────────────────────────────────────────────────
+
+function computeLLMFallbackLift(results: EvalResult[]): {
+  tier2: { total: number; enrichedImproved: number; liftRate: number };
+  tier3: { total: number; enrichedImproved: number; liftRate: number };
+} {
+  const tier2Results = results.filter((r) => r.response.meta.tier === 2);
+  const tier3Results = results.filter((r) => r.response.meta.tier === 3);
+
+  // For Tier 2: enriched means the response has enriched=true (async enrichment completed)
+  // For eval purposes, we count tier 2 queries that found the correct skill in top 5
+  // as "enrichment helped" since without enrichment they might not have
+  const tier2Enriched = tier2Results.filter((r) => r.response.enriched);
+  const tier2EnrichedImproved = tier2Enriched.filter((r) => r.foundInTop5).length;
+
+  // For Tier 3: deep search was invoked; count those where correct skill was found
+  const tier3Enriched = tier3Results.filter((r) => r.response.meta.llmInvoked);
+  const tier3EnrichedImproved = tier3Enriched.filter((r) => r.foundInTop5).length;
+
+  return {
+    tier2: {
+      total: tier2Results.length,
+      enrichedImproved: tier2EnrichedImproved,
+      liftRate: tier2Enriched.length > 0 ? tier2EnrichedImproved / tier2Enriched.length : 0,
+    },
+    tier3: {
+      total: tier3Results.length,
+      enrichedImproved: tier3EnrichedImproved,
+      liftRate: tier3Enriched.length > 0 ? tier3EnrichedImproved / tier3Enriched.length : 0,
+    },
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Helper: Find Rank of Expected Skill
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -180,7 +309,8 @@ export function findSkillRank(
 
 export function buildEvalResult(
   fixture: EvalFixture,
-  response: FindSkillResponse
+  response: FindSkillResponse,
+  latencyMs: number
 ): EvalResult {
   const rank = findSkillRank(response, fixture.expectedSkillId);
 
@@ -190,6 +320,7 @@ export function buildEvalResult(
     correctSkillRank: rank,
     foundInTop5: rank !== null && rank <= 5,
     foundInTop1: rank !== null && rank === 1,
+    latencyMs,
   };
 }
 
@@ -228,6 +359,46 @@ export function formatMetrics(metrics: EvalMetrics): string {
   );
   lines.push(
     `  Tier 3 (Low):    ${metrics.tierDistribution[3]} (${((metrics.tierDistribution[3] / total) * 100).toFixed(1)}%)`
+  );
+  lines.push('');
+
+  // Per-tier accuracy
+  lines.push('Accuracy Per Tier (correct @ rank 1):');
+  for (const tier of [1, 2, 3] as const) {
+    const ta = metrics.tierAccuracy[tier];
+    if (ta.total > 0) {
+      lines.push(
+        `  Tier ${tier}: ${ta.correct}/${ta.total} (${(ta.accuracy * 100).toFixed(1)}%)`
+      );
+    } else {
+      lines.push(`  Tier ${tier}: n/a (0 queries)`);
+    }
+  }
+  lines.push('');
+
+  // Latency by tier
+  lines.push('Latency Per Tier (ms):');
+  for (const tier of [1, 2, 3] as const) {
+    const lt = metrics.latencyByTier[tier];
+    if (metrics.tierDistribution[tier] > 0) {
+      lines.push(
+        `  Tier ${tier}: p50=${lt.p50.toFixed(0)}  p95=${lt.p95.toFixed(0)}  p99=${lt.p99.toFixed(0)}`
+      );
+    } else {
+      lines.push(`  Tier ${tier}: n/a`);
+    }
+  }
+  lines.push('');
+
+  // LLM fallback lift
+  lines.push('LLM Fallback Lift:');
+  const t2 = metrics.llmFallbackLift.tier2;
+  const t3 = metrics.llmFallbackLift.tier3;
+  lines.push(
+    `  Tier 2: ${t2.total} queries, ${t2.enrichedImproved} enriched+correct (lift: ${(t2.liftRate * 100).toFixed(1)}%)`
+  );
+  lines.push(
+    `  Tier 3: ${t3.total} queries, ${t3.enrichedImproved} enriched+correct (lift: ${(t3.liftRate * 100).toFixed(1)}%)`
   );
   lines.push('');
 

@@ -38,11 +38,11 @@ SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
 # Content safety (set to "true" to disable for dev/testing)
 DISABLE_CONTENT_SAFETY = "true"
 
-# Confidence tier thresholds (derived from eval data in Phase 1)
-# Based on actual score distribution: P75=0.509, P50=0.480, P25=0.449
-# Target: Tier 1 ~60%, Tier 2 ~30%, Tier 3 ~10%
-CONFIDENCE_TIER1_THRESHOLD = "0.40"  # High confidence (target ~60%)
-CONFIDENCE_TIER2_THRESHOLD = "0.35"  # Medium confidence (target ~30%)
+# Confidence tier thresholds (derived from Phase 2 score analysis, 40 skills)
+# Correct match scores: P10=0.42, P25=0.46, P50=0.49, P75=0.52
+# Target: Tier 1 ~60-70%, Tier 2 ~20-25%, Tier 3 ~5-10%
+CONFIDENCE_TIER1_THRESHOLD = "0.47"  # High confidence (P30 of correct scores)
+CONFIDENCE_TIER2_THRESHOLD = "0.42"  # Medium confidence (P10 of correct scores)
 
 # Cache configuration (Tier 1: 120s, Tier 2/3: 60s - KV minimum)
 CACHE_TTL_SECONDS = "120"
@@ -53,6 +53,12 @@ DEFAULT_APPETITE = "balanced"
 # Score fusion weights (vector + full-text)
 VECTOR_WEIGHT = "0.7"
 FULLTEXT_WEIGHT = "0.3"
+
+# Phase 2: Confidence gate tuning
+SCORE_GAP_THRESHOLD = "0.02"          # Min gap for high confidence
+CLUSTER_DENSITY_THRESHOLD = "0.05"    # Relative threshold for cluster density
+DEEP_SEARCH_ENABLED = "true"          # Enable LLM deep search for Tier 2/3
+LLM_MAX_TOKENS = "500"               # Max tokens per LLM call
 
 # Production environment overrides
 [env.production]

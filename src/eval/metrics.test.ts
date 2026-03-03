@@ -38,11 +38,12 @@ describe('Eval Metrics', () => {
   describe('buildEvalResult', () => {
     it('should detect rank 1 hit', () => {
       const response = createMockResponse(mockFixture.expectedSkillId, 0.9);
-      const result = buildEvalResult(mockFixture, response);
+      const result = buildEvalResult(mockFixture, response, 50);
 
       expect(result.foundInTop1).toBe(true);
       expect(result.foundInTop5).toBe(true);
       expect(result.correctSkillRank).toBe(1);
+      expect(result.latencyMs).toBe(50);
     });
 
     it('should detect rank 3 hit', () => {
@@ -72,7 +73,7 @@ describe('Eval Metrics', () => {
         }
       );
 
-      const result = buildEvalResult(mockFixture, response);
+      const result = buildEvalResult(mockFixture, response, 100);
 
       expect(result.foundInTop1).toBe(false);
       expect(result.foundInTop5).toBe(true);
@@ -81,7 +82,7 @@ describe('Eval Metrics', () => {
 
     it('should detect miss', () => {
       const response = createMockResponse('other-skill', 0.9);
-      const result = buildEvalResult(mockFixture, response);
+      const result = buildEvalResult(mockFixture, response, 75);
 
       expect(result.foundInTop1).toBe(false);
       expect(result.foundInTop5).toBe(false);
@@ -92,8 +93,8 @@ describe('Eval Metrics', () => {
   describe('computeMetrics', () => {
     it('should compute perfect metrics', () => {
       const results = [
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1)),
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.8, 1)),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1), 50),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.8, 1), 60),
       ];
 
       const metrics = computeMetrics(results);
@@ -105,12 +106,16 @@ describe('Eval Metrics', () => {
       expect(metrics.tierDistribution[1]).toBe(2);
       expect(metrics.tierDistribution[2]).toBe(0);
       expect(metrics.tierDistribution[3]).toBe(0);
+
+      // Phase 2: tier accuracy
+      expect(metrics.tierAccuracy[1].accuracy).toBe(1.0);
+      expect(metrics.tierAccuracy[1].total).toBe(2);
     });
 
     it('should compute 50% recall@1', () => {
       const results = [
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1)),
-        buildEvalResult(mockFixture, createMockResponse('other-skill', 0.8, 2)),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1), 50),
+        buildEvalResult(mockFixture, createMockResponse('other-skill', 0.8, 2), 100),
       ];
 
       const metrics = computeMetrics(results);
@@ -135,8 +140,8 @@ describe('Eval Metrics', () => {
       });
 
       const results = [
-        buildEvalResult(mockFixture, response1), // Rank 1
-        buildEvalResult(mockFixture, response2), // Rank 2
+        buildEvalResult(mockFixture, response1, 50), // Rank 1
+        buildEvalResult(mockFixture, response2, 60), // Rank 2
       ];
 
       const metrics = computeMetrics(results);
@@ -156,10 +161,10 @@ describe('Eval Metrics', () => {
 
     it('should compute tier distribution', () => {
       const results = [
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1)),
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.8, 2)),
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.7, 2)),
-        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.6, 3)),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1), 50),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.8, 2), 100),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.7, 2), 110),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.6, 3), 500),
       ];
 
       const metrics = computeMetrics(results);
@@ -167,6 +172,10 @@ describe('Eval Metrics', () => {
       expect(metrics.tierDistribution[1]).toBe(1);
       expect(metrics.tierDistribution[2]).toBe(2);
       expect(metrics.tierDistribution[3]).toBe(1);
+
+      // Phase 2: latency by tier
+      expect(metrics.latencyByTier[1].p50).toBe(50);
+      expect(metrics.latencyByTier[3].p50).toBe(500);
     });
 
     it('should compute by-pattern metrics', () => {
@@ -174,14 +183,45 @@ describe('Eval Metrics', () => {
       const fixture2 = { ...mockFixture, pattern: 'problem' as const };
 
       const results = [
-        buildEvalResult(fixture1, createMockResponse(fixture1.expectedSkillId, 0.9)),
-        buildEvalResult(fixture2, createMockResponse('other-skill', 0.8)),
+        buildEvalResult(fixture1, createMockResponse(fixture1.expectedSkillId, 0.9), 50),
+        buildEvalResult(fixture2, createMockResponse('other-skill', 0.8), 60),
       ];
 
       const metrics = computeMetrics(results);
 
       expect(metrics.byPattern.direct.recall5).toBe(1.0);
       expect(metrics.byPattern.problem.recall5).toBe(0.0);
+    });
+
+    it('should compute tier accuracy', () => {
+      const results = [
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1), 50),
+        buildEvalResult(mockFixture, createMockResponse('other-skill', 0.8, 1), 55),
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.7, 2), 100),
+      ];
+
+      const metrics = computeMetrics(results);
+
+      expect(metrics.tierAccuracy[1].total).toBe(2);
+      expect(metrics.tierAccuracy[1].correct).toBe(1);
+      expect(metrics.tierAccuracy[1].accuracy).toBe(0.5);
+      expect(metrics.tierAccuracy[2].total).toBe(1);
+      expect(metrics.tierAccuracy[2].correct).toBe(1);
+      expect(metrics.tierAccuracy[2].accuracy).toBe(1.0);
+    });
+
+    it('should compute LLM fallback lift', () => {
+      const tier3Response = createMockResponse(mockFixture.expectedSkillId, 0.6, 3);
+      const results = [
+        buildEvalResult(mockFixture, createMockResponse(mockFixture.expectedSkillId, 0.9, 1), 50),
+        buildEvalResult(mockFixture, tier3Response, 500),
+      ];
+
+      const metrics = computeMetrics(results);
+
+      expect(metrics.llmFallbackLift.tier3.total).toBe(1);
+      expect(metrics.llmFallbackLift.tier3.enrichedImproved).toBe(1);
+      expect(metrics.llmFallbackLift.tier3.liftRate).toBe(1.0);
     });
   });
 
@@ -197,6 +237,20 @@ describe('Eval Metrics', () => {
           direct: { recall5: 1.0, mrr: 1.0 },
           problem: { recall5: 0.95, mrr: 0.85 },
         },
+        tierAccuracy: {
+          1: { total: 10, correct: 9, accuracy: 0.9 },
+          2: { total: 15, correct: 10, accuracy: 0.667 },
+          3: { total: 5, correct: 2, accuracy: 0.4 },
+        },
+        latencyByTier: {
+          1: { p50: 45, p95: 80, p99: 95 },
+          2: { p50: 120, p95: 200, p99: 250 },
+          3: { p50: 800, p95: 1200, p99: 1500 },
+        },
+        llmFallbackLift: {
+          tier2: { total: 15, enrichedImproved: 5, liftRate: 0.333 },
+          tier3: { total: 5, enrichedImproved: 3, liftRate: 0.6 },
+        },
       };
 
       const formatted = formatMetrics(metrics);
@@ -206,6 +260,9 @@ describe('Eval Metrics', () => {
       expect(formatted).toContain('0.969'); // mrr
       expect(formatted).toContain('direct');
       expect(formatted).toContain('problem');
+      expect(formatted).toContain('Accuracy Per Tier');
+      expect(formatted).toContain('Latency Per Tier');
+      expect(formatted).toContain('LLM Fallback Lift');
     });
   });
 });

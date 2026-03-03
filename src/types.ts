@@ -301,6 +301,14 @@ export interface EvalMetrics {
   avgTopScore: number;
   tierDistribution: Record<1 | 2 | 3, number>;
   byPattern: Record<string, { recall5: number; mrr: number }>; // per phrasing pattern
+
+  // Phase 2: Enhanced metrics
+  tierAccuracy: Record<1 | 2 | 3, { total: number; correct: number; accuracy: number }>;
+  latencyByTier: Record<1 | 2 | 3, { p50: number; p95: number; p99: number }>;
+  llmFallbackLift: {
+    tier2: { total: number; enrichedImproved: number; liftRate: number };
+    tier3: { total: number; enrichedImproved: number; liftRate: number };
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -326,4 +334,10 @@ export interface Env {
   VECTOR_WEIGHT: string;
   FULLTEXT_WEIGHT: string;
   DISABLE_CONTENT_SAFETY?: string; // Set to "true" to skip content safety checks (dev/testing only)
+
+  // Phase 2: Confidence gate tuning
+  SCORE_GAP_THRESHOLD?: string; // Min gap for high confidence (default: "0.05")
+  CLUSTER_DENSITY_THRESHOLD?: string; // Relative threshold for cluster density (default: "0.05")
+  DEEP_SEARCH_ENABLED?: string; // Enable LLM deep search (default: "true")
+  LLM_MAX_TOKENS?: string; // Max tokens for LLM calls (default: "500")
 }

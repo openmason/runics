@@ -1,9 +1,10 @@
-# Runics — Unified Architecture & MVP Implementation Spec
+# Runics — Full Architecture & Implementation Spec
 
-> **Purpose:** Single source of truth for Runics search. Covers architecture decisions, platform integration, and implementation spec for Claude Code.  
-> **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · Hyperdrive  
-> **Date:** February 2026 · v2.0  
-> **Status:** DECIDED — measure-first, provider-abstracted
+> **Purpose:** Single source of truth for Runics: search, sync pipelines, publish API, and implementation spec for Claude Code.  
+> **Parent doc:** `cortex-specification.md` (runtime overview)  
+> **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · R2 · Queues · Hyperdrive  
+> **Date:** March 2026 · v3.0  
+> **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress.
 
 ---
 
@@ -18,17 +19,19 @@
 7. [Platform Integration: Skills Table](#7-platform-integration-skills-table)
 8. [Database Schema](#8-database-schema)
 9. [Ingestion Pipeline](#9-ingestion-pipeline)
-10. [Query Pipeline](#10-query-pipeline)
-11. [Monitoring & Quality Learning](#11-monitoring--quality-learning)
-12. [API Surface](#12-api-surface)
-13. [Caching Strategy](#13-caching-strategy)
-14. [Technology Stack & Cost Model](#14-technology-stack--cost-model)
-15. [MVP Build Plan](#15-mvp-build-plan)
-16. [Eval Suite](#16-eval-suite)
-17. [Migration Triggers](#17-migration-triggers)
-18. [Risks & Mitigations](#18-risks--mitigations)
-19. [Project Structure](#19-project-structure)
-20. [Implementation Notes for Claude Code](#20-implementation-notes-for-claude-code)
+10. [Sync Pipelines](#10-sync-pipelines)
+11. [Publish API](#11-publish-api)
+12. [Query Pipeline](#12-query-pipeline)
+13. [Monitoring & Quality Learning](#13-monitoring--quality-learning)
+14. [API Surface](#14-api-surface)
+15. [Caching Strategy](#15-caching-strategy)
+16. [Technology Stack & Cost Model](#16-technology-stack--cost-model)
+17. [MVP Build Plan](#17-mvp-build-plan)
+18. [Eval Suite](#18-eval-suite)
+19. [Migration Triggers](#19-migration-triggers)
+20. [Risks & Mitigations](#20-risks--mitigations)
+21. [Project Structure](#21-project-structure)
+22. [Implementation Notes for Claude Code](#22-implementation-notes-for-claude-code)
 
 ---
 
@@ -682,7 +685,448 @@ Skill arrives (sync worker / publish API / distillation)
 
 ---
 
-## 10. Query Pipeline
+## 10. Sync Pipelines
+
+Sync workers keep the skill index fresh by polling upstream registries and normalizing their data into the `skills` table. Each adapter runs on a Cloudflare Cron Trigger and shares a common pipeline: fetch → normalize → upsert → enqueue for embedding + Cognium scan.
+
+### Common Infrastructure
+
+```typescript
+// src/sync/base-sync.ts
+
+export abstract class BaseSyncWorker {
+  constructor(protected env: Env) {}
+
+  abstract fetchBatch(cursor?: string): Promise<{ skills: RawSkill[]; nextCursor?: string }>;
+  abstract normalize(raw: RawSkill): SkillUpsert;
+
+  async run(): Promise<SyncResult> {
+    let cursor: string | undefined;
+    let synced = 0;
+    let skipped = 0;
+
+    do {
+      const batch = await this.fetchBatch(cursor);
+
+      for (const raw of batch.skills) {
+        // Change detection: skip if source_hash unchanged
+        const existing = await this.findBySourceUrl(raw.sourceUrl);
+        const hash = sha256(JSON.stringify(raw));
+        if (existing?.source_hash === hash) { skipped++; continue; }
+
+        // Normalize to unified schema
+        const skill = this.normalize(raw);
+        skill.source_hash = hash;
+
+        // Upsert skill row
+        await this.upsertSkill(skill);
+
+        // Enqueue for agent summary + embedding generation
+        await this.env.EMBED_QUEUE.send({ skillId: skill.id, action: 'embed' });
+
+        // Enqueue for Cognium trust scoring
+        await this.env.COGNIUM_QUEUE.send({ skillId: skill.id, action: 'scan' });
+
+        synced++;
+      }
+
+      cursor = batch.nextCursor;
+    } while (cursor);
+
+    return { synced, skipped, source: this.sourceName };
+  }
+
+  protected abstract get sourceName(): string;
+
+  private async upsertSkill(skill: SkillUpsert): Promise<void> {
+    await db.insert(skills)
+      .values(skill)
+      .onConflictDoUpdate({
+        target: [skills.source, skills.sourceUrl],
+        set: {
+          name: skill.name,
+          description: skill.description,
+          schemaJson: skill.schemaJson,
+          executionLayer: skill.executionLayer,
+          capabilitiesRequired: skill.capabilitiesRequired,
+          sourceHash: skill.sourceHash,
+          updatedAt: new Date(),
+        },
+      });
+  }
+}
+
+interface SkillUpsert {
+  id?: string;
+  name: string;
+  slug: string;
+  description: string;
+  schemaJson?: Record<string, unknown>;
+  executionLayer: 'mcp-remote' | 'instructions' | 'worker' | 'container';
+  mcpUrl?: string;
+  skillMd?: string;
+  capabilitiesRequired?: string[];
+  source: string;
+  sourceUrl: string;
+  sourceHash: string;
+  trustScore?: number;
+}
+```
+
+### 10.1 MCP Registry Sync
+
+The primary source. Polls the MCP Registry API for skills published as MCP servers.
+
+```typescript
+// src/sync/mcp-registry.ts
+
+export class McpRegistrySync extends BaseSyncWorker {
+  protected get sourceName() { return 'mcp-registry'; }
+
+  async fetchBatch(cursor?: string) {
+    const url = new URL('https://registry.mcp.run/api/skills');
+    if (cursor) url.searchParams.set('cursor', cursor);
+    url.searchParams.set('limit', '100');
+
+    const res = await fetch(url.toString(), {
+      headers: { 'Accept': 'application/json' },
+    });
+    const data = await res.json() as McpRegistryResponse;
+
+    return {
+      skills: data.items,
+      nextCursor: data.nextCursor ?? undefined,
+    };
+  }
+
+  normalize(raw: McpRegistrySkill): SkillUpsert {
+    return {
+      name: raw.name,
+      slug: slugify(raw.name),
+      description: raw.description,
+      schemaJson: raw.tools?.[0]?.inputSchema,
+      executionLayer: 'mcp-remote',
+      mcpUrl: raw.serverUrl,
+      capabilitiesRequired: raw.capabilities ?? [],
+      source: 'mcp-registry',
+      sourceUrl: raw.url,
+      sourceHash: '',             // set by base class
+      trustScore: 0.7,            // upstream registry default
+    };
+  }
+}
+```
+
+**Frequency:** Every 5 minutes. **Estimated lines:** ~150.
+
+### 10.2 ClawHub Sync
+
+ClawHub hosts community-contributed skills in the OpenClaw pattern (SKILL.md + bins/ + scripts/). Some skills have VirusTotal flags — these are ingested but with `trust_score = 0.3`.
+
+```typescript
+// src/sync/clawhub.ts
+
+export class ClawHubSync extends BaseSyncWorker {
+  protected get sourceName() { return 'clawhub'; }
+
+  async fetchBatch(cursor?: string) {
+    const url = new URL('https://api.clawhub.io/v1/skills');
+    if (cursor) url.searchParams.set('after', cursor);
+    url.searchParams.set('limit', '100');
+
+    const res = await fetch(url.toString());
+    const data = await res.json() as ClawHubResponse;
+
+    return {
+      skills: data.skills,
+      nextCursor: data.skills.length === 100
+        ? data.skills[data.skills.length - 1].id
+        : undefined,
+    };
+  }
+
+  normalize(raw: ClawHubSkill): SkillUpsert {
+    // ClawHub skills with VirusTotal flags get reduced trust
+    const hasVtFlags = raw.virustotal_flagged === true;
+
+    return {
+      name: raw.name,
+      slug: slugify(raw.name),
+      description: raw.description ?? raw.skill_md_excerpt ?? '',
+      schemaJson: raw.schema,
+      executionLayer: this.inferExecutionLayer(raw),
+      skillMd: raw.skill_md,
+      capabilitiesRequired: this.extractCapabilities(raw),
+      source: 'clawhub',
+      sourceUrl: `https://clawhub.io/skills/${raw.slug}`,
+      sourceHash: '',
+      trustScore: hasVtFlags ? 0.3 : 0.6,
+    };
+  }
+
+  private inferExecutionLayer(raw: ClawHubSkill): SkillUpsert['executionLayer'] {
+    // If skill has only SKILL.md (instructions), it's Layer 1
+    if (raw.has_code === false && raw.skill_md) return 'instructions';
+    // If it has bins/ or heavy deps, it needs a container
+    if (raw.has_bins || raw.capabilities?.includes('browser')) return 'container';
+    // Default to worker (pure function)
+    return 'worker';
+  }
+
+  private extractCapabilities(raw: ClawHubSkill): string[] {
+    const caps: string[] = [];
+    if (raw.has_bins) caps.push('native-binaries');
+    if (raw.capabilities) caps.push(...raw.capabilities);
+    return caps;
+  }
+}
+```
+
+**Frequency:** Every 10 minutes. **Estimated lines:** ~200.
+
+**VirusTotal handling:** Of ~2,857 skills on ClawHub, 341 are flagged by VirusTotal. These are ingested (agents might still want them in adventurous mode) but with `trust_score = 0.3`. Cognium will do a deeper scan and adjust the score.
+
+### 10.3 GitHub / skills.sh Sync
+
+Polls GitHub for repositories tagged with skill metadata (topics: `mcp-skill`, `agent-skill`, or the skills.sh registry format).
+
+```typescript
+// src/sync/github.ts
+
+export class GitHubSync extends BaseSyncWorker {
+  protected get sourceName() { return 'github'; }
+
+  async fetchBatch(cursor?: string) {
+    const query = 'topic:mcp-skill OR topic:agent-skill';
+    const url = new URL('https://api.github.com/search/repositories');
+    url.searchParams.set('q', query);
+    url.searchParams.set('sort', 'updated');
+    url.searchParams.set('per_page', '100');
+    if (cursor) url.searchParams.set('page', cursor);
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${this.env.GITHUB_TOKEN}`,
+      },
+    });
+    const data = await res.json() as GitHubSearchResponse;
+    const page = parseInt(cursor ?? '1');
+
+    return {
+      skills: data.items,
+      nextCursor: data.items.length === 100 ? String(page + 1) : undefined,
+    };
+  }
+
+  normalize(raw: GitHubRepo): SkillUpsert {
+    return {
+      name: raw.name,
+      slug: slugify(raw.full_name.replace('/', '-')),
+      description: raw.description ?? '',
+      executionLayer: 'container',      // GitHub repos generally need clone + run
+      capabilitiesRequired: ['git'],
+      source: 'github',
+      sourceUrl: raw.html_url,
+      sourceHash: '',
+      trustScore: 0.5,                  // unscanned GitHub default
+    };
+  }
+}
+```
+
+**Frequency:** Every 15 minutes. **Estimated lines:** ~150.
+
+**Note:** GitHub rate limits apply (5,000 requests/hour authenticated). The sync worker uses conditional requests (`If-None-Match` / ETags) to minimize API calls. SKILL.md parsing (extracting schema, description) happens in the embedding queue consumer, not in the sync worker itself.
+
+### 10.4 Direct Publish (Internal)
+
+Not a sync worker — this is the internal API endpoint used by Forge (distilled/generated skills), Cognium (trust score updates), and manual uploads. Covered in Section 11.
+
+### Cron Configuration
+
+```toml
+# wrangler.toml
+[triggers]
+crons = [
+  "*/5 * * * *",    # sync-mcp-registry (every 5 min)
+  "*/10 * * * *",   # sync-clawhub (every 10 min)
+  "*/15 * * * *",   # sync-github (every 15 min)
+]
+```
+
+```typescript
+// src/index.ts — scheduled handler
+export default {
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    const minute = new Date(event.scheduledTime).getMinutes();
+
+    // Every 5 minutes: MCP Registry
+    if (minute % 5 === 0) {
+      ctx.waitUntil(new McpRegistrySync(env).run());
+    }
+    // Every 10 minutes: ClawHub
+    if (minute % 10 === 0) {
+      ctx.waitUntil(new ClawHubSync(env).run());
+    }
+    // Every 15 minutes: GitHub
+    if (minute % 15 === 0) {
+      ctx.waitUntil(new GitHubSync(env).run());
+    }
+  },
+};
+```
+
+### Sync Summary
+
+| Source | Frequency | Est. Skills | Trust Default | Lines |
+|---|---|---|---|---|
+| MCP Registry | 5 min | ~5,000 | 0.7 | ~150 |
+| ClawHub | 10 min | ~3,000 (341 flagged) | 0.3–0.6 | ~200 |
+| GitHub / skills.sh | 15 min | ~2,000 | 0.5 | ~150 |
+| Direct publish | Immediate | — | varies | ~100 (in Publish API) |
+| Base sync class | shared | — | — | ~150 |
+| **Total sync code** | — | **~10,000** | — | **~750** |
+
+---
+
+## 11. Publish API
+
+The Publish API is the write path for skills entering Runics from internal sources: Forge (generated/distilled), Cognium (trust score updates), manual uploads, and tenant-specific skill registration.
+
+### Endpoints
+
+```typescript
+// POST /v1/skills — Publish a new skill
+// PUT  /v1/skills/:id — Update existing skill
+// PUT  /v1/skills/:id/trust — Update trust score only (Cognium)
+// DELETE /v1/skills/:id — Remove skill from registry
+
+app.post('/v1/skills', zValidator('json', publishSkillSchema), async (c) => {
+  const input = c.req.valid('json');
+
+  // 1. Validate schema
+  const skill = publishSkillSchema.parse(input);
+
+  // 2. Upload bundle to R2 (if provided)
+  let r2BundleKey: string | undefined;
+  if (skill.bundle) {
+    r2BundleKey = `skills/${skill.slug}/${skill.version}/bundle.tar.gz`;
+    await c.env.R2_BUCKET.put(r2BundleKey, skill.bundle);
+  }
+
+  // 3. Insert skill row
+  const [inserted] = await db.insert(skills).values({
+    name: skill.name,
+    slug: skill.slug,
+    version: skill.version ?? '1.0.0',
+    description: skill.description,
+    schemaJson: skill.schemaJson,
+    executionLayer: skill.executionLayer,
+    mcpUrl: skill.mcpUrl,
+    skillMd: skill.skillMd,
+    capabilitiesRequired: skill.capabilitiesRequired,
+    source: skill.source ?? 'manual',
+    sourceUrl: skill.sourceUrl,
+    tenantId: skill.tenantId ?? null,
+    trustScore: skill.trustScore ?? 0.5,
+    r2BundleKey,
+  }).returning();
+
+  // 4. Enqueue for embedding generation (async)
+  await c.env.EMBED_QUEUE.send({ skillId: inserted.id, action: 'embed' });
+
+  // 5. Enqueue for Cognium scanning (async, unless source is 'cognium')
+  if (skill.source !== 'cognium') {
+    await c.env.COGNIUM_QUEUE.send({ skillId: inserted.id, action: 'scan' });
+  }
+
+  return c.json({ id: inserted.id, slug: inserted.slug, status: 'published' }, 201);
+});
+```
+
+### Trust Score Update (Cognium Callback)
+
+```typescript
+// PUT /v1/skills/:id/trust — called by Cognium after scan
+app.put('/v1/skills/:id/trust', zValidator('json', trustUpdateSchema), async (c) => {
+  const skillId = c.req.param('id');
+  const { trustScore, cogniumReport } = c.req.valid('json');
+
+  await db.update(skills)
+    .set({
+      trustScore,
+      cogniumScannedAt: new Date(),
+      contentSafetyPassed: cogniumReport.contentSafe,
+      updatedAt: new Date(),
+    })
+    .where(eq(skills.id, skillId));
+
+  // Invalidate cached search results that might include this skill
+  // (KV TTL handles this — 60s max staleness)
+
+  return c.json({ id: skillId, trustScore, status: 'updated' });
+});
+```
+
+### Validation Schema
+
+```typescript
+// src/publish/schema.ts
+
+export const publishSkillSchema = z.object({
+  name: z.string().min(1).max(200),
+  slug: z.string().regex(/^[a-z0-9-]+$/),
+  version: z.string().optional(),
+  description: z.string().min(10).max(2000),
+  schemaJson: z.record(z.unknown()).optional(),
+  executionLayer: z.enum(['mcp-remote', 'instructions', 'worker', 'container']),
+  mcpUrl: z.string().url().optional(),
+  skillMd: z.string().optional(),
+  capabilitiesRequired: z.array(z.string()).optional(),
+  source: z.enum(['manual', 'forge', 'cognium']).optional(),
+  sourceUrl: z.string().optional(),
+  tenantId: z.string().uuid().optional(),
+  trustScore: z.number().min(0).max(1).optional(),
+  bundle: z.instanceof(ArrayBuffer).optional(),
+});
+
+export const trustUpdateSchema = z.object({
+  trustScore: z.number().min(0).max(1),
+  cogniumReport: z.object({
+    contentSafe: z.boolean(),
+    findings: z.array(z.object({
+      tool: z.string(),
+      severity: z.enum(['low', 'medium', 'high', 'critical']),
+      message: z.string(),
+    })),
+    scannedAt: z.string().datetime(),
+  }),
+});
+```
+
+### Publish Flow
+
+```
+Forge / Manual / Tenant upload
+    │
+    ├─ 1. Validate input (Zod schema)
+    ├─ 2. Upload bundle to R2 (if code skill)
+    ├─ 3. Insert/upsert skill row in Neon
+    ├─ 4. Enqueue → EMBED_QUEUE (agent summary + embeddings)
+    ├─ 5. Enqueue → COGNIUM_QUEUE (trust scoring)
+    └─ 6. Return skill ID + slug
+
+Later (async):
+    ├─ EMBED_QUEUE consumer: generate agent_summary, alternate queries, embeddings
+    └─ COGNIUM_QUEUE consumer: boot container, scan, update trust_score
+```
+
+**Estimated lines:** ~100 (handler + schema).
+
+---
+
+## 12. Query Pipeline
 
 ### The complete findSkill flow
 
@@ -843,7 +1287,7 @@ findSkill("make sure we're not shipping GPL code in proprietary product")
 
 ---
 
-## 11. Monitoring & Quality Learning
+## 13. Monitoring & Quality Learning
 
 Three components that work together to make search improve over time.
 
@@ -971,7 +1415,7 @@ search_logs + quality_feedback
 
 ---
 
-## 12. API Surface
+## 14. API Surface
 
 ```typescript
 // src/index.ts — Hono router
@@ -980,9 +1424,14 @@ search_logs + quality_feedback
 POST   /v1/search                      // findSkill — the main endpoint
 POST   /v1/search/feedback              // record quality feedback
 
-// ── Ingestion ──
-POST   /v1/skills/:skillId/index        // index a skill (single or multi-vector)
-DELETE /v1/skills/:skillId              // remove skill from search index
+// ── Publish ──
+POST   /v1/skills                       // publish a new skill
+PUT    /v1/skills/:id                   // update existing skill
+PUT    /v1/skills/:id/trust             // update trust score (Cognium callback)
+DELETE /v1/skills/:id                   // remove skill from registry
+
+// ── Ingestion (internal) ──
+POST   /v1/skills/:skillId/index        // re-index a skill (single or multi-vector)
 
 // ── Analytics (internal/admin) ──
 GET    /v1/analytics/tiers              // tier distribution
@@ -1013,12 +1462,12 @@ GET    /health                          // db connectivity + latency
   "limit": 10                        // optional, default 10
 }
 
-// Response: FindSkillResponse (see Section 10)
+// Response: FindSkillResponse (see Section 12)
 ```
 
 ---
 
-## 13. Caching Strategy
+## 15. Caching Strategy
 
 ```typescript
 // src/cache/kv-cache.ts
@@ -1044,7 +1493,7 @@ export class SearchCache {
 
 ---
 
-## 14. Technology Stack & Cost Model
+## 16. Technology Stack & Cost Model
 
 ### Stack
 
@@ -1089,7 +1538,7 @@ Both well within Neon Pro 10GB limit.
 
 ---
 
-## 15. MVP Build Plan
+## 17. MVP Build Plan
 
 ### Phase 1: Foundation + Eval (Week 1)
 
@@ -1158,9 +1607,27 @@ Both well within Neon Pro 10GB limit.
 
 **Exit criteria:** Production-ready. SLOs met. Monitoring in place. Quality loop operational.
 
+### Phase 5: Sync Pipelines & Publish API (Weeks 5–6)
+
+**Deliverable:** All skill sources flowing into the registry.
+
+- [ ] `BaseSyncWorker` abstract class (change detection, upsert, queue dispatch)
+- [ ] `McpRegistrySync` adapter + cron trigger (every 5 min)
+- [ ] `ClawHubSync` adapter + VirusTotal flag handling + cron trigger (every 10 min)
+- [ ] `GitHubSync` adapter + ETag caching + cron trigger (every 15 min)
+- [ ] Publish API: `POST /v1/skills`, `PUT /v1/skills/:id`, `DELETE /v1/skills/:id`
+- [ ] Trust update endpoint: `PUT /v1/skills/:id/trust` (Cognium callback)
+- [ ] R2 bundle upload for code skills
+- [ ] Queue integration: EMBED_QUEUE + COGNIUM_QUEUE producers
+- [ ] Queue consumers: embedding generation, Cognium dispatch
+- [ ] Sync monitoring: per-source success/skip/error counts
+- [ ] End-to-end test: sync → embed → search → find newly synced skill
+
+**Exit criteria:** All three upstream sources syncing. Publish API operational. Skills discoverable within 5 minutes of upstream publish.
+
 ---
 
-## 16. Eval Suite
+## 18. Eval Suite
 
 The eval suite is a **Phase 1 deliverable**. No match quality number is cited as architecture-driving until validated here.
 
@@ -1201,7 +1668,7 @@ The eval runner hits the live search endpoint and computes metrics. Results stor
 
 ---
 
-## 17. Migration Triggers
+## 19. Migration Triggers
 
 ### Add Meilisearch when:
 - User-facing search UI needed (InstantSearch.js)
@@ -1221,7 +1688,7 @@ The eval runner hits the live search endpoint and computes metrics. Results stor
 
 ---
 
-## 18. Risks & Mitigations
+## 20. Risks & Mitigations
 
 | Risk | Impact | Mitigation |
 |---|---|---|
@@ -1236,16 +1703,16 @@ The eval runner hits the live search endpoint and computes metrics. Results stor
 
 ---
 
-## 19. Project Structure
+## 21. Project Structure
 
 ```
-runics-search/
+runics/
 ├── wrangler.toml
 ├── package.json
 ├── tsconfig.json
 ├── drizzle.config.ts
 ├── src/
-│   ├── index.ts                          # Worker entry, Hono router
+│   ├── index.ts                          # Worker entry, Hono router, scheduled handler
 │   ├── types.ts                          # All shared types and interfaces
 │   │
 │   ├── providers/
@@ -1260,8 +1727,18 @@ runics-search/
 │   ├── ingestion/
 │   │   ├── embed-pipeline.ts             # Skill → embedding pipeline
 │   │   ├── agent-summary.ts              # LLM summary generation prompts
-│   │   ├── alternate-queries.ts          # Multi-vector query generation (Phase 3)
+│   │   ├── alternate-queries.ts          # Multi-vector query generation
 │   │   └── content-safety.ts             # Llama Guard classification
+│   │
+│   ├── sync/
+│   │   ├── base-sync.ts                  # BaseSyncWorker abstract class
+│   │   ├── mcp-registry.ts              # MCP Registry adapter (every 5 min)
+│   │   ├── clawhub.ts                    # ClawHub adapter (every 10 min)
+│   │   └── github.ts                     # GitHub / skills.sh adapter (every 15 min)
+│   │
+│   ├── publish/
+│   │   ├── handler.ts                    # POST /v1/skills, PUT trust, DELETE
+│   │   └── schema.ts                     # Zod schemas for publish/trust endpoints
 │   │
 │   ├── monitoring/
 │   │   ├── search-logger.ts              # Structured search event logging
@@ -1290,12 +1767,15 @@ runics-search/
 └── tests/
     ├── providers/pgvector-provider.test.ts
     ├── intelligence/confidence-gate.test.ts
+    ├── sync/mcp-registry.test.ts
+    ├── sync/clawhub.test.ts
+    ├── publish/handler.test.ts
     └── monitoring/quality-tracker.test.ts
 ```
 
 ---
 
-## 20. Implementation Notes for Claude Code
+## 22. Implementation Notes for Claude Code
 
 ### Critical decisions
 
@@ -1319,7 +1799,7 @@ runics-search/
 
 ```toml
 # wrangler.toml
-name = "runics-search"
+name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
 
@@ -1333,6 +1813,35 @@ id = "<kv-namespace-id>"
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "<hyperdrive-id>"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "runics-skills"
+
+[[queues.producers]]
+binding = "EMBED_QUEUE"
+queue = "runics-embed"
+
+[[queues.producers]]
+binding = "COGNIUM_QUEUE"
+queue = "runics-cognium"
+
+[[queues.consumers]]
+queue = "runics-embed"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[[queues.consumers]]
+queue = "runics-cognium"
+max_batch_size = 5
+max_batch_timeout = 60
+
+[triggers]
+crons = [
+  "*/5 * * * *",    # sync-mcp-registry
+  "*/10 * * * *",   # sync-clawhub
+  "*/15 * * * *",   # sync-github
+]
 
 [ai]
 binding = "AI"
