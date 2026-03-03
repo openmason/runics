@@ -92,6 +92,7 @@ export async function runEvalSuite(
           tier2: { total: 0, enrichedImproved: 0, liftRate: 0 },
           tier3: { total: 0, enrichedImproved: 0, liftRate: 0 },
         },
+        matchSourceDistribution: {},
       },
       fixtureCount: 0,
       passed: 0,

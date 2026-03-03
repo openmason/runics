@@ -55,6 +55,7 @@ export function computeMetrics(results: EvalResult[]): EvalMetrics {
       tier2: { total: 0, enrichedImproved: 0, liftRate: 0 },
       tier3: { total: 0, enrichedImproved: 0, liftRate: 0 },
     },
+    matchSourceDistribution: {},
   };
 
   if (results.length === 0) {
@@ -76,6 +77,9 @@ export function computeMetrics(results: EvalResult[]): EvalMetrics {
   const latencyByTier = computeLatencyByTier(results);
   const llmFallbackLift = computeLLMFallbackLift(results);
 
+  // Phase 3: Match source distribution
+  const matchSourceDistribution = computeMatchSourceDistribution(results);
+
   return {
     recall1,
     recall5,
@@ -86,6 +90,7 @@ export function computeMetrics(results: EvalResult[]): EvalMetrics {
     tierAccuracy,
     latencyByTier,
     llmFallbackLift,
+    matchSourceDistribution,
   };
 }
 
@@ -288,6 +293,41 @@ function computeLLMFallbackLift(results: EvalResult[]): {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Phase 3: Match Source Distribution
+// ──────────────────────────────────────────────────────────────────────────────
+
+function computeMatchSourceDistribution(
+  results: EvalResult[]
+): Record<string, { count: number; correctAtRank1: number; avgScore: number }> {
+  const dist: Record<string, { count: number; correctAtRank1: number; scores: number[] }> = {};
+
+  for (const result of results) {
+    const topResult = result.response.results[0];
+    if (!topResult) continue;
+
+    const source = topResult.matchSource || 'unknown';
+    if (!dist[source]) {
+      dist[source] = { count: 0, correctAtRank1: 0, scores: [] };
+    }
+
+    dist[source].count++;
+    dist[source].scores.push(topResult.score);
+    if (result.foundInTop1) dist[source].correctAtRank1++;
+  }
+
+  const final: Record<string, { count: number; correctAtRank1: number; avgScore: number }> = {};
+  for (const [source, data] of Object.entries(dist)) {
+    final[source] = {
+      count: data.count,
+      correctAtRank1: data.correctAtRank1,
+      avgScore: data.scores.reduce((a, b) => a + b, 0) / data.scores.length,
+    };
+  }
+
+  return final;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Helper: Find Rank of Expected Skill
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -401,6 +441,20 @@ export function formatMetrics(metrics: EvalMetrics): string {
     `  Tier 3: ${t3.total} queries, ${t3.enrichedImproved} enriched+correct (lift: ${(t3.liftRate * 100).toFixed(1)}%)`
   );
   lines.push('');
+
+  // Match source distribution (Phase 3)
+  const sources = Object.keys(metrics.matchSourceDistribution).sort();
+  if (sources.length > 0) {
+    lines.push('Match Source Distribution:');
+    for (const source of sources) {
+      const sd = metrics.matchSourceDistribution[source];
+      const r1Pct = sd.count > 0 ? ((sd.correctAtRank1 / sd.count) * 100).toFixed(0) : '0';
+      lines.push(
+        `  ${source.padEnd(16)} — ${sd.count} queries (${((sd.count / total) * 100).toFixed(0)}%), R@1: ${r1Pct}%, avg: ${sd.avgScore.toFixed(3)}`
+      );
+    }
+    lines.push('');
+  }
 
   // Per-pattern breakdown
   lines.push('By Pattern:');

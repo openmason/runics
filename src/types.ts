@@ -309,6 +309,9 @@ export interface EvalMetrics {
     tier2: { total: number; enrichedImproved: number; liftRate: number };
     tier3: { total: number; enrichedImproved: number; liftRate: number };
   };
+
+  // Phase 3: match source distribution
+  matchSourceDistribution: Record<string, { count: number; correctAtRank1: number; avgScore: number }>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -340,4 +343,7 @@ export interface Env {
   CLUSTER_DENSITY_THRESHOLD?: string; // Relative threshold for cluster density (default: "0.05")
   DEEP_SEARCH_ENABLED?: string; // Enable LLM deep search (default: "true")
   LLM_MAX_TOKENS?: string; // Max tokens for LLM calls (default: "500")
+
+  // Phase 3: Multi-vector indexing
+  MULTI_VECTOR_ENABLED?: string; // Set to "true" to enable multi-vector indexing
 }

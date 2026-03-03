@@ -251,6 +251,10 @@ describe('Eval Metrics', () => {
           tier2: { total: 15, enrichedImproved: 5, liftRate: 0.333 },
           tier3: { total: 5, enrichedImproved: 3, liftRate: 0.6 },
         },
+        matchSourceDistribution: {
+          agent_summary: { count: 20, correctAtRank1: 15, avgScore: 0.52 },
+          alt_query_0: { count: 10, correctAtRank1: 8, avgScore: 0.55 },
+        },
       };
 
       const formatted = formatMetrics(metrics);
@@ -263,6 +267,9 @@ describe('Eval Metrics', () => {
       expect(formatted).toContain('Accuracy Per Tier');
       expect(formatted).toContain('Latency Per Tier');
       expect(formatted).toContain('LLM Fallback Lift');
+      expect(formatted).toContain('Match Source Distribution');
+      expect(formatted).toContain('agent_summary');
+      expect(formatted).toContain('alt_query_0');
     });
   });
 });

@@ -60,6 +60,9 @@ CLUSTER_DENSITY_THRESHOLD = "0.05"    # Relative threshold for cluster density
 DEEP_SEARCH_ENABLED = "true"          # Enable LLM deep search for Tier 2/3
 LLM_MAX_TOKENS = "500"               # Max tokens per LLM call
 
+# Phase 3: Multi-vector indexing
+MULTI_VECTOR_ENABLED = "false"        # Phase 3 result: +1.1% R@1 lift, below 5% threshold — disabled
+
 # Production environment overrides
 [env.production]
 [env.production.vars]

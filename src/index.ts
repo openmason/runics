@@ -247,9 +247,10 @@ app.post('/v1/skills/:skillId/index', async (c) => {
     }
 
     // ── 2. Generate Embeddings ──
-    console.log(`[INDEX] Step 2: Generate embeddings`);
-    const embeddings = await embedPipeline.processSkill(skill);
-    console.log(`[INDEX] Embeddings generated: ${embeddings.agentSummary.embedding.length} dims`);
+    const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';
+    const embeddings = useMultiVector
+      ? await embedPipeline.processSkillMultiVector(skill)
+      : await embedPipeline.processSkill(skill);
 
     // ── 3. Index Skill ──
     console.log(`[INDEX] Step 3: Index in database`);
@@ -262,6 +263,8 @@ app.post('/v1/skills/:skillId/index', async (c) => {
       indexed: true,
       contentSafe: true,
       agentSummary: embeddings.agentSummary.text,
+      alternateCount: embeddings.alternates?.length ?? 0,
+      alternateQueries: embeddings.alternates?.map((a) => a.text),
     });
   } catch (error) {
     console.error('[INDEX] Error occurred:', error);

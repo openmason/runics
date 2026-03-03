@@ -173,36 +173,107 @@ Capabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Phase 3: Multi-Vector Processing (NOT IMPLEMENTED YET)
+  // Phase 3: Multi-Vector Processing
   // ────────────────────────────────────────────────────────────────────────────
 
-  async processSkillMultiVector(_skill: SkillInput): Promise<EmbeddingSet> {
-    throw new Error(
-      'Multi-vector processing is not implemented in Phase 1. Use processSkill() instead.'
-    );
+  async processSkillMultiVector(skill: SkillInput): Promise<EmbeddingSet> {
+    // 1. Get base agent_summary embedding
+    const base = await this.processSkill(skill);
 
-    // Phase 3 implementation:
-    // 1. Generate base embedding via processSkill()
-    // 2. Generate 5 alternate queries via generateAlternateQueries()
-    // 3. Batch embed all alternates in single API call
-    // 4. Return EmbeddingSet with alternates
+    // 2. Generate 5 alternate queries via LLM
+    const skillWithSummary: SkillInput = {
+      ...skill,
+      agentSummary: skill.agentSummary ?? base.agentSummary.text,
+    };
+    const alternateTexts = await this.generateAlternateQueries(skillWithSummary);
+
+    if (alternateTexts.length === 0) {
+      console.log(`[MULTI-VECTOR] No alternates generated for ${skill.name}, using base only`);
+      return base;
+    }
+
+    // 3. Batch embed all alternates in a single Workers AI call
+    try {
+      const embedResult = await this.env.AI.run(this.env.EMBEDDING_MODEL as any, {
+        text: alternateTexts,
+      });
+
+      const embeddings = (embedResult as any)?.data;
+      if (!embeddings || !Array.isArray(embeddings)) {
+        console.error(`[MULTI-VECTOR] Batch embedding failed for ${skill.name}`);
+        return base;
+      }
+
+      // 4. Build alternate embedding entries
+      const alternates = alternateTexts.map((text, i) => ({
+        source: `alt_query_${i}`,
+        text,
+        embedding: embeddings[i] as number[],
+      }));
+
+      console.log(`[MULTI-VECTOR] Generated ${alternates.length} alternates for ${skill.name}`);
+
+      return { ...base, alternates };
+    } catch (error) {
+      console.error(`[MULTI-VECTOR] Batch embedding error for ${skill.name}:`, error);
+      return base;
+    }
   }
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Phase 3: Alternate Query Generation (NOT IMPLEMENTED YET)
+  // Phase 3: Alternate Query Generation
   // ────────────────────────────────────────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private async _generateAlternateQueries(_skill: SkillInput): Promise<string[]> {
-    throw new Error(
-      'Alternate query generation is not implemented in Phase 1.'
-    );
+  private async generateAlternateQueries(skill: SkillInput): Promise<string[]> {
+    try {
+      const response = await this.env.AI.run(this.env.LLM_MODEL as any, {
+        messages: [
+          { role: 'system', content: ALTERNATE_QUERY_PROMPT },
+          {
+            role: 'user',
+            content: `Name: ${skill.name}\nAgent summary: ${skill.agentSummary ?? skill.description}\nTags: ${skill.tags.join(', ')}\nCategory: ${skill.category ?? 'general'}\nCapabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`,
+          },
+        ],
+        max_tokens: 200,
+      });
 
-    // Phase 3 implementation:
-    // 1. Use ALTERNATE_QUERY_PROMPT to generate 5 queries
-    // 2. Parse JSON response
-    // 3. Return array of 5 strings
-    // 4. Each query uses different strategy: direct, problem, business, alternate, composition
+      // Workers AI chat models return { response: string }
+      let text = '';
+      if (response && typeof response === 'object' && 'response' in response) {
+        text = String((response as any).response).trim();
+      } else if (typeof response === 'string') {
+        text = response.trim();
+      } else {
+        return [];
+      }
+
+      // Try JSON parse first (preferred)
+      const cleaned = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      let queries: string[] = [];
+
+      try {
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed)) {
+          queries = parsed.filter((s: unknown): s is string => typeof s === 'string');
+        }
+      } catch {
+        // Fallback: parse as newline-separated, comma-separated, or numbered list
+        const separator = cleaned.includes('\n') ? '\n' : ',';
+        queries = cleaned
+          .split(separator)
+          .map((line) => line.replace(/^\d+[\.\)]\s*/, '').replace(/^[-*]\s*/, '').replace(/^["']|["']$/g, '').trim())
+          .filter((line) => line.length >= 4);
+      }
+
+      const result = queries
+        .filter((s) => s.length >= 4 && s.length <= 80)
+        .slice(0, 5);
+
+      return result;
+    } catch (error) {
+      console.error(`[MULTI-VECTOR] Failed for ${skill.name}:`, (error as Error).message);
+      return [];
+    }
   }
 }
 
@@ -210,9 +281,7 @@ Capabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`;
 // Prompts (Phase 3)
 // ══════════════════════════════════════════════════════════════════════════════
 
-// Not used in Phase 1 - will be used in Phase 3 for generateAlternateQueries
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _ALTERNATE_QUERY_PROMPT = `You generate search queries that developers or AI agents would use to find this skill. Think about:
+const ALTERNATE_QUERY_PROMPT = `You generate search queries that developers or AI agents would use to find this skill. Think about:
 
 1. DIRECT: How someone who knows exactly what they want would ask
 2. PROBLEM-BASED: How someone describing their problem (not the solution) would ask
