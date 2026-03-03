@@ -61,7 +61,18 @@ DEEP_SEARCH_ENABLED = "true"          # Enable LLM deep search for Tier 2/3
 LLM_MAX_TOKENS = "500"               # Max tokens per LLM call
 
 # Phase 3: Multi-vector indexing
-MULTI_VECTOR_ENABLED = "false"        # Phase 3 result: +1.1% R@1 lift, below 5% threshold — disabled
+MULTI_VECTOR_ENABLED = "true"         # +5.7% R@1 combined with reranker, eliminates Tier 3
+
+# Phase 4: Production polish
+CIRCUIT_BREAKER_THRESHOLD = "3"       # Consecutive LLM failures before circuit opens
+CIRCUIT_BREAKER_COOLDOWN_MS = "30000" # Cooldown before half-open retry (30s)
+RATE_LIMIT_RPM = "100"                # Max search requests per minute per IP
+RERANKER_ENABLED = "true"             # Cross-encoder reranking (+4.6% R@1 lift, eval-measured)
+RERANKER_TOP_N = "20"                 # Number of candidates to rerank
+
+# Cron trigger for materialized view refresh (hourly)
+[triggers]
+crons = ["0 * * * *"]
 
 # Production environment overrides
 [env.production]

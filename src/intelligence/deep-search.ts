@@ -17,6 +17,7 @@ import type {
   ScoredSkill,
   CompositionResult,
 } from '../types';
+import type { CircuitBreaker } from '../resilience/circuit-breaker';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Deep Search Prompt (from Architecture spec section 6)
@@ -98,7 +99,8 @@ export class DeepSearch {
   constructor(
     private env: Env,
     private provider: SearchProvider,
-    private embedFn: (text: string) => Promise<number[]>
+    private embedFn: (text: string) => Promise<number[]>,
+    private circuitBreaker: CircuitBreaker
   ) {
     this.maxTokens = parseInt(env.LLM_MAX_TOKENS || '500');
   }
@@ -259,52 +261,56 @@ export class DeepSearch {
   // ──────────────────────────────────────────────────────────────────────────
 
   private async generateAlternateQueries(query: string): Promise<string[]> {
-    try {
-      const response = await this.env.AI.run(
-        this.env.LLM_MODEL as any,
-        {
-          messages: [
-            { role: 'system', content: QUERY_EXPANSION_PROMPT },
-            { role: 'user', content: query },
-          ],
-          max_tokens: 200,
-        }
-      );
+    const { result: queries } = await this.circuitBreaker.execute(
+      async () => {
+        const response = await this.env.AI.run(
+          this.env.LLM_MODEL as any,
+          {
+            messages: [
+              { role: 'system', content: QUERY_EXPANSION_PROMPT },
+              { role: 'user', content: query },
+            ],
+            max_tokens: 200,
+          }
+        );
 
-      const responseText = (response as any).response;
-      const parsed = JSON.parse(responseText);
-      return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
-    } catch (error) {
-      console.error('DeepSearch generateAlternateQueries error:', error);
-      return [];
-    }
+        const responseText = (response as any).response;
+        const parsed = JSON.parse(responseText);
+        return Array.isArray(parsed) ? parsed.slice(0, 3) : [];
+      },
+      [] as string[]
+    );
+
+    return queries;
   }
 
   private async callDeepSearchLLM(
     query: string,
     resultContext: string
   ): Promise<LLMDeepSearchResponse | null> {
-    try {
-      const response = await this.env.AI.run(
-        this.env.LLM_MODEL as any,
-        {
-          messages: [
-            { role: 'system', content: DEEP_SEARCH_PROMPT },
-            {
-              role: 'user',
-              content: `Query: "${query}"\n\nInitial results:\n${resultContext}`,
-            },
-          ],
-          max_tokens: this.maxTokens,
-        }
-      );
+    const { result } = await this.circuitBreaker.execute(
+      async () => {
+        const response = await this.env.AI.run(
+          this.env.LLM_MODEL as any,
+          {
+            messages: [
+              { role: 'system', content: DEEP_SEARCH_PROMPT },
+              {
+                role: 'user',
+                content: `Query: "${query}"\n\nInitial results:\n${resultContext}`,
+              },
+            ],
+            max_tokens: this.maxTokens,
+          }
+        );
 
-      const responseText = (response as any).response;
-      return JSON.parse(responseText) as LLMDeepSearchResponse;
-    } catch (error) {
-      console.error('DeepSearch callDeepSearchLLM error:', error);
-      return null;
-    }
+        const responseText = (response as any).response;
+        return JSON.parse(responseText) as LLMDeepSearchResponse;
+      },
+      null
+    );
+
+    return result;
   }
 
   private mergeResults(

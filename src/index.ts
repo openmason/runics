@@ -12,6 +12,7 @@ import { SearchLogger } from './monitoring/search-logger';
 import { QualityTracker } from './monitoring/quality-tracker';
 import { PerfMonitor } from './monitoring/perf-monitor';
 import { ConfidenceGate } from './intelligence/confidence-gate';
+import { rateLimiter } from './middleware/rate-limiter';
 import type {
   Env,
   FindSkillRequest,
@@ -121,6 +122,9 @@ app.get('/health', async (c) => {
 // ──────────────────────────────────────────────────────────────────────────────
 // Search Endpoint
 // ──────────────────────────────────────────────────────────────────────────────
+
+// Rate limiting on search endpoint
+app.use('/v1/search', rateLimiter());
 
 /**
  * POST /v1/search
@@ -469,7 +473,28 @@ app.notFound((c) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Export
+// Export (fetch + scheduled handler)
 // ──────────────────────────────────────────────────────────────────────────────
 
-export default app;
+export default {
+  fetch: app.fetch,
+
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    const { qualityTracker } = initComponents(env);
+
+    ctx.waitUntil(
+      qualityTracker
+        .refreshSummary()
+        .then(() =>
+          console.log('[CRON] Materialized view refreshed successfully')
+        )
+        .catch((error: Error) =>
+          console.error('[CRON] Materialized view refresh failed:', error.message)
+        )
+    );
+  },
+};

@@ -33,6 +33,8 @@ import type { SearchCache } from '../cache/kv-cache';
 import type { SearchLogger } from '../monitoring/search-logger';
 import { DeepSearch } from './deep-search';
 import { CompositionDetector } from './composition-detector';
+import { Reranker } from './reranker';
+import { CircuitBreaker } from '../resilience/circuit-breaker';
 import { Pool } from '@neondatabase/serverless';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -58,6 +60,9 @@ export class ConfidenceGate {
   private deepSearchEnabled: boolean;
   private deepSearch: DeepSearch;
   private compositionDetector: CompositionDetector;
+  private reranker: Reranker;
+  private rerankerEnabled: boolean;
+  private circuitBreaker: CircuitBreaker;
 
   constructor(
     private env: Env,
@@ -75,11 +80,20 @@ export class ConfidenceGate {
     );
     this.deepSearchEnabled = env.DEEP_SEARCH_ENABLED !== 'false';
 
-    this.deepSearch = new DeepSearch(env, provider, embedFn);
+    this.circuitBreaker = new CircuitBreaker(
+      parseInt(env.CIRCUIT_BREAKER_THRESHOLD || '3'),
+      parseInt(env.CIRCUIT_BREAKER_COOLDOWN_MS || '30000')
+    );
+
+    this.rerankerEnabled = env.RERANKER_ENABLED === 'true';
+    this.reranker = new Reranker(env, pool, this.circuitBreaker);
+
+    this.deepSearch = new DeepSearch(env, provider, embedFn, this.circuitBreaker);
     this.compositionDetector = new CompositionDetector(
       env,
       provider,
-      embedFn
+      embedFn,
+      this.circuitBreaker
     );
   }
 
@@ -123,7 +137,26 @@ export class ConfidenceGate {
     });
 
     // ── 5. Assess Confidence (multi-signal) ──
-    const tier = this.assessConfidence(searchResult);
+    // Assess BEFORE reranking — confidence thresholds are calibrated for bi-encoder scores
+    const assessedTier = this.assessConfidence(searchResult);
+
+    // ── 5b. Cross-Encoder Reranking (optional) ──
+    // Reranker only reorders results; confidence tier is already determined
+    let reranked = false;
+    if (this.rerankerEnabled && searchResult.results.length > 1) {
+      const rerankerResult = await this.reranker.rerank(
+        query,
+        searchResult.results
+      );
+      if (rerankerResult.applied) {
+        searchResult.results = rerankerResult.results;
+        reranked = true;
+      }
+    }
+
+    // If circuit breaker is open, force Tier 1 (skip LLM calls)
+    const degraded = this.circuitBreaker.isOpen && assessedTier > 1;
+    const tier = degraded ? 1 : assessedTier;
 
     // ── 6. Route by Tier ──
     let response: FindSkillResponse;
@@ -133,7 +166,9 @@ export class ConfidenceGate {
         response = await this.handleTier1(
           query,
           searchResult,
-          startTime
+          startTime,
+          degraded,
+          reranked
         );
         break;
 
@@ -144,7 +179,8 @@ export class ConfidenceGate {
           searchResult,
           filters,
           startTime,
-          ctx
+          ctx,
+          reranked
         );
         break;
 
@@ -155,7 +191,8 @@ export class ConfidenceGate {
           searchResult,
           filters,
           tenantId,
-          startTime
+          startTime,
+          reranked
         );
         break;
     }
@@ -234,7 +271,9 @@ export class ConfidenceGate {
   private async handleTier1(
     query: string,
     result: SearchResult,
-    startTime: number
+    startTime: number,
+    degraded: boolean = false,
+    reranked: boolean = false
   ): Promise<FindSkillResponse> {
     const skillResults = await this.buildSkillResults(result.results);
 
@@ -248,6 +287,8 @@ export class ConfidenceGate {
         tier: 1,
         cacheHit: false,
         llmInvoked: false,
+        ...(degraded ? { degraded: true } : {}),
+        ...(reranked ? { reranked: true } : {}),
       },
     };
   }
@@ -258,7 +299,8 @@ export class ConfidenceGate {
     result: SearchResult,
     filters: SearchFilters,
     startTime: number,
-    ctx: ExecutionContext
+    ctx: ExecutionContext,
+    reranked: boolean = false
   ): Promise<FindSkillResponse> {
     const skillResults = await this.buildSkillResults(result.results);
 
@@ -272,6 +314,7 @@ export class ConfidenceGate {
         tier: 2,
         cacheHit: false,
         llmInvoked: false,
+        ...(reranked ? { reranked: true } : {}),
       },
     };
 
@@ -293,7 +336,8 @@ export class ConfidenceGate {
     result: SearchResult,
     filters: SearchFilters,
     tenantId: string,
-    startTime: number
+    startTime: number,
+    reranked: boolean = false
   ): Promise<FindSkillResponse> {
     if (!this.deepSearchEnabled) {
       // Deep search disabled — return raw results
@@ -308,6 +352,7 @@ export class ConfidenceGate {
           tier: 3,
           cacheHit: false,
           llmInvoked: false,
+          ...(reranked ? { reranked: true } : {}),
         },
       };
     }
@@ -362,6 +407,7 @@ export class ConfidenceGate {
         tier: 3,
         cacheHit: false,
         llmInvoked: true,
+        ...(reranked ? { reranked: true } : {}),
       },
     };
   }

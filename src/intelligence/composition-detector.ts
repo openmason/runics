@@ -14,6 +14,7 @@
 
 import type { Env, ScoredSkill, CompositionResult } from '../types';
 import type { SearchProvider } from '../providers/search-provider';
+import type { CircuitBreaker } from '../resilience/circuit-breaker';
 
 const COMPOSITION_PROMPT = `You are analyzing a user query to detect if it requires multiple tools/skills in sequence.
 
@@ -42,7 +43,8 @@ export class CompositionDetector {
   constructor(
     private env: Env,
     private provider: SearchProvider,
-    private embedFn: (text: string) => Promise<number[]>
+    private embedFn: (text: string) => Promise<number[]>,
+    private circuitBreaker: CircuitBreaker
   ) {}
 
   async detect(
@@ -50,59 +52,65 @@ export class CompositionDetector {
     results: ScoredSkill[],
     filters: { tenantId: string }
   ): Promise<CompositionResult> {
-    try {
-      const response = await this.env.AI.run(
-        this.env.LLM_MODEL as any,
-        {
-          messages: [
-            { role: 'system', content: COMPOSITION_PROMPT },
-            { role: 'user', content: query },
-          ],
-          max_tokens: 200,
-        }
-      );
+    const notDetected: CompositionResult = {
+      detected: false,
+      parts: [],
+      reasoning: 'Composition detection skipped (circuit breaker)',
+    };
 
-      const responseText = (response as any).response;
-      const parsed = JSON.parse(responseText);
+    const { result: parsed, degraded } = await this.circuitBreaker.execute(
+      async () => {
+        const response = await this.env.AI.run(
+          this.env.LLM_MODEL as any,
+          {
+            messages: [
+              { role: 'system', content: COMPOSITION_PROMPT },
+              { role: 'user', content: query },
+            ],
+            max_tokens: 200,
+          }
+        );
 
-      if (!parsed.is_composition || !Array.isArray(parsed.parts) || parsed.parts.length === 0) {
-        return {
-          detected: false,
-          parts: [],
-          reasoning: parsed.reasoning || 'Single-skill query',
-        };
-      }
+        const responseText = (response as any).response;
+        return JSON.parse(responseText);
+      },
+      null
+    );
 
-      // Search for each composition part
-      const parts = await Promise.all(
-        parsed.parts.map(async (part: string) => {
-          const embedding = await this.embedFn(part);
-          const result = await this.provider.search(
-            part,
-            embedding,
-            { tenantId: filters.tenantId, contentSafetyRequired: true },
-            { limit: 1 }
-          );
+    if (degraded || !parsed) {
+      return notDetected;
+    }
 
-          return {
-            purpose: part,
-            skill: result.results[0] ?? null,
-          };
-        })
-      );
-
-      return {
-        detected: true,
-        parts,
-        reasoning: parsed.reasoning || 'Multi-skill workflow detected',
-      };
-    } catch (error) {
-      console.error('CompositionDetector error:', error);
+    if (!parsed.is_composition || !Array.isArray(parsed.parts) || parsed.parts.length === 0) {
       return {
         detected: false,
         parts: [],
-        reasoning: `Detection failed: ${(error as Error).message}`,
+        reasoning: parsed.reasoning || 'Single-skill query',
       };
     }
+
+    // Search for each composition part
+    const parts = await Promise.all(
+      parsed.parts.map(async (part: string) => {
+        const embedding = await this.embedFn(part);
+        const result = await this.provider.search(
+          part,
+          embedding,
+          { tenantId: filters.tenantId, contentSafetyRequired: true },
+          { limit: 1 }
+        );
+
+        return {
+          purpose: part,
+          skill: result.results[0] ?? null,
+        };
+      })
+    );
+
+    return {
+      detected: true,
+      parts,
+      reasoning: parsed.reasoning || 'Multi-skill workflow detected',
+    };
   }
 }

@@ -101,6 +101,8 @@ export interface FindSkillResponse {
     tier: 1 | 2 | 3;
     cacheHit: boolean;
     llmInvoked: boolean;
+    degraded?: boolean; // true when circuit breaker is open (vector-only results)
+    reranked?: boolean; // true when cross-encoder reranking was applied
   };
 }
 
@@ -346,4 +348,11 @@ export interface Env {
 
   // Phase 3: Multi-vector indexing
   MULTI_VECTOR_ENABLED?: string; // Set to "true" to enable multi-vector indexing
+
+  // Phase 4: Production polish
+  CIRCUIT_BREAKER_THRESHOLD?: string; // Consecutive failures before circuit opens (default: "3")
+  CIRCUIT_BREAKER_COOLDOWN_MS?: string; // Cooldown before half-open retry (default: "30000")
+  RATE_LIMIT_RPM?: string; // Max requests per minute per IP (default: "100")
+  RERANKER_ENABLED?: string; // Set to "true" to enable cross-encoder reranking
+  RERANKER_TOP_N?: string; // Number of candidates to rerank (default: "20")
 }

@@ -337,16 +337,23 @@ export class QualityTracker {
 
   /**
    * Refresh the search_quality_summary materialized view.
-   * Should be called hourly via cron trigger (not implemented in Phase 1).
+   * Called hourly via cron trigger.
    */
   async refreshSummary(): Promise<void> {
-    const sql = `REFRESH MATERIALIZED VIEW CONCURRENTLY search_quality_summary`;
-
     try {
-      await this.pool.query(sql);
+      // CONCURRENTLY allows reads during refresh but requires at least one row
+      await this.pool.query(
+        'REFRESH MATERIALIZED VIEW CONCURRENTLY search_quality_summary'
+      );
     } catch (error) {
-      console.error('Failed to refresh materialized view:', error);
-      throw error;
+      // Fallback to full refresh if CONCURRENTLY fails (e.g., empty view)
+      console.warn(
+        '[CRON] Concurrent refresh failed, trying full refresh:',
+        (error as Error).message
+      );
+      await this.pool.query(
+        'REFRESH MATERIALIZED VIEW search_quality_summary'
+      );
     }
   }
 }
