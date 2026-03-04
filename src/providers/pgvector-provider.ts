@@ -113,8 +113,8 @@ export class PgVectorProvider implements SearchProvider {
   ): Promise<Array<{ skillId: string; score: number; matchSource: string; matchText: string }>> {
     const embeddingStr = `[${embedding.join(',')}]`;
 
-    // Build WHERE clause
-    const conditions: string[] = ['se.tenant_id = $1'];
+    // Build WHERE clause — include tenant's own + public ('default') embeddings
+    const conditions: string[] = ["se.tenant_id IN ($1, 'default')"];
     const params: any[] = [filters.tenantId, embeddingStr, limit];
     let paramCount = 3;
 
@@ -181,8 +181,8 @@ export class PgVectorProvider implements SearchProvider {
     filters: SearchFilters,
     limit: number
   ): Promise<Array<{ skillId: string; score: number; keywordHits: number }>> {
-    // Build WHERE clause (same as vector search)
-    const conditions: string[] = ['se.tenant_id = $1'];
+    // Build WHERE clause — include tenant's own + public ('default') embeddings
+    const conditions: string[] = ["se.tenant_id IN ($1, 'default')"];
     const params: any[] = [filters.tenantId, limit];
     let paramCount = 2;
 
