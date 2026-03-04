@@ -355,4 +355,55 @@ export interface Env {
   RATE_LIMIT_RPM?: string; // Max requests per minute per IP (default: "100")
   RERANKER_ENABLED?: string; // Set to "true" to enable cross-encoder reranking
   RERANKER_TOP_N?: string; // Number of candidates to rerank (default: "20")
+
+  // Phase 5: Sync pipelines & publish API
+  EMBED_QUEUE: Queue;
+  COGNIUM_QUEUE: Queue;
+  R2_BUCKET: R2Bucket;
+  NEON_CONNECTION_STRING: string;
+  GITHUB_TOKEN?: string;
+  SYNC_MCP_ENABLED?: string; // default "true"
+  SYNC_CLAWHUB_ENABLED?: string; // default "true"
+  SYNC_GITHUB_ENABLED?: string; // default "true"
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 5: Sync Pipeline Types
+// ──────────────────────────────────────────────────────────────────────────────
+
+export interface SyncResult {
+  source: string;
+  synced: number;
+  skipped: number;
+  errors: number;
+  durationMs: number;
+}
+
+export interface SkillUpsert {
+  name: string;
+  slug: string;
+  description: string;
+  version?: string;
+  schemaJson?: Record<string, unknown>;
+  executionLayer: 'mcp-remote' | 'instructions' | 'worker' | 'container';
+  mcpUrl?: string;
+  skillMd?: string;
+  capabilitiesRequired?: string[];
+  source: string;
+  sourceUrl: string;
+  sourceHash: string;
+  trustScore?: number;
+  tenantId?: string;
+}
+
+export interface EmbedQueueMessage {
+  skillId: string;
+  action: 'embed';
+  source?: string;
+}
+
+export interface CogniumQueueMessage {
+  skillId: string;
+  action: 'scan';
+  source?: string;
 }

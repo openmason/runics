@@ -13,6 +13,12 @@ import { QualityTracker } from './monitoring/quality-tracker';
 import { PerfMonitor } from './monitoring/perf-monitor';
 import { ConfidenceGate } from './intelligence/confidence-gate';
 import { rateLimiter } from './middleware/rate-limiter';
+import { publishRoutes } from './publish/handler';
+import { McpRegistrySync } from './sync/mcp-registry';
+import { ClawHubSync } from './sync/clawhub';
+import { GitHubSync } from './sync/github';
+import { handleEmbedQueue } from './queues/embed-consumer';
+import { handleCogniumQueue } from './queues/cognium-consumer';
 import type {
   Env,
   FindSkillRequest,
@@ -20,6 +26,8 @@ import type {
   QualityFeedback,
   SkillResult,
   Appetite,
+  EmbedQueueMessage,
+  CogniumQueueMessage,
 } from './types';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -36,12 +44,11 @@ app.use('*', cors());
 // ──────────────────────────────────────────────────────────────────────────────
 
 function initComponents(env: Env) {
-  // BYPASS Hyperdrive - connect directly to Neon using @neondatabase/serverless
-  // Hyperdrive doesn't work with WebSocket-based drivers
-  const directConnectionString = "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-river-akx7s38p.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require";
-  const pool = new Pool({ connectionString: directConnectionString });
+  // Connect directly to Neon using @neondatabase/serverless (bypasses Hyperdrive)
+  const connectionString = env.NEON_CONNECTION_STRING;
+  const pool = new Pool({ connectionString });
 
-  const provider = new PgVectorProvider(directConnectionString, env);
+  const provider = new PgVectorProvider(connectionString, env);
   const embedPipeline = new EmbedPipeline(env);
   const cache = new SearchCache(
     env.SEARCH_CACHE,
@@ -465,6 +472,15 @@ app.get('/v1/eval/results/:runId', async (c) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Publish API (Phase 5)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Mount publish routes at /v1/skills
+// Note: Existing DELETE /v1/skills/:skillId and POST /v1/skills/:skillId/index
+// are defined above and take priority (Hono matches routes in order)
+app.route('/v1/skills', publishRoutes);
+
+// ──────────────────────────────────────────────────────────────────────────────
 // 404 Handler
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -473,28 +489,102 @@ app.notFound((c) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Export (fetch + scheduled handler)
+// Export (fetch + scheduled + queue handlers)
 // ──────────────────────────────────────────────────────────────────────────────
 
 export default {
   fetch: app.fetch,
 
   async scheduled(
-    _event: ScheduledEvent,
+    event: ScheduledEvent,
     env: Env,
     ctx: ExecutionContext
   ): Promise<void> {
-    const { qualityTracker } = initComponents(env);
+    const minute = new Date(event.scheduledTime).getMinutes();
 
-    ctx.waitUntil(
-      qualityTracker
-        .refreshSummary()
-        .then(() =>
-          console.log('[CRON] Materialized view refreshed successfully')
-        )
-        .catch((error: Error) =>
-          console.error('[CRON] Materialized view refresh failed:', error.message)
-        )
-    );
+    // Hourly: materialized view refresh (minute 0)
+    if (minute === 0) {
+      const { qualityTracker } = initComponents(env);
+      ctx.waitUntil(
+        qualityTracker
+          .refreshSummary()
+          .then(() => console.log('[CRON] Materialized view refreshed'))
+          .catch((e: Error) =>
+            console.error('[CRON] Refresh failed:', e.message)
+          )
+      );
+    }
+
+    // Every 5 minutes: MCP Registry sync
+    if (minute % 5 === 0 && env.SYNC_MCP_ENABLED !== 'false') {
+      ctx.waitUntil(
+        new McpRegistrySync(env)
+          .run()
+          .then((r) =>
+            console.log(
+              `[CRON] MCP sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
+            )
+          )
+          .catch((e: Error) =>
+            console.error('[CRON] MCP sync failed:', e.message)
+          )
+      );
+    }
+
+    // Every 10 minutes: ClawHub sync
+    if (minute % 10 === 0 && env.SYNC_CLAWHUB_ENABLED !== 'false') {
+      ctx.waitUntil(
+        new ClawHubSync(env)
+          .run()
+          .then((r) =>
+            console.log(
+              `[CRON] ClawHub sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
+            )
+          )
+          .catch((e: Error) =>
+            console.error('[CRON] ClawHub sync failed:', e.message)
+          )
+      );
+    }
+
+    // Every 15 minutes: GitHub sync
+    if (minute % 15 === 0 && env.SYNC_GITHUB_ENABLED !== 'false') {
+      ctx.waitUntil(
+        new GitHubSync(env)
+          .run()
+          .then((r) =>
+            console.log(
+              `[CRON] GitHub sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
+            )
+          )
+          .catch((e: Error) =>
+            console.error('[CRON] GitHub sync failed:', e.message)
+          )
+      );
+    }
+  },
+
+  async queue(
+    batch: MessageBatch,
+    env: Env,
+    _ctx: ExecutionContext
+  ): Promise<void> {
+    switch (batch.queue) {
+      case 'runics-embed':
+        await handleEmbedQueue(
+          batch as MessageBatch<EmbedQueueMessage>,
+          env
+        );
+        break;
+      case 'runics-cognium':
+        await handleCogniumQueue(
+          batch as MessageBatch<CogniumQueueMessage>,
+          env
+        );
+        break;
+      default:
+        console.error(`[QUEUE] Unknown queue: ${batch.queue}`);
+        break;
+    }
   },
 };

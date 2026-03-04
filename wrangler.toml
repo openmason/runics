@@ -28,6 +28,7 @@ binding = "AI"
 # Environment variables (configurable per environment)
 [vars]
 ENVIRONMENT = "development"
+NEON_CONNECTION_STRING = "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-river-akx7s38p.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require"
 
 # Model configuration
 EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
@@ -70,9 +71,39 @@ RATE_LIMIT_RPM = "100"                # Max search requests per minute per IP
 RERANKER_ENABLED = "true"             # Cross-encoder reranking (+4.6% R@1 lift, eval-measured)
 RERANKER_TOP_N = "20"                 # Number of candidates to rerank
 
-# Cron trigger for materialized view refresh (hourly)
+# Phase 5: Sync pipeline config
+SYNC_MCP_ENABLED = "true"
+SYNC_CLAWHUB_ENABLED = "true"
+SYNC_GITHUB_ENABLED = "true"
+
+# R2 bucket for skill code bundles
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "runics-skills"
+
+# Queue producers (async embedding + Cognium scanning)
+[[queues.producers]]
+binding = "EMBED_QUEUE"
+queue = "runics-embed"
+
+[[queues.producers]]
+binding = "COGNIUM_QUEUE"
+queue = "runics-cognium"
+
+# Queue consumers
+[[queues.consumers]]
+queue = "runics-embed"
+max_batch_size = 10
+max_batch_timeout = 30
+
+[[queues.consumers]]
+queue = "runics-cognium"
+max_batch_size = 5
+max_batch_timeout = 60
+
+# Cron triggers: sync dispatch (every 5 min) includes hourly mat view refresh
 [triggers]
-crons = ["0 * * * *"]
+crons = ["*/5 * * * *"]
 
 # Production environment overrides
 [env.production]
