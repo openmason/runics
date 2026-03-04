@@ -55,7 +55,7 @@ export class GitHubSync extends BaseSyncWorker {
       return { skills: [] };
     }
 
-    const query = 'topic:mcp-skill OR topic:agent-skill';
+    const query = 'topic:mcp-server';
     const url = new URL('https://api.github.com/search/repositories');
     url.searchParams.set('q', query);
     url.searchParams.set('sort', 'updated');
