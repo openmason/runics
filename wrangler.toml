@@ -93,7 +93,7 @@ queue = "runics-cognium"
 # Queue consumers
 [[queues.consumers]]
 queue = "runics-embed"
-max_batch_size = 10
+max_batch_size = 20
 max_batch_timeout = 30
 
 [[queues.consumers]]

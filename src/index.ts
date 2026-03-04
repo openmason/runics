@@ -547,6 +547,60 @@ export default {
       );
     }
 
+    // Every 5 minutes: directly embed skills missing embeddings (bypasses queue)
+    if (minute % 5 === 0) {
+      ctx.waitUntil(
+        (async () => {
+          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          const embedPipeline = new EmbedPipeline(env);
+          const provider = new PgVectorProvider(env.NEON_CONNECTION_STRING, env);
+          const useMultiVector = env.MULTI_VECTOR_ENABLED === 'true';
+          try {
+            const result = await pool.query(
+              `SELECT s.id, s.name, s.slug, s.version, s.source, s.description,
+                      s.agent_summary, s.tags, s.category, s.schema_json,
+                      s.trust_score, s.capabilities_required, s.execution_layer, s.tenant_id
+               FROM skills s
+               LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+               WHERE se.skill_id IS NULL
+               AND s.content_safety_passed = true
+               LIMIT 30`
+            );
+            let embedded = 0;
+            for (const row of result.rows) {
+              try {
+                const skill: SkillInput = {
+                  id: row.id, name: row.name, slug: row.slug,
+                  version: row.version, source: row.source,
+                  description: row.description ?? '',
+                  agentSummary: row.agent_summary,
+                  tags: row.tags ?? [], category: row.category,
+                  schemaJson: row.schema_json,
+                  trustScore: parseFloat(row.trust_score ?? '0.5'),
+                  capabilitiesRequired: row.capabilities_required ?? [],
+                  executionLayer: row.execution_layer,
+                  tenantId: row.tenant_id ?? 'default',
+                };
+                const embeddings = useMultiVector
+                  ? await embedPipeline.processSkillMultiVector(skill)
+                  : await embedPipeline.processSkill(skill);
+                skill.agentSummary = embeddings.agentSummary.text;
+                await provider.index(skill, embeddings);
+                embedded++;
+              } catch (e: any) {
+                console.error(`[BACKFILL] Error embedding ${row.id}:`, e.message);
+              }
+            }
+            if (embedded > 0) {
+              console.log(`[CRON] Backfill: embedded ${embedded} skills directly`);
+            }
+          } catch (e: any) {
+            console.error('[CRON] Backfill failed:', e.message);
+          }
+        })()
+      );
+    }
+
     // Every 15 minutes: GitHub sync
     if (minute % 15 === 0 && env.SYNC_GITHUB_ENABLED !== 'false') {
       ctx.waitUntil(
