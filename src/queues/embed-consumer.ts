@@ -77,6 +77,9 @@ export async function handleEmbedQueue(
         ? await embedPipeline.processSkillMultiVector(skill)
         : await embedPipeline.processSkill(skill);
 
+      // Update skill with generated agent summary so index() persists it
+      skill.agentSummary = embeddings.agentSummary.text;
+
       // 5. Index skill + embeddings (transactional upsert)
       await provider.index(skill, embeddings);
 
