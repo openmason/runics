@@ -33,8 +33,9 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
       `INSERT INTO skills (
         name, slug, version, source, description, schema_json,
         execution_layer, mcp_url, skill_md, capabilities_required,
-        source_url, trust_score, tenant_id, tags, category
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        source_url, trust_score, tenant_id, tags, category,
+        author_id, author_type, status, published_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'published',NOW())
       RETURNING id, slug`,
       [
         input.name,
@@ -52,6 +53,8 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         input.tenantId ?? null,
         input.tags ?? [],
         input.category ?? null,
+        input.authorId ?? null,
+        input.authorType ?? 'human',
       ]
     );
 
@@ -71,6 +74,27 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         action: 'scan',
         source: input.source ?? 'manual',
       } satisfies CogniumQueueMessage);
+    }
+
+    // Upsert author (non-blocking)
+    if (input.authorId) {
+      c.executionCtx.waitUntil(
+        pool
+          .query(
+            `INSERT INTO authors (id, handle, author_type, bot_model, total_skills_published)
+             VALUES ($1, $2, $3, $4, 1)
+             ON CONFLICT (id) DO UPDATE SET
+               total_skills_published = authors.total_skills_published + 1,
+               bot_model = COALESCE(EXCLUDED.bot_model, authors.bot_model)`,
+            [
+              input.authorId,
+              input.authorHandle ?? input.authorId,
+              input.authorType ?? 'human',
+              input.authorBotModel ?? null,
+            ]
+          )
+          .catch((e) => console.error('[PUBLISH] Author upsert failed:', e.message))
+      );
     }
 
     return c.json({ id: inserted.id, slug: inserted.slug, status: 'published' }, 201);

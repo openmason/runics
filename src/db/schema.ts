@@ -20,6 +20,7 @@ import {
   integer,
   smallint,
   real,
+  bigint,
   index,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
@@ -61,6 +62,56 @@ export const skills = pgTable(
     r2BundleKey: text('r2_bundle_key'),
     tenantId: text('tenant_id'),
     cogniumScannedAt: timestamp('cognium_scanned_at'),
+    // Composition & Social layer (v4)
+    // Author attribution
+    authorId: uuid('author_id'),
+    authorType: text('author_type').notNull().default('human'),
+    authorBotModel: text('author_bot_model'),
+    authorBotPromptHash: text('author_bot_prompt_hash'),
+    // Type and status
+    type: text('type').notNull().default('skill'),
+    status: text('status').notNull().default('published'),
+    // Fork lineage
+    forkOf: uuid('fork_of'),
+    originId: uuid('origin_id'),
+    forkDepth: integer('fork_depth').default(0),
+    // Metadata
+    readme: text('readme'),
+    categories: text('categories').array().default(sql`'{}'`),
+    ecosystem: text('ecosystem'),
+    language: text('language'),
+    license: text('license'),
+    logoUrl: text('logo_url'),
+    homepageUrl: text('homepage_url'),
+    demoUrl: text('demo_url'),
+    changelog: jsonb('changelog').default([]),
+    // Agent quality signals
+    avgExecutionTimeMs: real('avg_execution_time_ms'),
+    p95ExecutionTimeMs: real('p95_execution_time_ms'),
+    errorRate: real('error_rate'),
+    agentConsumptionPattern: text('agent_consumption_pattern'),
+    schemaCompatibilityScore: real('schema_compatibility_score'),
+    replacementSkillId: uuid('replacement_skill_id'),
+    adversarialTested: boolean('adversarial_tested').default(false),
+    provenanceAttested: boolean('provenance_attested').default(false),
+    // Human social counters
+    humanStarCount: integer('human_star_count').default(0),
+    humanForkCount: integer('human_fork_count').default(0),
+    humanCopyCount: integer('human_copy_count').default(0),
+    humanUseCount: integer('human_use_count').default(0),
+    // Agent counters
+    agentInvocationCount: bigint('agent_invocation_count', { mode: 'number' }).default(0),
+    agentForkCount: integer('agent_fork_count').default(0),
+    compositionInclusionCount: integer('composition_inclusion_count').default(0),
+    dependentCount: integer('dependent_count').default(0),
+    weeklyAgentInvocationCount: integer('weekly_agent_invocation_count').default(0),
+    // Editorial
+    featured: boolean('featured').default(false),
+    verifiedCreator: boolean('verified_creator').default(false),
+    collectionIds: uuid('collection_ids').array().default(sql`'{}'`),
+    // Lifecycle
+    publishedAt: timestamp('published_at'),
+    lastUsedAt: timestamp('last_used_at'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
   },
@@ -69,6 +120,10 @@ export const skills = pgTable(
     sourceIdx: index('idx_skills_source').on(table.source),
     slugIdx: index('idx_skills_slug').on(table.slug),
     executionLayerIdx: index('idx_skills_execution_layer').on(table.executionLayer),
+    authorIdIdx: index('idx_skills_author_id').on(table.authorId),
+    typeIdx: index('idx_skills_type').on(table.type),
+    forkOfIdx: index('idx_skills_fork_of').on(table.forkOf),
+    originIdIdx: index('idx_skills_origin_id').on(table.originId),
   })
 );
 
@@ -176,6 +231,110 @@ export const qualityFeedback = pgTable(
 );
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Authors Table (Composition & Social Layer)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const authors = pgTable(
+  'authors',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    handle: text('handle').notNull().unique(),
+    displayName: text('display_name'),
+    authorType: text('author_type').notNull().default('human'),
+    bio: text('bio'),
+    avatarUrl: text('avatar_url'),
+    homepageUrl: text('homepage_url'),
+    botModel: text('bot_model'),
+    botOperatorId: uuid('bot_operator_id'),
+    totalSkillsPublished: integer('total_skills_published').default(0),
+    totalHumanStarsReceived: integer('total_human_stars_received').default(0),
+    totalHumanForksReceived: integer('total_human_forks_received').default(0),
+    verified: boolean('verified').default(false),
+    createdAt: timestamp('created_at').defaultNow(),
+  },
+  (table) => ({
+    handleIdx: index('idx_authors_handle').on(table.handle),
+    typeIdx: index('idx_authors_type').on(table.authorType),
+  })
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
+// User Stars Table (Human-Only Social Action)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const userStars = pgTable(
+  'user_stars',
+  {
+    userId: uuid('user_id').notNull(),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at').defaultNow(),
+  },
+  (table) => ({
+    pk: uniqueIndex('idx_user_stars_pk').on(table.userId, table.skillId),
+    userIdx: index('idx_user_stars_user').on(table.userId),
+    skillIdx: index('idx_user_stars_skill').on(table.skillId),
+  })
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Composition Steps Table
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const compositionSteps = pgTable(
+  'composition_steps',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    compositionId: uuid('composition_id')
+      .notNull()
+      .references(() => skills.id, { onDelete: 'cascade' }),
+    stepOrder: smallint('step_order').notNull(),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id),
+    stepName: text('step_name'),
+    inputMapping: jsonb('input_mapping'),
+    condition: jsonb('condition'),
+    onError: text('on_error').default('fail'),
+    createdAt: timestamp('created_at').defaultNow(),
+  },
+  (table) => ({
+    compositionIdx: index('idx_composition_steps_composition').on(table.compositionId),
+    skillIdx: index('idx_composition_steps_skill').on(table.skillId),
+    orderUnique: uniqueIndex('idx_composition_steps_order').on(
+      table.compositionId,
+      table.stepOrder
+    ),
+  })
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Skill Invocations Table (Agent Signal Tracking)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export const skillInvocations = pgTable(
+  'skill_invocations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skillId: uuid('skill_id')
+      .notNull()
+      .references(() => skills.id),
+    compositionId: uuid('composition_id').references(() => skills.id),
+    tenantId: text('tenant_id').notNull(),
+    callerType: text('caller_type').notNull().default('agent'),
+    durationMs: integer('duration_ms'),
+    succeeded: boolean('succeeded').notNull(),
+    invokedAt: timestamp('invoked_at').defaultNow(),
+  },
+  (table) => ({
+    skillIdx: index('idx_invocations_skill').on(table.skillId, table.invokedAt),
+    compositionIdx: index('idx_invocations_composition').on(table.compositionId),
+    tenantIdx: index('idx_invocations_tenant').on(table.tenantId, table.invokedAt),
+  })
+);
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Type Exports
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -190,3 +349,15 @@ export type NewSearchLog = typeof searchLogs.$inferInsert;
 
 export type QualityFeedback = typeof qualityFeedback.$inferSelect;
 export type NewQualityFeedback = typeof qualityFeedback.$inferInsert;
+
+export type Author = typeof authors.$inferSelect;
+export type NewAuthor = typeof authors.$inferInsert;
+
+export type UserStar = typeof userStars.$inferSelect;
+export type NewUserStar = typeof userStars.$inferInsert;
+
+export type CompositionStep = typeof compositionSteps.$inferSelect;
+export type NewCompositionStep = typeof compositionSteps.$inferInsert;
+
+export type SkillInvocation = typeof skillInvocations.$inferSelect;
+export type NewSkillInvocation = typeof skillInvocations.$inferInsert;

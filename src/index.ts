@@ -19,6 +19,31 @@ import { ClawHubSync } from './sync/clawhub';
 import { GitHubSync } from './sync/github';
 import { handleEmbedQueue } from './queues/embed-consumer';
 import { handleCogniumQueue } from './queues/cognium-consumer';
+// Composition & Social layer (v4)
+import { forkSkill, NotFoundError } from './composition/fork';
+import { copySkill } from './composition/copy';
+import { createComposition, ValidationError } from './composition/compose';
+import { extendComposition } from './composition/extend';
+import { getAncestry, getForks, getDependents } from './composition/lineage';
+import { publishComposition } from './composition/publish';
+import {
+  forkInputSchema,
+  copyInputSchema,
+  compositionInputSchema,
+  extendInputSchema,
+} from './composition/schema';
+import { starSkill, unstarSkill, getStarStatus, RateLimitError } from './social/stars';
+import { recordInvocations } from './social/invocations';
+import { getCoOccurrence } from './social/cooccurrence';
+import {
+  getHumanLeaderboard,
+  getAgentLeaderboard,
+  getTrendingLeaderboard,
+  getMostComposedLeaderboard,
+} from './social/leaderboards';
+import { authorRoutes } from './authors/handler';
+import { zValidator } from '@hono/zod-validator';
+import { z } from 'zod';
 import type {
   Env,
   FindSkillRequest,
@@ -28,6 +53,8 @@ import type {
   Appetite,
   EmbedQueueMessage,
   CogniumQueueMessage,
+  InvocationBatch,
+  LeaderboardFilters,
 } from './types';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -112,7 +139,7 @@ app.get('/health', async (c) => {
 
   return c.json({
     ok: healthCheck.ok && aiStatus === 'ok' && missingTables.length === 0,
-    service: 'runics-search',
+    service: 'runics',
     version: '1.0.0',
     environment: c.env.ENVIRONMENT,
     dbStatus: healthCheck.ok ? 'ok' : 'error',
@@ -481,6 +508,371 @@ app.get('/v1/eval/results/:runId', async (c) => {
 app.route('/v1/skills', publishRoutes);
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Composition Routes (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.post('/v1/skills/:id/fork', zValidator('json', forkInputSchema), async (c) => {
+  const sourceId = c.req.param('id');
+  const { authorId, authorType } = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await forkSkill(sourceId, authorId, authorType, pool, c.env);
+    return c.json(result, 201);
+  } catch (error) {
+    if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
+    console.error('[COMPOSITION] Fork error:', error);
+    return c.json({ error: 'Failed to fork skill' }, 500);
+  }
+});
+
+app.post('/v1/skills/:id/copy', zValidator('json', copyInputSchema), async (c) => {
+  const sourceId = c.req.param('id');
+  const { authorId, authorType } = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await copySkill(sourceId, authorId, authorType, pool, c.env);
+    return c.json(result, 201);
+  } catch (error) {
+    if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
+    console.error('[COMPOSITION] Copy error:', error);
+    return c.json({ error: 'Failed to copy skill' }, 500);
+  }
+});
+
+app.post('/v1/skills/:id/extend', zValidator('json', extendInputSchema), async (c) => {
+  const compositionId = c.req.param('id');
+  const { authorId, authorType, steps } = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await extendComposition(
+      compositionId, steps, authorId, authorType, pool, c.env
+    );
+    return c.json(result, 201);
+  } catch (error) {
+    if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
+    if (error instanceof ValidationError) return c.json({ error: error.message }, 400);
+    console.error('[COMPOSITION] Extend error:', error);
+    return c.json({ error: 'Failed to extend composition' }, 500);
+  }
+});
+
+app.post('/v1/compositions', zValidator('json', compositionInputSchema), async (c) => {
+  const input = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await createComposition(input, pool, c.env);
+    return c.json(result, 201);
+  } catch (error) {
+    if (error instanceof ValidationError) return c.json({ error: error.message }, 400);
+    console.error('[COMPOSITION] Create error:', error);
+    return c.json({ error: 'Failed to create composition' }, 500);
+  }
+});
+
+app.get('/v1/compositions/:id', async (c) => {
+  const compositionId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const skill = await pool.query(
+      `SELECT * FROM skills WHERE id = $1 AND type IN ('composition', 'pipeline')`,
+      [compositionId]
+    );
+    if (skill.rows.length === 0) return c.json({ error: 'Composition not found' }, 404);
+
+    const steps = await pool.query(
+      `SELECT cs.*, s.name AS skill_name, s.slug AS skill_slug
+       FROM composition_steps cs
+       JOIN skills s ON s.id = cs.skill_id
+       WHERE cs.composition_id = $1
+       ORDER BY cs.step_order`,
+      [compositionId]
+    );
+
+    return c.json({
+      ...skill.rows[0],
+      steps: steps.rows.map((r: any) => ({
+        id: r.id,
+        stepOrder: r.step_order,
+        skillId: r.skill_id,
+        skillName: r.skill_name,
+        skillSlug: r.skill_slug,
+        stepName: r.step_name,
+        inputMapping: r.input_mapping,
+        onError: r.on_error,
+      })),
+    });
+  } catch (error) {
+    console.error('[COMPOSITION] Get error:', error);
+    return c.json({ error: 'Failed to get composition' }, 500);
+  }
+});
+
+app.put('/v1/compositions/:id/steps', async (c) => {
+  const compositionId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const body = await c.req.json();
+    const steps = body.steps;
+    if (!Array.isArray(steps) || steps.length < 2) {
+      return c.json({ error: 'At least 2 steps required' }, 400);
+    }
+
+    // Verify composition exists and is a draft
+    const skill = await pool.query(
+      `SELECT status, type FROM skills WHERE id = $1`,
+      [compositionId]
+    );
+    if (skill.rows.length === 0) return c.json({ error: 'Composition not found' }, 404);
+    if (skill.rows[0].status !== 'draft') {
+      return c.json({ error: 'Can only modify steps on draft compositions' }, 400);
+    }
+
+    // Replace all steps
+    await pool.query(`DELETE FROM composition_steps WHERE composition_id = $1`, [compositionId]);
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      await pool.query(
+        `INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, on_error)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          compositionId, i + 1, step.skillId,
+          step.stepName || null,
+          step.inputMapping ? JSON.stringify(step.inputMapping) : null,
+          step.onError || 'fail',
+        ]
+      );
+    }
+
+    return c.json({ id: compositionId, status: 'steps_updated' });
+  } catch (error) {
+    console.error('[COMPOSITION] Replace steps error:', error);
+    return c.json({ error: 'Failed to replace steps' }, 500);
+  }
+});
+
+app.post('/v1/compositions/:id/publish', async (c) => {
+  const compositionId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await publishComposition(compositionId, pool);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof NotFoundError) return c.json({ error: error.message }, 404);
+    if (error instanceof ValidationError) return c.json({ error: error.message }, 400);
+    console.error('[COMPOSITION] Publish error:', error);
+    return c.json({ error: 'Failed to publish composition' }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Lineage Routes (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.get('/v1/skills/:id/lineage', async (c) => {
+  const skillId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const ancestry = await getAncestry(skillId, pool);
+    return c.json({ ancestry });
+  } catch (error) {
+    console.error('[LINEAGE] Error:', error);
+    return c.json({ error: 'Failed to get lineage' }, 500);
+  }
+});
+
+app.get('/v1/skills/:id/forks', async (c) => {
+  const skillId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const forks = await getForks(skillId, pool);
+    return c.json({ forks });
+  } catch (error) {
+    console.error('[LINEAGE] Error:', error);
+    return c.json({ error: 'Failed to get forks' }, 500);
+  }
+});
+
+app.get('/v1/skills/:id/dependents', async (c) => {
+  const skillId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const dependents = await getDependents(skillId, pool);
+    return c.json({ dependents });
+  } catch (error) {
+    console.error('[LINEAGE] Error:', error);
+    return c.json({ error: 'Failed to get dependents' }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Social Routes — Human Only (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+const starInputSchema = z.object({
+  userId: z.string().uuid(),
+});
+
+app.post('/v1/skills/:id/star', zValidator('json', starInputSchema), async (c) => {
+  const skillId = c.req.param('id');
+  const { userId } = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await starSkill(skillId, userId, pool);
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof RateLimitError) return c.json({ error: error.message }, 429);
+    console.error('[SOCIAL] Star error:', error);
+    return c.json({ error: 'Failed to star skill' }, 500);
+  }
+});
+
+app.delete('/v1/skills/:id/star', async (c) => {
+  const skillId = c.req.param('id');
+  const body = await c.req.json();
+  const userId = body.userId;
+  if (!userId) return c.json({ error: 'userId required' }, 400);
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await unstarSkill(skillId, userId, pool);
+    return c.json(result);
+  } catch (error) {
+    console.error('[SOCIAL] Unstar error:', error);
+    return c.json({ error: 'Failed to unstar skill' }, 500);
+  }
+});
+
+app.get('/v1/skills/:id/stars', async (c) => {
+  const skillId = c.req.param('id');
+  const userId = c.req.query('userId') || null;
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await getStarStatus(skillId, userId, pool);
+    return c.json(result);
+  } catch (error) {
+    console.error('[SOCIAL] Stars error:', error);
+    return c.json({ error: 'Failed to get star status' }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Agent Signal Routes (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+const invocationBatchSchema = z.object({
+  invocations: z.array(z.object({
+    skillId: z.string().uuid(),
+    compositionId: z.string().uuid().optional(),
+    tenantId: z.string(),
+    callerType: z.enum(['agent', 'human']),
+    durationMs: z.number().int().optional(),
+    succeeded: z.boolean(),
+  })).min(1).max(500),
+});
+
+app.post('/v1/invocations', zValidator('json', invocationBatchSchema), async (c) => {
+  const batch = c.req.valid('json') as InvocationBatch;
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  // Non-blocking: wrap in waitUntil
+  c.executionCtx.waitUntil(
+    recordInvocations(batch, pool).catch((e) =>
+      console.error('[INVOCATIONS] Record error:', e.message)
+    )
+  );
+
+  return c.json({ accepted: true, count: batch.invocations.length }, 202);
+});
+
+app.get('/v1/skills/:id/cooccurrence', async (c) => {
+  const skillId = c.req.param('id');
+  const limit = parseInt(c.req.query('limit') || '5');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const results = await getCoOccurrence(skillId, limit, pool);
+    return c.json({ cooccurrence: results });
+  } catch (error) {
+    console.error('[SOCIAL] Cooccurrence error:', error);
+    return c.json({ error: 'Failed to get co-occurrence' }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Leaderboard Routes (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+function parseLeaderboardFilters(c: any): LeaderboardFilters {
+  return {
+    type: c.req.query('type') as LeaderboardFilters['type'],
+    category: c.req.query('category'),
+    ecosystem: c.req.query('ecosystem'),
+    limit: c.req.query('limit') ? parseInt(c.req.query('limit')) : undefined,
+    offset: c.req.query('offset') ? parseInt(c.req.query('offset')) : undefined,
+  };
+}
+
+app.get('/v1/leaderboards/human', async (c) => {
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const results = await getHumanLeaderboard(parseLeaderboardFilters(c), pool);
+    return c.json({ leaderboard: results });
+  } catch (error) {
+    console.error('[LEADERBOARD] Human error:', error);
+    return c.json({ error: 'Failed to get leaderboard' }, 500);
+  }
+});
+
+app.get('/v1/leaderboards/agents', async (c) => {
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const results = await getAgentLeaderboard(parseLeaderboardFilters(c), pool);
+    return c.json({ leaderboard: results });
+  } catch (error) {
+    console.error('[LEADERBOARD] Agent error:', error);
+    return c.json({ error: 'Failed to get leaderboard' }, 500);
+  }
+});
+
+app.get('/v1/leaderboards/trending', async (c) => {
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const results = await getTrendingLeaderboard(parseLeaderboardFilters(c), pool);
+    return c.json({ leaderboard: results });
+  } catch (error) {
+    console.error('[LEADERBOARD] Trending error:', error);
+    return c.json({ error: 'Failed to get leaderboard' }, 500);
+  }
+});
+
+app.get('/v1/leaderboards/most-composed', async (c) => {
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const results = await getMostComposedLeaderboard(parseLeaderboardFilters(c), pool);
+    return c.json({ leaderboard: results });
+  } catch (error) {
+    console.error('[LEADERBOARD] Most-composed error:', error);
+    return c.json({ error: 'Failed to get leaderboard' }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Author Routes (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.route('/v1/authors', authorRoutes);
+
+// ──────────────────────────────────────────────────────────────────────────────
 // 404 Handler
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -512,6 +904,39 @@ export default {
           .catch((e: Error) =>
             console.error('[CRON] Refresh failed:', e.message)
           )
+      );
+
+      // Refresh social materialized views (v4)
+      ctx.waitUntil(
+        (async () => {
+          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          try {
+            await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY skill_cooccurrence');
+            await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_human');
+            await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_agent');
+            console.log('[CRON] Social materialized views refreshed');
+          } catch (e: any) {
+            console.error('[CRON] Social view refresh failed:', e.message);
+          }
+        })()
+      );
+    }
+
+    // Daily at midnight: reset weekly_agent_invocation_count (v4)
+    const hour = new Date(event.scheduledTime).getHours();
+    if (hour === 0 && minute === 0) {
+      ctx.waitUntil(
+        (async () => {
+          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          try {
+            await pool.query(
+              'UPDATE skills SET weekly_agent_invocation_count = 0 WHERE weekly_agent_invocation_count > 0'
+            );
+            console.log('[CRON] Weekly invocation counts reset');
+          } catch (e: any) {
+            console.error('[CRON] Weekly reset failed:', e.message);
+          }
+        })()
       );
     }
 

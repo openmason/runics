@@ -17,7 +17,7 @@ This guide covers how to test and verify the Runics Search system at different l
 
 ### Production Health
 ```bash
-curl -s https://runics-search.phantoms.workers.dev/health | jq .
+curl -s https://runics.phantoms.workers.dev/health | jq .
 ```
 
 **Expected output:**
@@ -37,7 +37,7 @@ curl -s http://localhost:8787/health | jq .
 
 ### Basic Search Test
 ```bash
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{
@@ -56,7 +56,7 @@ curl -s https://runics-search.phantoms.workers.dev/v1/search \
 
 **Direct query:**
 ```bash
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"query":"check rust dependency licenses","tenantId":"eval-tenant","limit":3}' \
@@ -65,7 +65,7 @@ curl -s https://runics-search.phantoms.workers.dev/v1/search \
 
 **Problem query:**
 ```bash
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"query":"code formatting is inconsistent across the team","tenantId":"eval-tenant","limit":3}' \
@@ -74,7 +74,7 @@ curl -s https://runics-search.phantoms.workers.dev/v1/search \
 
 **Business query:**
 ```bash
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"query":"improve application performance and scalability","tenantId":"eval-tenant","limit":3}' \
@@ -85,14 +85,14 @@ curl -s https://runics-search.phantoms.workers.dev/v1/search \
 Run the same query twice and check for cache hit:
 ```bash
 # First request (cache miss)
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"query":"test cache","tenantId":"eval-tenant","limit":3}' \
   | jq '{cacheHit: .meta.cacheHit, latencyMs: .meta.latencyMs}'
 
 # Second request (should be cache hit)
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{"query":"test cache","tenantId":"eval-tenant","limit":3}' \
@@ -107,7 +107,7 @@ curl -s https://runics-search.phantoms.workers.dev/v1/search \
 
 ### Full Eval Suite (Production)
 ```bash
-npm run eval -- --endpoint https://runics-search.phantoms.workers.dev --verbose
+npm run eval -- --endpoint https://runics.phantoms.workers.dev --verbose
 ```
 
 **Expected metrics:**
@@ -122,7 +122,7 @@ npm run eval -- --endpoint http://localhost:8787 --verbose
 
 ### Generate Baseline Report
 ```bash
-npm run analyze-baseline -- --endpoint https://runics-search.phantoms.workers.dev
+npm run analyze-baseline -- --endpoint https://runics.phantoms.workers.dev
 ```
 
 This generates `BASELINE.md` with detailed analysis.
@@ -149,7 +149,7 @@ queries=(
 
 echo "Query,TopResult,Score,Tier"
 for query in "${queries[@]}"; do
-  result=$(curl -s https://runics-search.phantoms.workers.dev/v1/search \
+  result=$(curl -s https://runics.phantoms.workers.dev/v1/search \
     -X POST \
     -H 'Content-Type: application/json' \
     -d "{\"query\":\"$query\",\"tenantId\":\"eval-tenant\",\"limit\":1}")
@@ -231,7 +231,7 @@ tsx /tmp/check-db.ts
 ```bash
 # Simple latency test
 for i in {1..10}; do
-  (curl -s -w "\nTime: %{time_total}s\n" https://runics-search.phantoms.workers.dev/v1/search \
+  (curl -s -w "\nTime: %{time_total}s\n" https://runics.phantoms.workers.dev/v1/search \
     -X POST \
     -H 'Content-Type: application/json' \
     -d "{\"query\":\"test query $i\",\"tenantId\":\"eval-tenant\",\"limit\":3}" \
@@ -249,7 +249,7 @@ wait
 ```bash
 # Install apache bench if needed: brew install httpd
 ab -n 100 -c 10 -p /tmp/search-payload.json -T 'application/json' \
-  https://runics-search.phantoms.workers.dev/v1/search
+  https://runics.phantoms.workers.dev/v1/search
 
 # Create payload file
 echo '{"query":"format typescript code","tenantId":"eval-tenant","limit":5}' > /tmp/search-payload.json
@@ -262,7 +262,7 @@ echo '{"query":"format typescript code","tenantId":"eval-tenant","limit":5}' > /
 ### Watch Live Logs
 ```bash
 # Start tailing production logs
-npx wrangler tail runics-search
+npx wrangler tail runics
 ```
 
 This shows real-time requests, errors, and performance metrics.
@@ -270,7 +270,7 @@ This shows real-time requests, errors, and performance metrics.
 ### Check for Errors
 ```bash
 # Tail logs and filter for errors
-npx wrangler tail runics-search | grep -i error
+npx wrangler tail runics | grep -i error
 ```
 
 ### Common Issues to Monitor
@@ -308,12 +308,12 @@ echo
 
 # 1. Health check
 echo "1. Health Check..."
-curl -sf https://runics-search.phantoms.workers.dev/health > /dev/null && echo "✅ Production healthy" || echo "❌ Production unhealthy"
+curl -sf https://runics.phantoms.workers.dev/health > /dev/null && echo "✅ Production healthy" || echo "❌ Production unhealthy"
 echo
 
 # 2. Basic search
 echo "2. Basic Search..."
-result=$(curl -sf https://runics-search.phantoms.workers.dev/v1/search \
+result=$(curl -sf https://runics.phantoms.workers.dev/v1/search \
   -X POST -H 'Content-Type: application/json' \
   -d '{"query":"format typescript code","tenantId":"eval-tenant","limit":1}')
 top_result=$(echo "$result" | jq -r '.results[0].name')
@@ -322,12 +322,12 @@ echo
 
 # 3. Run eval suite
 echo "3. Running Eval Suite..."
-npm run eval -- --endpoint https://runics-search.phantoms.workers.dev 2>&1 | tail -10
+npm run eval -- --endpoint https://runics.phantoms.workers.dev 2>&1 | tail -10
 echo
 
 # 4. Check database
 echo "4. Database Check..."
-health=$(curl -sf https://runics-search.phantoms.workers.dev/health)
+health=$(curl -sf https://runics.phantoms.workers.dev/health)
 db_status=$(echo "$health" | jq -r '.dbStatus')
 table_count=$(echo "$health" | jq -r '.tables | length')
 [ "$db_status" = "ok" ] && [ "$table_count" -eq 4 ] && echo "✅ Database OK ($table_count tables)" || echo "❌ Database issues"
@@ -352,13 +352,13 @@ Run all tests:
 
 ```bash
 # One-line health check
-curl -sf https://runics-search.phantoms.workers.dev/health && echo "✅ OK" || echo "❌ FAIL"
+curl -sf https://runics.phantoms.workers.dev/health && echo "✅ OK" || echo "❌ FAIL"
 
 # One-line search test
-curl -sf https://runics-search.phantoms.workers.dev/v1/search -X POST -H 'Content-Type: application/json' -d '{"query":"test","tenantId":"eval-tenant","limit":1}' | jq -r '.results[0].name'
+curl -sf https://runics.phantoms.workers.dev/v1/search -X POST -H 'Content-Type: application/json' -d '{"query":"test","tenantId":"eval-tenant","limit":1}' | jq -r '.results[0].name'
 
 # One-line eval (just show metrics)
-npm run eval -- --endpoint https://runics-search.phantoms.workers.dev 2>&1 | grep -A 10 "Overall Performance"
+npm run eval -- --endpoint https://runics.phantoms.workers.dev 2>&1 | grep -A 10 "Overall Performance"
 ```
 
 ---
@@ -368,25 +368,25 @@ npm run eval -- --endpoint https://runics-search.phantoms.workers.dev 2>&1 | gre
 ### Issue: Search returns no results
 ```bash
 # Check if skills are indexed
-curl -s https://runics-search.phantoms.workers.dev/health | jq '.tables'
+curl -s https://runics.phantoms.workers.dev/health | jq '.tables'
 
 # Re-seed if needed
-npm run seed -- --endpoint https://runics-search.phantoms.workers.dev
+npm run seed -- --endpoint https://runics.phantoms.workers.dev
 ```
 
 ### Issue: Eval suite failing
 ```bash
 # Check endpoint is accessible
-curl -sf https://runics-search.phantoms.workers.dev/health || echo "Endpoint down"
+curl -sf https://runics.phantoms.workers.dev/health || echo "Endpoint down"
 
 # Run with verbose logging
-npm run eval -- --endpoint https://runics-search.phantoms.workers.dev --verbose
+npm run eval -- --endpoint https://runics.phantoms.workers.dev --verbose
 ```
 
 ### Issue: High latency
 ```bash
 # Check cache is working
-curl -s https://runics-search.phantoms.workers.dev/v1/search \
+curl -s https://runics.phantoms.workers.dev/v1/search \
   -X POST -H 'Content-Type: application/json' \
   -d '{"query":"test","tenantId":"eval-tenant","limit":1}' \
   | jq '.meta.cacheHit'

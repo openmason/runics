@@ -4,7 +4,7 @@
 //
 // Usage:
 //   k6 run --env ENDPOINT=http://localhost:8787 scripts/k6/load-test.js
-//   k6 run --env ENDPOINT=https://runics-search.your-domain.workers.dev scripts/k6/load-test.js
+//   k6 run --env ENDPOINT=https://runics.your-domain.workers.dev scripts/k6/load-test.js
 //
 // SLOs:
 //   p50 < 60ms, p99 < 500ms, p999 < 1500ms, error rate < 1%

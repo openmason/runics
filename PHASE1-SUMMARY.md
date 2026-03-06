@@ -165,12 +165,12 @@ POST /v1/skills/:skillId/index
 
 1. **Seed test skills**
    ```bash
-   npm run seed -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev
+   npm run seed -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev
    ```
 
 2. **Run baseline analysis**
    ```bash
-   npm run analyze-baseline -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev
+   npm run analyze-baseline -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev
    ```
 
 3. **Document results**
@@ -207,10 +207,10 @@ Once infrastructure is set up:
 npm run deploy
 
 # 2. Seed test skills (7 skills needed for eval)
-npm run seed -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev
+npm run seed -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev
 
 # 3. Run baseline analysis
-npm run analyze-baseline -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev
+npm run analyze-baseline -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev
 
 # 4. Review BASELINE.md (auto-generated)
 cat BASELINE.md
@@ -259,7 +259,7 @@ Once Phase 1 baseline is measured and validated:
 ## File Structure
 
 ```
-runics-search/
+runics/
 ├── package.json                     ✅ Complete
 ├── tsconfig.json                    ✅ Complete
 ├── wrangler.toml                    ✅ Complete (needs ID updates)

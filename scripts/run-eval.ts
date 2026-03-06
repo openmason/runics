@@ -83,7 +83,7 @@ Options:
 Examples:
   npm run eval
   npm run eval -- --verbose
-  npm run eval -- --endpoint https://runics-search.workers.dev/v1/search
+  npm run eval -- --endpoint https://runics.workers.dev/v1/search
   npm run eval -- --tenant prod-tenant --show-failed
 `);
 }

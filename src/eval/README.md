@@ -74,7 +74,7 @@ npm run eval -- --verbose
 npm run eval -- --show-failed
 
 # Run against production
-npm run eval -- --endpoint https://runics-search.workers.dev/v1/search
+npm run eval -- --endpoint https://runics.workers.dev/v1/search
 ```
 
 ### Via API
@@ -96,7 +96,7 @@ curl -X POST http://localhost:8787/v1/eval/run \
 npm run deploy
 
 # Run eval against production
-npm run eval -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev/v1/search
+npm run eval -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev/v1/search
 ```
 
 ## Expected Output

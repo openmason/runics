@@ -3,8 +3,8 @@
 > **Purpose:** Single source of truth for Runics: search, sync pipelines, publish API, and implementation spec for Claude Code.  
 > **Parent doc:** `cortex-specification.md` (runtime overview)  
 > **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · R2 · Queues · Hyperdrive  
-> **Date:** March 2026 · v3.0  
-> **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress.
+> **Date:** March 2026 · v4.0  
+> **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress. Composition & Social layer added.
 
 ---
 
@@ -32,6 +32,7 @@
 20. [Risks & Mitigations](#20-risks--mitigations)
 21. [Project Structure](#21-project-structure)
 22. [Implementation Notes for Claude Code](#22-implementation-notes-for-claude-code)
+23. [Composition & Social Layer](#23-composition--social-layer)
 
 ---
 
@@ -42,6 +43,8 @@ Runics is the semantic skill registry for the Runics platform. AI agents discove
 Skills come from multiple sources: `mcp-registry`, `clawhub`, `skills-sh`, `direct`, `distilled`, `generated`. Each skill has a schema, auth requirements, trust score, execution layer, and content safety classification.
 
 Agents call `findSkill("make sure we're not shipping GPL code in proprietary product")` and get back ranked, trust-filtered results with confidence signals — fast enough to be inline in agent reasoning loops.
+
+**Composition & Social layer (v4.0):** Skills and compositions are first-class registry entities. Any skill or composition can be copied, forked (copy + modify), extended (add steps), or composed into named pipelines — by humans or by agents. Published compositions carry full provenance lineage, creator attribution (human or bot), and a dual-track engagement model: human social signals (stars, human forks) are tracked separately from agent signals (invocations, composition inclusion rate, agent-initiated forks) to prevent pollution.
 
 ---
 
@@ -349,24 +352,102 @@ The skills table is the source of truth for the Runics platform. Search operates
 
 CREATE TABLE IF NOT EXISTS skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+  -- Identity
   name TEXT NOT NULL,
   slug TEXT UNIQUE NOT NULL,
   version TEXT NOT NULL DEFAULT '1.0.0',
+  changelog JSONB DEFAULT '[]',              -- [{version, date, notes}]
+  status TEXT NOT NULL DEFAULT 'published'   -- draft | published | deprecated | archived
+    CHECK (status IN ('draft', 'published', 'deprecated', 'archived')),
+  type TEXT NOT NULL DEFAULT 'skill'         -- skill | composition | pipeline
+    CHECK (type IN ('skill', 'composition', 'pipeline')),
+
+  -- Source & provenance
   source TEXT NOT NULL,                     -- mcp-registry | clawhub | skills-sh | direct | distilled | generated
+  source_url TEXT,
+  source_hash TEXT,
+
+  -- Author attribution (human or bot)
+  author_id UUID,                           -- FK to authors table
+  author_type TEXT DEFAULT 'human'          -- human | bot | org
+    CHECK (author_type IN ('human', 'bot', 'org')),
+  author_bot_model TEXT,                    -- if bot: model version (e.g. 'claude-sonnet-4-6')
+  author_bot_prompt_hash TEXT,              -- if bot: hash of generation prompt for audit
+
+  -- Fork / composition lineage
+  fork_of UUID REFERENCES skills(id),       -- immediate parent
+  origin_id UUID REFERENCES skills(id),     -- root of fork chain (denormalized)
+  fork_depth INTEGER DEFAULT 0,             -- 0 = original, 1 = direct fork, etc.
+
+  -- Content
   description TEXT,                         -- human-readable, author-provided
+  readme TEXT,                              -- long-form markdown
   agent_summary TEXT,                       -- LLM-generated, search-optimized
-  alternate_queries TEXT[],                 -- stored for debugging/analytics
+  alternate_queries TEXT[],
   schema_json JSONB,
   auth_requirements JSONB,
   install_method JSONB,
-  trust_score NUMERIC(3,2) DEFAULT 0.5,    -- 0.00–1.00
-  cognium_scanned BOOLEAN DEFAULT FALSE,
-  cognium_report JSONB,
-  capabilities_required TEXT[],            -- e.g. ['network', 'filesystem', 'container']
-  execution_layer TEXT NOT NULL,            -- mcp-remote | worker | container | container-heavy
+
+  -- Discoverability
+  tags TEXT[] DEFAULT '{}',
+  categories TEXT[] DEFAULT '{}',           -- curated taxonomy
+  ecosystem TEXT,                           -- rust | node | python | agnostic
+  language TEXT,
+  license TEXT,                             -- MIT | Apache-2.0 | GPL-3.0 | proprietary | etc.
+
+  -- Presentation
+  logo_url TEXT,
+  homepage_url TEXT,
+  demo_url TEXT,                            -- live one-click try page
+  share_url TEXT GENERATED ALWAYS AS (
+    'https://runics.dev/skills/' || slug
+  ) STORED,
+
+  -- Execution
+  capabilities_required TEXT[],
+  execution_layer TEXT NOT NULL,
   source_execution_id UUID,
-  reuse_count INTEGER DEFAULT 0,
+
+  -- Trust & safety
+  trust_score NUMERIC(3,2) DEFAULT 0.5,
+  cognium_scanned BOOLEAN DEFAULT FALSE,
+  cognium_scanned_at TIMESTAMPTZ,
+  cognium_report JSONB,
   content_safety_passed BOOLEAN,
+  adversarial_tested BOOLEAN DEFAULT FALSE, -- tested vs prompt injection / malformed input
+  provenance_attested BOOLEAN DEFAULT FALSE, -- signed publish (trusted publishing model)
+
+  -- Agent-specific quality signals
+  avg_execution_time_ms REAL,               -- p50 from live invocations
+  p95_execution_time_ms REAL,
+  error_rate REAL,                          -- rolling 7-day error rate (0.0–1.0)
+  agent_consumption_pattern TEXT            -- standalone | always-composed | mixed
+    CHECK (agent_consumption_pattern IN ('standalone', 'always-composed', 'mixed', NULL)),
+  schema_compatibility_score REAL,          -- how well output feeds other skills (0–1)
+  replacement_skill_id UUID REFERENCES skills(id), -- for deprecated skills: auto-migrate target
+
+  -- Human social metrics (separate from agent metrics — never polluted by bots)
+  human_star_count INTEGER DEFAULT 0,
+  human_fork_count INTEGER DEFAULT 0,
+  human_copy_count INTEGER DEFAULT 0,
+  human_use_count INTEGER DEFAULT 0,       -- human-initiated installs
+
+  -- Agent metrics (raw from live invocations)
+  agent_invocation_count BIGINT DEFAULT 0,
+  agent_fork_count INTEGER DEFAULT 0,
+  composition_inclusion_count INTEGER DEFAULT 0, -- how many compositions include this
+  dependent_count INTEGER DEFAULT 0,            -- how many other skills depend on this
+  weekly_agent_invocation_count INTEGER DEFAULT 0, -- rolling 7-day (for trending)
+
+  -- Hybrid/editorial
+  featured BOOLEAN DEFAULT FALSE,
+  verified_creator BOOLEAN DEFAULT FALSE,
+  collection_ids UUID[] DEFAULT '{}',
+
+  -- Lifecycle
+  published_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,                 -- last agent invocation
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -375,6 +456,14 @@ CREATE INDEX idx_skills_trust_score ON skills(trust_score);
 CREATE INDEX idx_skills_source ON skills(source);
 CREATE INDEX idx_skills_slug ON skills(slug);
 CREATE INDEX idx_skills_execution_layer ON skills(execution_layer);
+CREATE INDEX idx_skills_tags ON skills USING gin(tags);
+CREATE INDEX idx_skills_categories ON skills USING gin(categories);
+CREATE INDEX idx_skills_fork_of ON skills(fork_of);
+CREATE INDEX idx_skills_origin_id ON skills(origin_id);
+CREATE INDEX idx_skills_author_id ON skills(author_id);
+CREATE INDEX idx_skills_type ON skills(type);
+CREATE INDEX idx_skills_weekly_agent_invocations ON skills(weekly_agent_invocation_count DESC);
+CREATE INDEX idx_skills_human_stars ON skills(human_star_count DESC);
 ```
 
 ### Trust-Based Filtering
@@ -546,6 +635,177 @@ GROUP BY 1, 2, 3, 4;
 
 CREATE UNIQUE INDEX idx_quality_summary_pk
   ON search_quality_summary (hour, tier, match_source, fusion_strategy);
+```
+
+### Migration 0004: authors
+
+```sql
+-- 0004_authors.sql
+-- First-class author identity for humans and bots.
+
+CREATE TABLE IF NOT EXISTS authors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  handle TEXT UNIQUE NOT NULL,              -- @eyal | @cortex-forge-bot
+  display_name TEXT,
+  author_type TEXT NOT NULL DEFAULT 'human'
+    CHECK (author_type IN ('human', 'bot', 'org')),
+  bio TEXT,
+  avatar_url TEXT,
+  homepage_url TEXT,
+
+  -- Bot-specific fields
+  bot_model TEXT,                           -- model that powers this bot author
+  bot_operator_id UUID,                     -- human/org that owns this bot
+
+  -- Social stats (human leaderboard)
+  total_skills_published INTEGER DEFAULT 0,
+  total_human_stars_received INTEGER DEFAULT 0,
+  total_human_forks_received INTEGER DEFAULT 0,
+  verified BOOLEAN DEFAULT FALSE,
+
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_authors_handle ON authors(handle);
+CREATE INDEX idx_authors_type ON authors(author_type);
+```
+
+### Migration 0005: compositions
+
+```sql
+-- 0005_compositions.sql
+-- Named, versioned, forkable skill pipelines.
+-- compositions are also rows in skills (type = 'composition' | 'pipeline').
+-- This table stores the ordered step graph.
+
+CREATE TABLE IF NOT EXISTS composition_steps (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  composition_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+  step_order SMALLINT NOT NULL,
+  skill_id UUID NOT NULL REFERENCES skills(id),
+
+  -- Step-level overrides
+  step_name TEXT,                           -- human label for this step
+  input_mapping JSONB,                      -- how previous step output maps to this input
+  condition JSONB,                          -- optional conditional execution
+  on_error TEXT DEFAULT 'fail'              -- fail | skip | retry
+    CHECK (on_error IN ('fail', 'skip', 'retry')),
+
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  UNIQUE(composition_id, step_order)
+);
+
+CREATE INDEX idx_composition_steps_composition ON composition_steps(composition_id);
+CREATE INDEX idx_composition_steps_skill ON composition_steps(skill_id);
+```
+
+### Migration 0006: invocation_graph
+
+```sql
+-- 0006_invocation_graph.sql
+-- Live dependency graph from actual agent invocations.
+-- Powers: composition fitness score, co-occurrence map, trending.
+
+CREATE TABLE IF NOT EXISTS skill_invocations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  skill_id UUID NOT NULL REFERENCES skills(id),
+  composition_id UUID REFERENCES skills(id), -- NULL if standalone invocation
+  tenant_id TEXT NOT NULL,
+  caller_type TEXT NOT NULL DEFAULT 'agent'  -- agent | human
+    CHECK (caller_type IN ('agent', 'human')),
+  duration_ms INTEGER,
+  succeeded BOOLEAN NOT NULL,
+  invoked_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_invocations_skill ON skill_invocations(skill_id, invoked_at DESC);
+CREATE INDEX idx_invocations_composition ON skill_invocations(composition_id);
+CREATE INDEX idx_invocations_tenant ON skill_invocations(tenant_id, invoked_at DESC);
+
+-- Co-occurrence pairs: which skills appear together in compositions
+CREATE MATERIALIZED VIEW skill_cooccurrence AS
+SELECT
+  cs1.skill_id AS skill_a,
+  cs2.skill_id AS skill_b,
+  COUNT(DISTINCT cs1.composition_id) AS composition_count,
+  SUM(si.agent_invocation_count) AS total_paired_invocations
+FROM composition_steps cs1
+JOIN composition_steps cs2
+  ON cs1.composition_id = cs2.composition_id
+  AND cs1.skill_id < cs2.skill_id    -- avoid duplicates
+JOIN skills si ON si.id = cs1.composition_id
+GROUP BY cs1.skill_id, cs2.skill_id
+HAVING COUNT(DISTINCT cs1.composition_id) >= 2;
+
+CREATE UNIQUE INDEX idx_cooccurrence_pk ON skill_cooccurrence(skill_a, skill_b);
+CREATE INDEX idx_cooccurrence_skill_a ON skill_cooccurrence(skill_a, total_paired_invocations DESC);
+```
+
+### Migration 0007: leaderboards
+
+```sql
+-- 0007_leaderboards.sql
+-- Dual-track leaderboards: human signals and agent signals kept separate.
+
+-- Human leaderboard (materialized hourly)
+CREATE MATERIALIZED VIEW leaderboard_human AS
+SELECT
+  s.id,
+  s.slug,
+  s.name,
+  s.type,
+  a.handle AS author_handle,
+  a.author_type,
+  s.human_star_count,
+  s.human_fork_count,
+  s.human_copy_count,
+  s.human_use_count,
+  s.fork_depth,
+  s.origin_id,
+  s.trust_score,
+  s.verified_creator,
+  s.featured,
+  -- Weighted score for ranking
+  (s.human_star_count * 3 + s.human_fork_count * 5 + s.human_copy_count * 2 + s.human_use_count) AS human_score
+FROM skills s
+LEFT JOIN authors a ON a.id = s.author_id
+WHERE s.status = 'published'
+  AND s.author_type = 'human';  -- HUMAN ONLY: bots excluded from human leaderboard
+
+CREATE UNIQUE INDEX idx_leaderboard_human_pk ON leaderboard_human(id);
+CREATE INDEX idx_leaderboard_human_score ON leaderboard_human(human_score DESC);
+
+-- Agent leaderboard (materialized hourly)
+CREATE MATERIALIZED VIEW leaderboard_agent AS
+SELECT
+  s.id,
+  s.slug,
+  s.name,
+  s.type,
+  a.handle AS author_handle,
+  a.author_type,
+  a.bot_model,
+  s.agent_invocation_count,
+  s.weekly_agent_invocation_count,
+  s.composition_inclusion_count,
+  s.dependent_count,
+  s.agent_fork_count,
+  s.avg_execution_time_ms,
+  s.error_rate,
+  s.trust_score,
+  -- Weighted score for agent leaderboard
+  (s.agent_invocation_count * 1
+   + s.composition_inclusion_count * 10
+   + s.dependent_count * 8
+   - COALESCE(s.error_rate, 0) * 1000) AS agent_score
+FROM skills s
+LEFT JOIN authors a ON a.id = s.author_id
+WHERE s.status = 'published';
+
+CREATE UNIQUE INDEX idx_leaderboard_agent_pk ON leaderboard_agent(id);
+CREATE INDEX idx_leaderboard_agent_score ON leaderboard_agent(agent_score DESC);
+CREATE INDEX idx_leaderboard_agent_weekly ON leaderboard_agent(weekly_agent_invocation_count DESC);
 ```
 
 ---
@@ -1430,6 +1690,40 @@ PUT    /v1/skills/:id                   // update existing skill
 PUT    /v1/skills/:id/trust             // update trust score (Cognium callback)
 DELETE /v1/skills/:id                   // remove skill from registry
 
+// ── Composition ──
+POST   /v1/skills/:id/fork              // fork a skill or composition → returns new draft
+POST   /v1/skills/:id/copy              // shallow copy (no lineage tracking)
+POST   /v1/skills/:id/extend            // add steps to an existing composition
+POST   /v1/compositions                 // create a new named composition from skill list
+GET    /v1/compositions/:id             // get composition with steps
+PUT    /v1/compositions/:id/steps       // replace step list
+POST   /v1/compositions/:id/publish     // publish a draft composition
+
+// ── Lineage ──
+GET    /v1/skills/:id/lineage           // full fork ancestry tree
+GET    /v1/skills/:id/forks             // direct forks of this skill
+GET    /v1/skills/:id/dependents        // compositions that include this skill
+
+// ── Social (human only — agent actions never touch these) ──
+POST   /v1/skills/:id/star              // star a skill (human)
+DELETE /v1/skills/:id/star              // unstar
+GET    /v1/skills/:id/stars             // star count + did current user star
+
+// ── Agent Signals (agent runtime → Runics) ──
+POST   /v1/invocations                  // record a skill invocation (bulk-friendly)
+GET    /v1/skills/:id/cooccurrence      // top skills used alongside this one
+
+// ── Leaderboards ──
+GET    /v1/leaderboards/human           // top skills by human engagement
+GET    /v1/leaderboards/agents          // top skills by agent invocation/composition
+GET    /v1/leaderboards/trending        // rising by weekly_agent_invocation_count
+GET    /v1/leaderboards/most-forked     // human fork count only
+GET    /v1/leaderboards/most-composed   // composition_inclusion_count
+
+// ── Authors ──
+GET    /v1/authors/:handle              // author profile + stats
+GET    /v1/authors/:handle/skills       // all published skills/compositions by author
+
 // ── Ingestion (internal) ──
 POST   /v1/skills/:skillId/index        // re-index a skill (single or multi-vector)
 
@@ -1721,7 +2015,7 @@ runics/
 │   │
 │   ├── intelligence/
 │   │   ├── confidence-gate.ts            # Tier routing + findSkill orchestration
-│   │   ├── deep-search.ts               # Tier 3 LLM reasoning
+│   │   ├── deep-search.ts                # Tier 3 LLM reasoning
 │   │   └── composition-detector.ts       # Multi-skill query detection
 │   │
 │   ├── ingestion/
@@ -1730,9 +2024,26 @@ runics/
 │   │   ├── alternate-queries.ts          # Multi-vector query generation
 │   │   └── content-safety.ts             # Llama Guard classification
 │   │
+│   ├── composition/
+│   │   ├── fork.ts                       # Fork handler — deep copy + lineage tracking
+│   │   ├── compose.ts                    # Composition builder — ordered step graph
+│   │   ├── extend.ts                     # Extend handler — append steps to composition
+│   │   ├── lineage.ts                    # Ancestry tree queries
+│   │   ├── publish.ts                    # Draft → published state machine
+│   │   └── schema.ts                     # Zod schemas for composition endpoints
+│   │
+│   ├── social/
+│   │   ├── stars.ts                      # Star/unstar — human only, rate-limited
+│   │   ├── invocations.ts                # Agent invocation recording (bulk)
+│   │   ├── cooccurrence.ts               # Co-occurrence map queries
+│   │   └── leaderboards.ts               # Human / agent / trending leaderboard queries
+│   │
+│   ├── authors/
+│   │   └── handler.ts                    # Author profile + stats endpoints
+│   │
 │   ├── sync/
 │   │   ├── base-sync.ts                  # BaseSyncWorker abstract class
-│   │   ├── mcp-registry.ts              # MCP Registry adapter (every 5 min)
+│   │   ├── mcp-registry.ts               # MCP Registry adapter (every 5 min)
 │   │   ├── clawhub.ts                    # ClawHub adapter (every 10 min)
 │   │   └── github.ts                     # GitHub / skills.sh adapter (every 15 min)
 │   │
@@ -1743,7 +2054,7 @@ runics/
 │   ├── monitoring/
 │   │   ├── search-logger.ts              # Structured search event logging
 │   │   ├── quality-tracker.ts            # Feedback + analytics queries
-│   │   └── perf-monitor.ts              # Per-request timing
+│   │   └── perf-monitor.ts               # Per-request timing
 │   │
 │   ├── cache/
 │   │   └── kv-cache.ts                   # KV caching with TTL
@@ -1753,7 +2064,11 @@ runics/
 │   │   └── migrations/
 │   │       ├── 0001_skill_embeddings.sql
 │   │       ├── 0002_search_logs.sql
-│   │       └── 0003_quality_feedback.sql
+│   │       ├── 0003_quality_feedback.sql
+│   │       ├── 0004_authors.sql
+│   │       ├── 0005_compositions.sql
+│   │       ├── 0006_invocation_graph.sql
+│   │       └── 0007_leaderboards.sql
 │   │
 │   └── eval/
 │       ├── runner.ts                     # Eval suite runner
@@ -1767,6 +2082,10 @@ runics/
 └── tests/
     ├── providers/pgvector-provider.test.ts
     ├── intelligence/confidence-gate.test.ts
+    ├── composition/fork.test.ts
+    ├── composition/compose.test.ts
+    ├── social/leaderboards.test.ts
+    ├── social/invocations.test.ts
     ├── sync/mcp-registry.test.ts
     ├── sync/clawhub.test.ts
     ├── publish/handler.test.ts
@@ -1888,6 +2207,255 @@ FULLTEXT_WEIGHT = "0.3"
 
 HNSW config: m=16, ef_construction=128
 Query scales O(log N) — 6x vectors ≈ +3-5ms
+```
+
+---
+
+## 23. Composition & Social Layer
+
+### Overview
+
+Skills and compositions are the same entity (`type: 'skill' | 'composition' | 'pipeline'`) stored in the same `skills` table. A composition is a named, versioned, ordered set of skill references. The composition layer adds four operations — fork, copy, extend, compose — plus a dual-track social model that keeps human and agent signals clean.
+
+### 23.1 Operations
+
+| Operation | Lineage tracked | Author | Creates new entity |
+|---|---|---|---|
+| **Copy** | No | Copier | Yes — identical clone, `fork_of = null` |
+| **Fork** | Yes | Forker | Yes — `fork_of = source.id`, `origin_id = source.origin_id ?? source.id` |
+| **Extend** | Yes | Extender | Yes — fork + appended steps |
+| **Compose** | N/A | Composer | Yes — new composition from N skill refs |
+| **Publish** | — | — | Draft → published state transition |
+
+```typescript
+// src/composition/fork.ts
+
+export async function forkSkill(
+  sourceId: string,
+  authorId: string,
+  db: Pool
+): Promise<ForkResult> {
+  const source = await db.query(`SELECT * FROM skills WHERE id = $1`, [sourceId]);
+  if (!source.rows[0]) throw new NotFoundError();
+
+  const fork = await db.query(`
+    INSERT INTO skills (
+      name, slug, version, type, status,
+      description, readme, schema_json, execution_layer,
+      tags, categories, ecosystem, license,
+      author_id, author_type,
+      fork_of, origin_id, fork_depth,
+      trust_score, capabilities_required,
+      source
+    ) VALUES (
+      $1, $2, '1.0.0', $3, 'draft',
+      $4, $5, $6, $7,
+      $8, $9, $10, $11,
+      $12, $13,
+      $14, $15, $16,
+      0.5, $17,
+      'direct'
+    ) RETURNING id, slug`,
+    [
+      `${source.rows[0].name} (fork)`,
+      `${source.rows[0].slug}-fork-${nanoid(6)}`,
+      source.rows[0].type,
+      source.rows[0].description,
+      source.rows[0].readme,
+      source.rows[0].schema_json,
+      source.rows[0].execution_layer,
+      source.rows[0].tags,
+      source.rows[0].categories,
+      source.rows[0].ecosystem,
+      source.rows[0].license,
+      authorId,
+      'human',                              // caller sets correct author_type
+      sourceId,
+      source.rows[0].origin_id ?? sourceId,
+      (source.rows[0].fork_depth ?? 0) + 1,
+      source.rows[0].capabilities_required,
+    ]
+  );
+
+  // If source is a composition, copy its steps
+  if (['composition', 'pipeline'].includes(source.rows[0].type)) {
+    await db.query(`
+      INSERT INTO composition_steps (composition_id, step_order, skill_id, input_mapping, condition, on_error)
+      SELECT $1, step_order, skill_id, input_mapping, condition, on_error
+      FROM composition_steps WHERE composition_id = $2`,
+      [fork.rows[0].id, sourceId]
+    );
+  }
+
+  // Increment source fork count (human or agent depending on caller_type)
+  await db.query(
+    `UPDATE skills SET human_fork_count = human_fork_count + 1 WHERE id = $1`,
+    [sourceId]
+  );
+
+  return { id: fork.rows[0].id, slug: fork.rows[0].slug };
+}
+```
+
+### 23.2 Composition Builder
+
+```typescript
+// src/composition/compose.ts
+
+export interface CompositionInput {
+  name: string;
+  description: string;
+  tags?: string[];
+  authorId: string;
+  authorType: 'human' | 'bot';
+  steps: {
+    skillId: string;
+    stepName?: string;
+    inputMapping?: Record<string, string>;
+    onError?: 'fail' | 'skip' | 'retry';
+  }[];
+}
+
+export async function createComposition(
+  input: CompositionInput,
+  db: Pool
+): Promise<{ id: string; slug: string }> {
+  // 1. Validate all skill IDs exist and are published
+  // 2. Compute union of capabilities_required across all steps
+  // 3. Insert skills row (type = 'composition', status = 'draft')
+  // 4. Insert composition_steps rows
+  // 5. Enqueue for embedding (agent_summary generated from step descriptions)
+  // 6. Enqueue for Cognium (trust score = min trust of all steps)
+}
+```
+
+**Trust score inheritance:** A composition's trust score is the minimum trust score of its component skills. A high-trust composition cannot include low-trust skills.
+
+### 23.3 Dual-Track Social Model
+
+**The problem:** At scale, agents invoke skills millions of times. If agent actions fed into the same counters as human stars and forks, every social signal would be noise. A single bot could game any leaderboard in minutes.
+
+**The solution:** Strict separation at the data model level. Human actions and agent actions write to entirely different columns and materialize into entirely different leaderboard views. There is no "combined" score.
+
+```typescript
+// src/social/stars.ts — HUMAN ONLY
+
+export async function starSkill(skillId: string, userId: string, db: Pool): Promise<void> {
+  // Idempotent upsert into user_stars table (not shown — simple join table)
+  // Then increment human_star_count on skills
+  // Rate-limited per user: max 100 stars/day
+  // Bot detection: reject if caller has author_type = 'bot'
+}
+
+// src/social/invocations.ts — AGENT ONLY
+
+export interface InvocationBatch {
+  invocations: {
+    skillId: string;
+    compositionId?: string;
+    tenantId: string;
+    callerType: 'agent' | 'human';
+    durationMs?: number;
+    succeeded: boolean;
+  }[];
+}
+
+export async function recordInvocations(batch: InvocationBatch, db: Pool): Promise<void> {
+  // Bulk insert into skill_invocations
+  // Async update agent_invocation_count, weekly_agent_invocation_count on skills
+  // Update avg_execution_time_ms (rolling average), error_rate (rolling 7-day)
+  // Update last_used_at
+}
+```
+
+### 23.4 Co-Occurrence Map
+
+The co-occurrence map is the agent equivalent of "people also bought." Materialized from actual composition step pairs. Refreshed hourly.
+
+```typescript
+// src/social/cooccurrence.ts
+
+export async function getCoOccurrence(
+  skillId: string,
+  limit: number = 5,
+  db: Pool
+): Promise<CoOccurrenceResult[]> {
+  // Query skill_cooccurrence materialized view
+  // Returns: [{ skillId, compositionCount, totalPairedInvocations, skill: SkillResult }]
+  // Used by agents to discover complementary skills
+  // Used by UI to show "frequently used with" section
+}
+```
+
+### 23.5 Leaderboards
+
+Four leaderboards. Human and agent are entirely separate. Trending uses rolling weekly invocations. Most-composed uses `composition_inclusion_count`.
+
+```
+GET /v1/leaderboards/human
+  → Sorted by human_score (star×3 + fork×5 + copy×2 + use)
+  → Only skills with author_type = 'human'
+  → Filters: type, category, ecosystem, time window
+
+GET /v1/leaderboards/agents
+  → Sorted by agent_score (invocations + composition_inclusion×10 + dependents×8 - error_rate×1000)
+  → All skill types included
+  → Filters: type, category, ecosystem
+
+GET /v1/leaderboards/trending
+  → Sorted by weekly_agent_invocation_count DESC
+  → "Rising" = (this_week / last_week) > 1.5
+  → Refreshed hourly
+
+GET /v1/leaderboards/most-composed
+  → Sorted by composition_inclusion_count DESC
+  → Shows which atomic skills form the backbone of the ecosystem
+```
+
+**Leaderboard refresh:** All four are materialized views refreshed by the existing cron trigger cadence. No real-time computation.
+
+### 23.6 Author Attribution
+
+Both humans and bots are first-class authors. A bot author carries its model version and operator (human/org responsible for it), enabling trust and accountability at the ecosystem level.
+
+```
+Author page (/authors/:handle) shows:
+  - Skills published (filterable by type, status)
+  - Total human stars received
+  - Total agent invocations received
+  - Fork lineage map (what they forked, what forked them)
+  - For bots: model version, operator handle
+  - Verified badge (earned, not purchasable)
+```
+
+### 23.7 Viral Mechanics Summary
+
+| Mechanic | Signal type | Anti-gaming measure |
+|---|---|---|
+| Star | Human only | Rate-limited, bot-rejected |
+| Human fork | Human only | author_type check |
+| Agent invocation | Agent only | tenant-scoped, bulk API |
+| Weekly trending | Agent only | Rolling window, not cumulative |
+| Co-occurrence | Agent only | Minimum 2 compositions required |
+| Fork lineage | Both | Factual — no score attached |
+| Share URL | Presentation | Stable permalink per slug |
+| Embeddable badge | Presentation | Links back to registry |
+
+### 23.8 Deprecation & Auto-Migration
+
+When a skill is deprecated, `replacement_skill_id` enables agents to auto-migrate compositions without human intervention:
+
+```typescript
+// Agent queries a skill → receives deprecated status + replacement
+// Agent auto-substitutes replacement_skill_id in its local composition plan
+// Runics records the substitution in invocation log for analytics
+
+interface SkillResult {
+  // ... existing fields ...
+  status: 'published' | 'deprecated' | 'archived';
+  replacementSkillId?: string;   // agents auto-migrate on deprecated
+  replacementSlug?: string;
+}
 ```
 
 ---

@@ -150,7 +150,7 @@ FULLTEXT_WEIGHT = "0.3"
 # Deploy to production
 npm run deploy
 
-# Note your worker URL, e.g., https://runics-search.YOUR_SUBDOMAIN.workers.dev
+# Note your worker URL, e.g., https://runics.YOUR_SUBDOMAIN.workers.dev
 ```
 
 ## Step 6: Seed Test Skills
@@ -159,7 +159,7 @@ Populate the 7 test skills needed for the eval suite:
 
 ```bash
 # Against production
-npm run seed -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev
+npm run seed -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev
 
 # Or against local dev (in another terminal: npm run dev)
 npm run seed
@@ -172,7 +172,7 @@ Expected output:
 ║       RUNICS SEARCH — SEED EVAL SKILLS               ║
 ╚═══════════════════════════════════════════════════════╝
 
-Endpoint:    https://runics-search.YOUR_SUBDOMAIN.workers.dev
+Endpoint:    https://runics.YOUR_SUBDOMAIN.workers.dev
 Tenant ID:   eval-tenant
 Skills:      7
 
@@ -203,7 +203,7 @@ Measure baseline performance:
 
 ```bash
 # Against production
-npm run eval -- --endpoint https://runics-search.YOUR_SUBDOMAIN.workers.dev --verbose --show-failed
+npm run eval -- --endpoint https://runics.YOUR_SUBDOMAIN.workers.dev --verbose --show-failed
 
 # Or against local dev
 npm run eval -- --verbose --show-failed

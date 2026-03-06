@@ -9,7 +9,7 @@
 // Usage:
 //   npm run seed
 //   npm run seed -- --endpoint http://localhost:8787
-//   npm run seed -- --endpoint https://runics-search.workers.dev --tenant prod
+//   npm run seed -- --endpoint https://runics.workers.dev --tenant prod
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -914,7 +914,7 @@ Options:
 
 Examples:
   npm run seed
-  npm run seed -- --endpoint https://runics-search.workers.dev
+  npm run seed -- --endpoint https://runics.workers.dev
   npm run seed -- --tenant prod-tenant
 `);
 }

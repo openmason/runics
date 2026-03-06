@@ -471,15 +471,23 @@ export class ConfidenceGate {
 
     const sql = `
       SELECT
-        id,
-        name,
-        slug,
-        agent_summary,
-        trust_score,
-        execution_layer,
-        capabilities_required
-      FROM skills
-      WHERE id = ANY($1::uuid[])
+        s.id,
+        s.name,
+        s.slug,
+        s.agent_summary,
+        s.trust_score,
+        s.execution_layer,
+        s.capabilities_required,
+        s.type,
+        s.status,
+        s.replacement_skill_id,
+        rs.slug AS replacement_slug,
+        s.tags,
+        s.avg_execution_time_ms,
+        s.error_rate
+      FROM skills s
+      LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
+      WHERE s.id = ANY($1::uuid[])
     `;
 
     const result = await this.pool.query(sql, [skillIds]);
@@ -495,6 +503,13 @@ export class ConfidenceGate {
           trustScore: parseFloat(row.trust_score),
           executionLayer: row.execution_layer,
           capabilitiesRequired: row.capabilities_required ?? [],
+          type: row.type,
+          status: row.status,
+          replacementSkillId: row.replacement_skill_id ?? undefined,
+          replacementSlug: row.replacement_slug ?? undefined,
+          tags: row.tags ?? undefined,
+          avgExecutionTimeMs: row.avg_execution_time_ms ?? undefined,
+          errorRate: row.error_rate ?? undefined,
         },
       ])
     );

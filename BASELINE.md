@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-02
 **Run ID:** eval-1772473512465-9wzdfyb
-**Endpoint:** https://runics-search.phantoms.workers.dev
+**Endpoint:** https://runics.phantoms.workers.dev
 
 ## Overall Performance
 

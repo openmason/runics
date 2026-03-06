@@ -1,5 +1,5 @@
 {
-  "name": "runics-search",
+  "name": "runics",
   "version": "1.0.0",
   "description": "Semantic skill registry search service for the Runics platform",
   "type": "module",
@@ -23,6 +23,7 @@
     "@neondatabase/serverless": "^0.10.0",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.0.0",
+    "nanoid": "^5.1.6",
     "zod": "^3.23.8"
   },
   "devDependencies": {

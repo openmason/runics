@@ -20,6 +20,11 @@ export const publishSkillSchema = z.object({
   trustScore: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional(),
   category: z.string().optional(),
+  // Author attribution (v4)
+  authorId: z.string().uuid().optional(),
+  authorHandle: z.string().optional(),
+  authorType: z.enum(['human', 'bot', 'org']).optional(),
+  authorBotModel: z.string().optional(),
 });
 
 export const updateSkillSchema = z.object({

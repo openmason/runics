@@ -117,6 +117,24 @@ export interface SkillResult {
   score: number;
   matchSource: string;
   matchText?: string;
+
+  // Composition & social additions (v4)
+  type?: 'skill' | 'composition' | 'pipeline';
+  status?: 'published' | 'deprecated' | 'archived';
+  replacementSkillId?: string;
+  replacementSlug?: string;
+  authorHandle?: string;
+  authorType?: 'human' | 'bot' | 'org';
+  forkOf?: string;
+  forkDepth?: number;
+  humanStarCount?: number;
+  humanForkCount?: number;
+  agentInvocationCount?: number;
+  compositionInclusionCount?: number;
+  avgExecutionTimeMs?: number;
+  errorRate?: number;
+  tags?: string[];
+  cooccursWith?: { skillId: string; slug: string; compositionCount: number }[];
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -406,4 +424,73 @@ export interface CogniumQueueMessage {
   skillId: string;
   action: 'scan';
   source?: string;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Composition & Social Layer Types (v4)
+// ──────────────────────────────────────────────────────────────────────────────
+
+export interface CompositionInput {
+  name: string;
+  slug?: string;
+  description: string;
+  tags?: string[];
+  authorId: string;
+  authorType: 'human' | 'bot';
+  steps: {
+    skillId: string;
+    stepName?: string;
+    inputMapping?: Record<string, string>;
+    onError?: 'fail' | 'skip' | 'retry';
+  }[];
+}
+
+export interface InvocationBatch {
+  invocations: {
+    skillId: string;
+    compositionId?: string;
+    tenantId: string;
+    callerType: 'agent' | 'human';
+    durationMs?: number;
+    succeeded: boolean;
+  }[];
+}
+
+export interface CoOccurrenceResult {
+  skillId: string;
+  name: string;
+  slug: string;
+  compositionCount: number;
+  totalPairedInvocations: number;
+}
+
+export interface ForkResult {
+  id: string;
+  slug: string;
+}
+
+export interface LeaderboardFilters {
+  type?: 'skill' | 'composition' | 'pipeline';
+  category?: string;
+  ecosystem?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  slug: string;
+  name: string;
+  type: string;
+  authorHandle: string;
+  authorType: string;
+  score: number;
+  trustScore: number;
+  humanStarCount?: number;
+  humanForkCount?: number;
+  agentInvocationCount?: number;
+  weeklyAgentInvocationCount?: number;
+  compositionInclusionCount?: number;
+  avgExecutionTimeMs?: number;
+  errorRate?: number;
 }
