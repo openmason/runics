@@ -1,6 +1,7 @@
 import { Pool } from '@neondatabase/serverless';
 import { nanoid } from 'nanoid';
 import type { ForkResult, Env } from '../types';
+import { BASE_TRUST } from '../cognium/scoring-policy';
 
 export async function forkSkill(
   sourceId: string,
@@ -21,28 +22,34 @@ export async function forkSkill(
   const s = source.rows[0];
   const slug = `${s.slug}-fork-${nanoid(6)}`;
 
+  // v5.0: Trust reset uses root_source for base trust floor
+  const rootSource = s.root_source ?? s.source;
+  const trustScore = BASE_TRUST[rootSource] ?? 0.40;
+
+  // v5.0: forked_from stores slug@version reference
+  const forkedFrom = `${s.slug}@${s.version ?? '1.0.0'}`;
+
   const fork = await pool.query(
     `INSERT INTO skills (
-      name, slug, version, type, status,
+      name, slug, version, skill_type, status,
       description, readme, schema_json, execution_layer,
       tags, categories, ecosystem, license,
       author_id, author_type,
-      fork_of, origin_id, fork_depth,
+      forked_from, forked_by, root_source,
       trust_score, capabilities_required,
-      source
+      source, verification_tier
     ) VALUES (
-      $1, $2, '1.0.0', $3, 'draft',
-      $4, $5, $6, $7,
-      $8, $9, $10, $11,
-      $12, $13,
-      $14, $15, $16,
-      0.5, $17,
-      'direct'
-    ) RETURNING id, slug`,
+      $1, $2, '1.0.0', 'forked', 'draft',
+      $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12,
+      $13, $14, $15,
+      $16, $17,
+      'direct', 'unverified'
+    ) RETURNING id, slug, version, status`,
     [
       `${s.name} (fork)`,
       slug,
-      s.type,
       s.description,
       s.readme,
       s.schema_json ? JSON.stringify(s.schema_json) : null,
@@ -53,21 +60,30 @@ export async function forkSkill(
       s.license,
       authorId,
       authorType,
-      sourceId,
-      s.origin_id ?? sourceId,
-      (s.fork_depth ?? 0) + 1,
+      forkedFrom,
+      authorId,
+      rootSource,
+      trustScore,
       s.capabilities_required,
     ]
   );
 
-  // If source is a composition, copy its steps
-  if (['composition', 'pipeline'].includes(s.type)) {
+  // If source is a composition, copy its steps and composition_skill_ids
+  const sourceType = s.skill_type ?? s.type;
+  if (['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(sourceType)) {
     await pool.query(
       `INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, condition, on_error)
        SELECT $1, step_order, skill_id, step_name, input_mapping, condition, on_error
        FROM composition_steps WHERE composition_id = $2`,
       [fork.rows[0].id, sourceId]
     );
+    // Copy composition_skill_ids
+    if (s.composition_skill_ids) {
+      await pool.query(
+        `UPDATE skills SET composition_skill_ids = $1 WHERE id = $2`,
+        [s.composition_skill_ids, fork.rows[0].id]
+      );
+    }
   }
 
   // Increment source fork count based on author type
@@ -83,11 +99,22 @@ export async function forkSkill(
     );
   }
 
-  // Enqueue for embedding and security scanning
+  // Enqueue for embedding and security scanning (v5.0 message format)
   await env.EMBED_QUEUE.send({ skillId: fork.rows[0].id, action: 'embed' });
-  await env.COGNIUM_QUEUE.send({ skillId: fork.rows[0].id, action: 'scan' });
+  await env.COGNIUM_QUEUE.send({
+    skillId: fork.rows[0].id,
+    priority: 'normal' as const,
+    timestamp: Date.now(),
+  });
 
-  return { id: fork.rows[0].id, slug: fork.rows[0].slug };
+  return {
+    id: fork.rows[0].id,
+    slug: fork.rows[0].slug,
+    version: fork.rows[0].version,
+    forkedFrom,
+    trustScore,
+    status: fork.rows[0].status,
+  };
 }
 
 export class NotFoundError extends Error {

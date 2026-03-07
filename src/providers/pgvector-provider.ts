@@ -27,6 +27,9 @@ import type {
 } from '../types';
 
 export class PgVectorProvider implements SearchProvider {
+  // Always-excluded statuses (never shown in search)
+  private static readonly BLOCKED_STATUSES = ['revoked', 'draft', 'degraded'];
+
   private pool: Pool;
 
   // Configurable thresholds from env vars
@@ -34,6 +37,8 @@ export class PgVectorProvider implements SearchProvider {
   private tier2Threshold: number;
   private vectorWeight: number;
   private fullTextWeight: number;
+  private versionTrustWeight: number;
+  private versionUsageWeight: number;
 
   constructor(connectionString: string, env: Env) {
     // Connect directly to Neon (NOT through Hyperdrive)
@@ -45,6 +50,55 @@ export class PgVectorProvider implements SearchProvider {
     this.tier2Threshold = parseFloat(env.CONFIDENCE_TIER2_THRESHOLD || '0.70');
     this.vectorWeight = parseFloat(env.VECTOR_WEIGHT || '0.7');
     this.fullTextWeight = parseFloat(env.FULLTEXT_WEIGHT || '0.3');
+    this.versionTrustWeight = parseFloat(env.VERSION_TRUST_WEIGHT || '0.7');
+    this.versionUsageWeight = parseFloat(env.VERSION_USAGE_WEIGHT || '0.3');
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Status Filter Builder
+  // ────────────────────────────────────────────────────────────────────────────
+
+  private buildStatusFilter(
+    filters: SearchFilters,
+    params: any[],
+    paramCount: { value: number },
+  ): string[] {
+    const conditions: string[] = [];
+
+    // Always exclude revoked, draft, degraded
+    conditions.push(`s.status NOT IN (${PgVectorProvider.BLOCKED_STATUSES.map(() => `$${++paramCount.value}`).join(', ')})`);
+    params.push(...PgVectorProvider.BLOCKED_STATUSES);
+
+    // Conditionally exclude vulnerable/contains-vulnerable
+    if (!filters.allowVulnerable) {
+      conditions.push(`s.status NOT IN ($${++paramCount.value}, $${++paramCount.value})`);
+      params.push('vulnerable', 'contains-vulnerable');
+    }
+
+    // Explicit status filter overrides the above (must still exclude BLOCKED)
+    if (filters.statusFilter && filters.statusFilter.length > 0) {
+      const allowed = filters.statusFilter.filter(
+        s => !PgVectorProvider.BLOCKED_STATUSES.includes(s)
+      );
+      if (allowed.length > 0) {
+        conditions.push(`s.status IN (${allowed.map(() => `$${++paramCount.value}`).join(', ')})`);
+        params.push(...allowed);
+      }
+    }
+
+    // Slug pin (best-version-per-slug)
+    if (filters.slug) {
+      conditions.push(`s.slug = $${++paramCount.value}`);
+      params.push(filters.slug);
+    }
+
+    // Version pin
+    if (filters.version) {
+      conditions.push(`s.version = $${++paramCount.value}`);
+      params.push(filters.version);
+    }
+
+    return conditions;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -116,10 +170,13 @@ export class PgVectorProvider implements SearchProvider {
     // Build WHERE clause — include tenant's own + public ('default') embeddings
     const conditions: string[] = ["se.tenant_id IN ($1, 'default')"];
     const params: any[] = [filters.tenantId, embeddingStr, limit];
-    let paramCount = 3;
+    const paramCount = { value: 3 };
+
+    // v5.0: Status filter (always exclude revoked/draft/degraded)
+    conditions.push(...this.buildStatusFilter(filters, params, paramCount));
 
     if (filters.minTrustScore !== undefined) {
-      conditions.push(`s.trust_score >= $${++paramCount}`);
+      conditions.push(`s.trust_score >= $${++paramCount.value}`);
       params.push(filters.minTrustScore);
     }
 
@@ -128,35 +185,38 @@ export class PgVectorProvider implements SearchProvider {
     }
 
     if (filters.executionLayer) {
-      conditions.push(`s.execution_layer = $${++paramCount}`);
+      conditions.push(`s.execution_layer = $${++paramCount.value}`);
       params.push(filters.executionLayer);
     }
 
     if (filters.category) {
-      conditions.push(`s.category = $${++paramCount}`);
+      conditions.push(`s.category = $${++paramCount.value}`);
       params.push(filters.category);
     }
 
     if (filters.tags && filters.tags.length > 0) {
-      conditions.push(`s.tags && $${++paramCount}::text[]`);
+      conditions.push(`s.tags && $${++paramCount.value}::text[]`);
       params.push(filters.tags);
     }
 
     const whereClause = conditions.join(' AND ');
 
-    // Vector search: get best embedding per skill, then rank by score
+    // v5.0: Version ranking — best version per slug using trust×weight + min(run_count/100, usage_weight)
+    // DISTINCT ON (slug) picks the version with highest version_rank per slug
     const sql = `
       SELECT skill_id, score, match_source, match_text
       FROM (
-        SELECT DISTINCT ON (se.skill_id)
+        SELECT DISTINCT ON (s.slug)
           se.skill_id,
           1 - (se.embedding <=> $2::vector) AS score,
           se.source AS match_source,
-          se.source_text AS match_text
+          se.source_text AS match_text,
+          (COALESCE(s.trust_score, 0.5) * ${this.versionTrustWeight}
+           + LEAST(COALESCE(s.run_count, 0)::float / 100.0, ${this.versionUsageWeight})) AS version_rank
         FROM skill_embeddings se
         INNER JOIN skills s ON s.id = se.skill_id
         WHERE ${whereClause}
-        ORDER BY se.skill_id, (se.embedding <=> $2::vector) ASC
+        ORDER BY s.slug, version_rank DESC, (se.embedding <=> $2::vector) ASC
       ) ranked
       ORDER BY score DESC
       LIMIT $3
@@ -184,10 +244,13 @@ export class PgVectorProvider implements SearchProvider {
     // Build WHERE clause — include tenant's own + public ('default') embeddings
     const conditions: string[] = ["se.tenant_id IN ($1, 'default')"];
     const params: any[] = [filters.tenantId, limit];
-    let paramCount = 2;
+    const paramCount = { value: 2 };
+
+    // v5.0: Status filter (always exclude revoked/draft/degraded)
+    conditions.push(...this.buildStatusFilter(filters, params, paramCount));
 
     if (filters.minTrustScore !== undefined) {
-      conditions.push(`s.trust_score >= $${++paramCount}`);
+      conditions.push(`s.trust_score >= $${++paramCount.value}`);
       params.push(filters.minTrustScore);
     }
 
@@ -196,41 +259,44 @@ export class PgVectorProvider implements SearchProvider {
     }
 
     if (filters.executionLayer) {
-      conditions.push(`s.execution_layer = $${++paramCount}`);
+      conditions.push(`s.execution_layer = $${++paramCount.value}`);
       params.push(filters.executionLayer);
     }
 
     if (filters.category) {
-      conditions.push(`s.category = $${++paramCount}`);
+      conditions.push(`s.category = $${++paramCount.value}`);
       params.push(filters.category);
     }
 
     if (filters.tags && filters.tags.length > 0) {
-      conditions.push(`s.tags && $${++paramCount}::text[]`);
+      conditions.push(`s.tags && $${++paramCount.value}::text[]`);
       params.push(filters.tags);
     }
 
     const whereClause = conditions.join(' AND ');
 
-    // Full-text search: get best match per skill, then rank by score
-    ++paramCount;
+    // Full-text search: best version per slug, then rank by score
+    ++paramCount.value;
+    const queryParam = paramCount.value;
     const sql = `
       SELECT skill_id, raw_score, normalized_score, keyword_hits
       FROM (
-        SELECT DISTINCT ON (se.skill_id)
+        SELECT DISTINCT ON (s.slug)
           se.skill_id,
-          ts_rank_cd(se.tsv, plainto_tsquery('english', $${paramCount})) AS raw_score,
-          ts_rank_cd(se.tsv, plainto_tsquery('english', $${paramCount}), 32) AS normalized_score,
+          ts_rank_cd(se.tsv, plainto_tsquery('english', $${queryParam})) AS raw_score,
+          ts_rank_cd(se.tsv, plainto_tsquery('english', $${queryParam}), 32) AS normalized_score,
           (
             SELECT COUNT(*)
             FROM unnest(tsvector_to_array(se.tsv)) AS term
-            WHERE term = ANY(string_to_array(lower($${paramCount}), ' '))
-          ) AS keyword_hits
+            WHERE term = ANY(string_to_array(lower($${queryParam}), ' '))
+          ) AS keyword_hits,
+          (COALESCE(s.trust_score, 0.5) * ${this.versionTrustWeight}
+           + LEAST(COALESCE(s.run_count, 0)::float / 100.0, ${this.versionUsageWeight})) AS version_rank
         FROM skill_embeddings se
         INNER JOIN skills s ON s.id = se.skill_id
         WHERE ${whereClause}
-          AND se.tsv @@ plainto_tsquery('english', $${paramCount})
-        ORDER BY se.skill_id, raw_score DESC
+          AND se.tsv @@ plainto_tsquery('english', $${queryParam})
+        ORDER BY s.slug, version_rank DESC, raw_score DESC
       ) ranked
       ORDER BY raw_score DESC
       LIMIT $2
@@ -323,13 +389,12 @@ export class PgVectorProvider implements SearchProvider {
 
     const sql = `
       SELECT
-        id,
-        name,
-        slug,
-        agent_summary,
-        trust_score,
-        execution_layer,
-        capabilities_required
+        id, name, slug, version, agent_summary, trust_score,
+        execution_layer, capabilities_required, status,
+        skill_type, verification_tier, trust_badge,
+        forked_from, run_count, last_run_at,
+        revoked_reason, remediation_message, remediation_url,
+        replacement_skill_id
       FROM skills
       WHERE id = ANY($1::uuid[])
     `;
@@ -344,10 +409,22 @@ export class PgVectorProvider implements SearchProvider {
           id: row.id,
           name: row.name,
           slug: row.slug,
+          version: row.version ?? '1.0.0',
           agentSummary: row.agent_summary,
           trustScore: parseFloat(row.trust_score),
           executionLayer: row.execution_layer,
           capabilitiesRequired: row.capabilities_required ?? [],
+          status: row.status ?? 'published',
+          skillType: row.skill_type ?? 'atomic',
+          verificationTier: row.verification_tier ?? 'unverified',
+          trustBadge: row.trust_badge ?? null,
+          forkedFrom: row.forked_from ?? undefined,
+          runCount: parseInt(row.run_count) || 0,
+          lastRunAt: row.last_run_at?.toISOString() ?? undefined,
+          revokedReason: row.revoked_reason ?? undefined,
+          remediationMessage: row.remediation_message ?? undefined,
+          remediationUrl: row.remediation_url ?? undefined,
+          replacementSkillId: row.replacement_skill_id ?? undefined,
         },
       ])
     );

@@ -15,8 +15,13 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { Pool } from '@neondatabase/serverless';
-import { publishSkillSchema, updateSkillSchema, trustUpdateSchema } from './schema';
-import type { Env, EmbedQueueMessage, CogniumQueueMessage } from '../types';
+import {
+  publishSkillSchema,
+  updateSkillSchema,
+  attestationUpdateSchema,
+  statusChangeSchema,
+} from './schema';
+import type { Env, CogniumSubmitMessage } from '../types';
 
 export const publishRoutes = new Hono<{ Bindings: Env }>();
 
@@ -34,9 +39,13 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         name, slug, version, source, description, schema_json,
         execution_layer, mcp_url, skill_md, capabilities_required,
         source_url, trust_score, tenant_id, tags, category,
-        author_id, author_type, status, published_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'published',NOW())
-      RETURNING id, slug`,
+        author_id, author_type, status, published_at,
+        skill_type, composition_skill_ids, forked_from, forked_by,
+        fork_changes, human_distilled_by, human_distilled_at,
+        trust_badge, verification_tier, run_count
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                'published',NOW(),$18,$19,$20,$21,$22,$23,$24,$25,'unverified',0)
+      RETURNING id, slug, version`,
       [
         input.name,
         input.slug,
@@ -55,6 +64,15 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         input.category ?? null,
         input.authorId ?? null,
         input.authorType ?? 'human',
+        // v5.0 fields
+        input.skillType ?? 'atomic',
+        input.compositionSkillIds ?? null,
+        input.forkedFrom ?? null,
+        input.forkedBy ?? null,
+        input.forkChanges ? JSON.stringify(input.forkChanges) : null,
+        input.humanDistilledBy ?? null,
+        input.humanDistilledBy ? new Date() : null,
+        input.trustBadge ?? null,
       ]
     );
 
@@ -65,16 +83,14 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
       skillId: inserted.id,
       action: 'embed',
       source: input.source ?? 'manual',
-    } satisfies EmbedQueueMessage);
+    });
 
-    // Enqueue for Cognium scanning (unless source IS cognium)
-    if (input.source !== 'cognium') {
-      await c.env.COGNIUM_QUEUE.send({
-        skillId: inserted.id,
-        action: 'scan',
-        source: input.source ?? 'manual',
-      } satisfies CogniumQueueMessage);
-    }
+    // Enqueue for Cognium scanning (v5.0: submit message format)
+    await c.env.COGNIUM_QUEUE.send({
+      skillId: inserted.id,
+      priority: ['forge', 'human-distilled'].includes(input.source ?? '') ? 'high' : 'normal',
+      timestamp: Date.now(),
+    } satisfies CogniumSubmitMessage);
 
     // Upsert author (non-blocking)
     if (input.authorId) {
@@ -97,7 +113,7 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
       );
     }
 
-    return c.json({ id: inserted.id, slug: inserted.slug, status: 'published' }, 201);
+    return c.json({ id: inserted.id, slug: inserted.slug, version: inserted.version, status: 'published' }, 201);
   } catch (error) {
     console.error('[PUBLISH] Error:', error);
     return c.json({ error: 'Failed to publish skill', message: (error as Error).message }, 500);
@@ -170,7 +186,7 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
         skillId,
         action: 'embed',
         source: 'update',
-      } satisfies EmbedQueueMessage);
+      });
     }
 
     return c.json({ id: skillId, status: 'updated' });
@@ -181,37 +197,114 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PUT /v1/skills/:id/trust — Cognium trust score callback
+// PUT /v1/skills/:id/trust — Cognium attestation callback (v5.0)
 // ──────────────────────────────────────────────────────────────────────────────
 
-publishRoutes.put('/:id/trust', zValidator('json', trustUpdateSchema), async (c) => {
+publishRoutes.put('/:id/trust', zValidator('json', attestationUpdateSchema), async (c) => {
   const skillId = c.req.param('id');
-  const { trustScore, cogniumReport } = c.req.valid('json');
+  const body = c.req.valid('json');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    // Content safety is an absolute gate
+    if (!body.contentSafe) {
+      await pool.query(
+        `UPDATE skills SET
+          trust_score = 0.0,
+          content_safety_passed = false,
+          status = 'revoked',
+          revoked_at = NOW(),
+          revoked_reason = 'content_safety_failed',
+          cognium_scanned_at = NOW(),
+          verification_tier = $1,
+          scan_coverage = $2,
+          cognium_findings = $3,
+          analyzer_summary = $4,
+          updated_at = NOW()
+        WHERE id = $5`,
+        [body.tier, body.scanCoverage, JSON.stringify(body.findings), JSON.stringify(body.analyzerSummary), skillId]
+      );
+      return c.json({ id: skillId, status: 'revoked', trustScore: 0.0 });
+    }
+
+    await pool.query(
+      `UPDATE skills SET
+        trust_score = $1,
+        verification_tier = $2,
+        content_safety_passed = true,
+        scan_coverage = $3,
+        status = $4,
+        revoked_at = CASE WHEN $4 = 'revoked' THEN NOW() ELSE NULL END,
+        revoked_reason = CASE WHEN $4 = 'revoked' THEN $5 ELSE NULL END,
+        remediation_message = $6,
+        remediation_url = $7,
+        cognium_findings = $8,
+        analyzer_summary = $9,
+        cognium_scanned_at = $10::timestamptz,
+        cognium_scanned = true,
+        updated_at = NOW()
+      WHERE id = $11`,
+      [
+        body.trustScore,
+        body.tier,
+        body.scanCoverage,
+        body.recommendedStatus,
+        body.statusReason ?? null,
+        body.remediationMessage ?? null,
+        body.remediationUrl ?? null,
+        JSON.stringify(body.findings),
+        JSON.stringify(body.analyzerSummary),
+        body.scannedAt,
+        skillId,
+      ]
+    );
+
+    return c.json({
+      id: skillId,
+      trustScore: body.trustScore,
+      tier: body.tier,
+      status: body.recommendedStatus,
+    });
+  } catch (error) {
+    console.error('[PUBLISH] Trust update error:', error);
+    return c.json(
+      { error: 'Failed to update trust score', message: (error as Error).message },
+      500
+    );
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PATCH /v1/skills/:id/status — Owner-initiated status changes (v5.0)
+// ──────────────────────────────────────────────────────────────────────────────
+
+publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async (c) => {
+  const skillId = c.req.param('id');
+  const { status, reason, replacementSkillId } = c.req.valid('json');
   const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
   try {
     const result = await pool.query(
       `UPDATE skills SET
-        trust_score = $1,
-        cognium_scanned_at = NOW(),
-        cognium_scanned = true,
-        cognium_report = $2,
-        content_safety_passed = $3,
+        status = $1,
+        deprecated_at = CASE WHEN $1 = 'deprecated' THEN NOW() ELSE NULL END,
+        deprecated_reason = CASE WHEN $1 = 'deprecated' THEN $2 ELSE NULL END,
+        replacement_skill_id = $3,
         updated_at = NOW()
       WHERE id = $4
-      RETURNING id`,
-      [trustScore, JSON.stringify(cogniumReport), cogniumReport.contentSafe, skillId]
+      RETURNING id, slug`,
+      [status, reason ?? null, replacementSkillId ?? null, skillId]
     );
 
     if (result.rows.length === 0) {
       return c.json({ error: 'Skill not found' }, 404);
     }
 
-    return c.json({ id: skillId, trustScore, status: 'updated' });
+    return c.json({ id: skillId, status });
   } catch (error) {
-    console.error('[PUBLISH] Trust update error:', error);
+    console.error('[PUBLISH] Status change error:', error);
     return c.json(
-      { error: 'Failed to update trust score', message: (error as Error).message },
+      { error: 'Failed to update status', message: (error as Error).message },
       500
     );
   }

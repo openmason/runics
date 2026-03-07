@@ -52,11 +52,11 @@ describe('getHumanLeaderboard', () => {
   it('should apply type filter', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-    await getHumanLeaderboard({ type: 'composition' }, mockPool);
+    await getHumanLeaderboard({ type: 'auto-composite' }, mockPool);
 
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('WHERE type = $1');
-    expect(mockPool.query.mock.calls[0][1][0]).toBe('composition');
+    expect(mockPool.query.mock.calls[0][1][0]).toBe('auto-composite');
   });
 
   it('should apply category filter', async () => {
@@ -81,7 +81,7 @@ describe('getHumanLeaderboard', () => {
   it('should combine multiple filters', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-    await getHumanLeaderboard({ type: 'skill', category: 'ai', ecosystem: 'npm' }, mockPool);
+    await getHumanLeaderboard({ type: 'atomic', category: 'ai', ecosystem: 'npm' }, mockPool);
 
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('WHERE');
@@ -208,7 +208,7 @@ describe('getTrendingLeaderboard', () => {
 
   it('should apply filters same as other leaderboards', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    await getTrendingLeaderboard({ type: 'pipeline' }, mockPool);
+    await getTrendingLeaderboard({ type: 'auto-composite' }, mockPool);
     expect(mockPool.query.mock.calls[0][0]).toContain('WHERE type = $1');
   });
 });

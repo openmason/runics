@@ -22,10 +22,11 @@ export async function createComposition(
     throw new ValidationError(`Skills not found or not published: ${missing.join(', ')}`);
   }
 
-  // Compute trust_score = MIN across all step skills
-  const trustScore = Math.min(
+  // v5.0: trust_score = MIN across all step skills × 0.90
+  const minTrust = Math.min(
     ...skills.rows.map((r: any) => parseFloat(r.trust_score) || 0)
   );
+  const trustScore = Math.round(minTrust * 0.90 * 100) / 100;
 
   // Compute capabilities_required = union of all step skills
   const capabilitiesSet = new Set<string>();
@@ -40,16 +41,18 @@ export async function createComposition(
 
   const slug = input.slug || `${input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${nanoid(6)}`;
 
-  // Insert composition as a skill row
+  // v5.0: Insert composition with skill_type='auto-composite' and composition_skill_ids
   const result = await pool.query(
     `INSERT INTO skills (
-      name, slug, version, type, status,
+      name, slug, version, skill_type, status,
       description, tags, author_id, author_type,
-      trust_score, capabilities_required, execution_layer, source
+      trust_score, capabilities_required, execution_layer, source,
+      composition_skill_ids, verification_tier
     ) VALUES (
-      $1, $2, '1.0.0', 'composition', 'draft',
+      $1, $2, '1.0.0', 'auto-composite', 'draft',
       $3, $4, $5, $6,
-      $7, $8, 'instructions', 'direct'
+      $7, $8, 'composite', 'direct',
+      $9, 'unverified'
     ) RETURNING id, slug`,
     [
       input.name,
@@ -60,6 +63,7 @@ export async function createComposition(
       input.authorType,
       trustScore,
       capabilities,
+      skillIds,
     ]
   );
 
@@ -83,9 +87,13 @@ export async function createComposition(
     );
   }
 
-  // Enqueue for embedding and security scanning
+  // Enqueue for embedding and security scanning (v5.0 message format)
   await env.EMBED_QUEUE.send({ skillId: compositionId, action: 'embed' });
-  await env.COGNIUM_QUEUE.send({ skillId: compositionId, action: 'scan' });
+  await env.COGNIUM_QUEUE.send({
+    skillId: compositionId,
+    priority: 'normal' as const,
+    timestamp: Date.now(),
+  });
 
   return { id: compositionId, slug: result.rows[0].slug };
 }

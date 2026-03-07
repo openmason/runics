@@ -69,7 +69,7 @@ describe('createComposition', () => {
 
     // Check the INSERT INTO skills params
     const insertParams = mockPool.query.mock.calls[1][1];
-    expect(insertParams[6]).toBe(0.5); // trust_score = MIN(0.9, 0.5)
+    expect(insertParams[6]).toBe(0.45); // trust_score = MIN(0.9, 0.5) × 0.90
   });
 
   it('should compute capabilities as union of all skills', async () => {
@@ -172,17 +172,19 @@ describe('createComposition', () => {
       skillId: 'comp-id',
       action: 'embed',
     });
-    expect(mockEnv.COGNIUM_QUEUE.send).toHaveBeenCalledWith({
-      skillId: 'comp-id',
-      action: 'scan',
-    });
+    expect(mockEnv.COGNIUM_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: 'comp-id',
+        priority: 'normal',
+      })
+    );
   });
 
   it('should handle step with inputMapping and onError', async () => {
     const inputWithMappings = {
       ...input,
       steps: [
-        { skillId: 'skill-a', stepName: 'Step A', inputMapping: { key: 'val' }, onError: 'skip' },
+        { skillId: 'skill-a', stepName: 'Step A', inputMapping: { key: 'val' }, onError: 'skip' as const },
         { skillId: 'skill-b' },
       ],
     };

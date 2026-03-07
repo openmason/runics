@@ -12,7 +12,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import { Pool } from '@neondatabase/serverless';
-import type { Env, SyncResult, SkillUpsert, EmbedQueueMessage, CogniumQueueMessage } from '../types';
+import type { Env, SyncResult, SkillUpsert, EmbedQueueMessage, CogniumSubmitMessage } from '../types';
 import { sha256 } from './utils';
 
 export abstract class BaseSyncWorker {
@@ -76,12 +76,12 @@ export abstract class BaseSyncWorker {
               source: this.sourceName,
             } satisfies EmbedQueueMessage);
 
-            // Enqueue for Cognium trust scanning (async)
+            // Enqueue for Cognium trust scanning (async, v5.0 format)
             await this.env.COGNIUM_QUEUE.send({
               skillId,
-              action: 'scan',
-              source: this.sourceName,
-            } satisfies CogniumQueueMessage);
+              priority: 'normal',
+              timestamp: Date.now(),
+            } satisfies CogniumSubmitMessage);
 
             synced++;
           } catch (error) {

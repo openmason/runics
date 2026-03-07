@@ -30,7 +30,7 @@ describe('forkSkill', () => {
           {
             slug: 'original-skill',
             name: 'Original',
-            type: 'skill',
+            skill_type: 'atomic',
             description: 'desc',
             readme: null,
             schema_json: null,
@@ -39,31 +39,41 @@ describe('forkSkill', () => {
             categories: ['cat1'],
             ecosystem: 'npm',
             license: 'MIT',
-            origin_id: null,
-            fork_depth: 0,
+            root_source: null,
+            source: 'forge',
+            version: '1.0.0',
             capabilities_required: ['git'],
           },
         ],
       })
       // INSERT fork
       .mockResolvedValueOnce({
-        rows: [{ id: 'fork-id', slug: 'original-skill-fork-abc123' }],
+        rows: [{ id: 'fork-id', slug: 'original-skill-fork-abc123', version: '1.0.0', status: 'draft' }],
       })
       // UPDATE human_fork_count
       .mockResolvedValueOnce({ rows: [] });
 
     const result = await forkSkill('source-id', 'author1', 'human', mockPool, mockEnv);
 
-    expect(result).toEqual({ id: 'fork-id', slug: 'original-skill-fork-abc123' });
+    expect(result).toEqual({
+      id: 'fork-id',
+      slug: 'original-skill-fork-abc123',
+      version: '1.0.0',
+      forkedFrom: 'original-skill@1.0.0',
+      trustScore: 0.40,
+      status: 'draft',
+    });
     expect(mockPool.query).toHaveBeenCalledTimes(3);
     // Verify fork counter is for human
     expect(mockPool.query.mock.calls[2][0]).toContain('human_fork_count');
     // Verify queues were called
     expect(mockEnv.EMBED_QUEUE.send).toHaveBeenCalledWith({ skillId: 'fork-id', action: 'embed' });
-    expect(mockEnv.COGNIUM_QUEUE.send).toHaveBeenCalledWith({
-      skillId: 'fork-id',
-      action: 'scan',
-    });
+    expect(mockEnv.COGNIUM_QUEUE.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skillId: 'fork-id',
+        priority: 'normal',
+      })
+    );
   });
 
   it('should increment agent_fork_count for bot author', async () => {
@@ -73,7 +83,7 @@ describe('forkSkill', () => {
           {
             slug: 'sk',
             name: 'S',
-            type: 'skill',
+            skill_type: 'atomic',
             description: 'd',
             readme: null,
             schema_json: { type: 'object' },
@@ -82,13 +92,14 @@ describe('forkSkill', () => {
             categories: [],
             ecosystem: null,
             license: null,
-            origin_id: 'root',
-            fork_depth: 1,
+            root_source: 'github',
+            source: 'forge',
+            version: '1.0.0',
             capabilities_required: [],
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [{ id: 'f-id', slug: 'sk-fork-abc123' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'f-id', slug: 'sk-fork-abc123', version: '1.0.0', status: 'draft' }] })
       .mockResolvedValueOnce({ rows: [] });
 
     await forkSkill('source-id', 'bot1', 'bot', mockPool, mockEnv);
@@ -103,6 +114,7 @@ describe('forkSkill', () => {
           {
             slug: 'comp',
             name: 'Comp',
+            skill_type: 'auto-composite',
             type: 'composition',
             description: 'd',
             readme: null,
@@ -112,13 +124,14 @@ describe('forkSkill', () => {
             categories: [],
             ecosystem: null,
             license: null,
-            origin_id: null,
-            fork_depth: 0,
+            root_source: null,
+            source: 'forge',
+            version: '1.0.0',
             capabilities_required: [],
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [{ id: 'fork-id', slug: 'comp-fork-abc123' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'fork-id', slug: 'comp-fork-abc123', version: '1.0.0', status: 'draft' }] })
       // copy steps
       .mockResolvedValueOnce({ rows: [] })
       // update counter
@@ -131,14 +144,14 @@ describe('forkSkill', () => {
     expect(mockPool.query.mock.calls[2][0]).toContain('composition_steps');
   });
 
-  it('should set origin_id to sourceId when source has no origin', async () => {
+  it('should set root_source from source when root_source is null', async () => {
     mockPool.query
       .mockResolvedValueOnce({
         rows: [
           {
             slug: 'sk',
             name: 'S',
-            type: 'skill',
+            skill_type: 'atomic',
             description: 'd',
             readme: null,
             schema_json: null,
@@ -147,21 +160,25 @@ describe('forkSkill', () => {
             categories: [],
             ecosystem: null,
             license: null,
-            origin_id: null,
-            fork_depth: null,
+            root_source: null,
+            source: 'forge',
+            version: '2.0.0',
             capabilities_required: [],
           },
         ],
       })
-      .mockResolvedValueOnce({ rows: [{ id: 'f', slug: 's' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'f', slug: 's', version: '1.0.0', status: 'draft' }] })
       .mockResolvedValueOnce({ rows: [] });
 
     await forkSkill('source-id', 'a', 'human', mockPool, mockEnv);
 
-    // Check INSERT params: origin_id should be sourceId since source has null
+    // Check INSERT params: forkedFrom should reference source slug@version
     const insertParams = mockPool.query.mock.calls[1][1];
-    expect(insertParams[14]).toBe('source-id'); // origin_id fallback
-    expect(insertParams[15]).toBe(1); // fork_depth: (null ?? 0) + 1
+    expect(insertParams[12]).toBe('sk@2.0.0'); // forkedFrom
+    // root_source falls back to source ('forge') when null
+    expect(insertParams[14]).toBe('forge'); // rootSource
+    // trust score for 'forge' source = 0.40
+    expect(insertParams[15]).toBe(0.40); // trustScore
   });
 });
 

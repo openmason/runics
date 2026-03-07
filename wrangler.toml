@@ -12,6 +12,12 @@ binding = "SEARCH_CACHE"
 # Replace with actual KV namespace ID: wrangler kv:namespace create SEARCH_CACHE
 id = "2e63a7085ae54de895da31048e50cf8b"
 
+# KV for Cognium job state (submit → poll handoff)
+[[kv_namespaces]]
+binding = "COGNIUM_JOBS"
+# Replace with actual KV namespace ID: wrangler kv:namespace create COGNIUM_JOBS
+id = "bfcb4b45618945d69d55ef3809887367"
+
 # Hyperdrive for Postgres connection pooling
 [[hyperdrive]]
 binding = "HYPERDRIVE"
@@ -71,6 +77,17 @@ RATE_LIMIT_RPM = "100"                # Max search requests per minute per IP
 RERANKER_ENABLED = "true"             # Cross-encoder reranking (+4.6% R@1 lift, eval-measured)
 RERANKER_TOP_N = "20"                 # Number of candidates to rerank
 
+# Cognium (Circle-IR integration)
+COGNIUM_URL = "https://circle.cognium.net"
+COGNIUM_POLL_DELAY_MS = "15000"
+COGNIUM_MAX_POLL_ATTEMPTS = "12"
+# COGNIUM_API_KEY set via: wrangler secret put COGNIUM_API_KEY
+# ACTIVEPIECES_WEBHOOK_URL set via: wrangler secret put ACTIVEPIECES_WEBHOOK_URL
+
+# Version ranking weights
+VERSION_TRUST_WEIGHT = "0.7"
+VERSION_USAGE_WEIGHT = "0.3"
+
 # Phase 5: Sync pipeline config
 SYNC_MCP_ENABLED = "true"
 SYNC_CLAWHUB_ENABLED = "true"
@@ -90,6 +107,10 @@ queue = "runics-embed"
 binding = "COGNIUM_QUEUE"
 queue = "runics-cognium"
 
+[[queues.producers]]
+binding = "COGNIUM_POLL_QUEUE"
+queue = "runics-cognium-poll"
+
 # Queue consumers
 [[queues.consumers]]
 queue = "runics-embed"
@@ -100,6 +121,15 @@ max_batch_timeout = 30
 queue = "runics-cognium"
 max_batch_size = 5
 max_batch_timeout = 60
+max_retries = 2
+dead_letter_queue = "cognium-dlq"
+
+[[queues.consumers]]
+queue = "runics-cognium-poll"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 0
+dead_letter_queue = "cognium-poll-dlq"
 
 # Cron triggers: sync dispatch (every 5 min) includes hourly mat view refresh
 [triggers]

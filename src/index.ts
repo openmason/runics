@@ -19,6 +19,8 @@ import { ClawHubSync } from './sync/clawhub';
 import { GitHubSync } from './sync/github';
 import { handleEmbedQueue } from './queues/embed-consumer';
 import { handleCogniumQueue } from './queues/cognium-consumer';
+import { handleCogniumSubmitQueue } from './cognium/submit-consumer';
+import { handleCogniumPollQueue } from './cognium/poll-consumer';
 // Composition & Social layer (v4)
 import { forkSkill, NotFoundError } from './composition/fork';
 import { copySkill } from './composition/copy';
@@ -53,6 +55,8 @@ import type {
   Appetite,
   EmbedQueueMessage,
   CogniumQueueMessage,
+  CogniumSubmitMessage,
+  CogniumPollMessage,
   InvocationBatch,
   LeaderboardFilters,
 } from './types';
@@ -579,7 +583,7 @@ app.get('/v1/compositions/:id', async (c) => {
 
   try {
     const skill = await pool.query(
-      `SELECT * FROM skills WHERE id = $1 AND type IN ('composition', 'pipeline')`,
+      `SELECT * FROM skills WHERE id = $1 AND COALESCE(skill_type, type) IN ('auto-composite', 'human-composite', 'composition', 'pipeline')`,
       [compositionId]
     );
     if (skill.rows.length === 0) return c.json({ error: 'Composition not found' }, 404);
@@ -873,6 +877,128 @@ app.get('/v1/leaderboards/most-composed', async (c) => {
 app.route('/v1/authors', authorRoutes);
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Admin: trigger Cognium scan for a skill
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.post('/v1/admin/scan/:skillId', async (c) => {
+  const skillId = c.req.param('skillId');
+  try {
+    // Direct scan: submit to Circle-IR, poll inline, apply report
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
+    const apiKey = c.env.COGNIUM_API_KEY ?? '';
+
+    // Fetch skill
+    const skillRes = await pool.query(
+      `SELECT id, slug, version, name, description, source, status,
+              execution_layer AS "executionLayer",
+              skill_md AS "skillMd",
+              root_source AS "rootSource",
+              skill_type AS "skillType"
+       FROM skills WHERE id = $1`, [skillId]
+    );
+    if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
+    const skill = skillRes.rows[0];
+
+    // Submit to Circle-IR
+    const { buildCircleIRRequest } = await import('./cognium/request-builder');
+    const submitRes = await fetch(`${cogniumUrl}/api/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify(buildCircleIRRequest(skill)),
+    });
+    if (!submitRes.ok) return c.json({ error: `Circle-IR submit failed: ${submitRes.status}` }, 502);
+    const { job_id } = await submitRes.json() as { job_id: string };
+
+    // Poll until done (max 30s)
+    let jobStatus: any;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
+      jobStatus = await statusRes.json();
+      if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
+    }
+
+    if (jobStatus.status !== 'completed') {
+      return c.json({ error: `Job ${job_id} ended with status: ${jobStatus.status}`, jobStatus }, 502);
+    }
+
+    // Fetch findings
+    const findingsRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    const { findings: raw } = await findingsRes.json() as { findings: any[] };
+
+    // Normalize and apply
+    const { normalizeFindings } = await import('./cognium/finding-mapper');
+    const { applyScanReport } = await import('./cognium/scan-report-handler');
+    const findings = normalizeFindings(raw);
+    await applyScanReport(c.env, pool, skill, findings, jobStatus);
+
+    return c.json({ success: true, skillId, jobId: job_id, findingsCount: findings.length, status: jobStatus.status });
+  } catch (err) {
+    return c.json({ error: (err as Error).message, skillId }, 500);
+  }
+});
+
+// Admin: test scoring with synthetic findings (no Circle-IR call)
+app.post('/v1/admin/scan-test/:skillId', async (c) => {
+  const skillId = c.req.param('skillId');
+  try {
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const skillRes = await pool.query(
+      `SELECT id, slug, version, name, description, source, status,
+              execution_layer AS "executionLayer",
+              root_source AS "rootSource", skill_type AS "skillType"
+       FROM skills WHERE id = $1`, [skillId]
+    );
+    if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
+    const skill = skillRes.rows[0];
+
+    const body = await c.req.json() as { findings?: Array<{ severity: string; cweId: string }> };
+    const { computeTrustScore, deriveStatus, deriveTier } = await import('./cognium/scoring-policy');
+    const { deriveWorstSeverity, isContentUnsafe } = await import('./cognium/finding-mapper');
+    const { applyScanReport } = await import('./cognium/scan-report-handler');
+
+    const findings = (body.findings ?? []).map((f, i) => ({
+      severity: f.severity.toUpperCase() as any,
+      cweId: f.cweId,
+      tool: 'test-harness',
+      title: `Test finding ${i}`,
+      description: `Synthetic ${f.severity} ${f.cweId}`,
+      confidence: 0.9,
+      verdict: 'VULNERABLE' as const,
+      llmVerified: f.severity === 'CRITICAL',
+    }));
+
+    const trustScore = computeTrustScore(skill, findings);
+    const worstSeverity = deriveWorstSeverity(findings);
+    const status = deriveStatus(worstSeverity);
+    const tier = deriveTier(worstSeverity, trustScore);
+    const contentUnsafe = isContentUnsafe(findings);
+
+    // Apply to DB
+    const fakeJob = { job_id: 'test', status: 'completed' as const, progress: 100, metrics: { files_total: 1, files_analyzed: 1, files_failed: 0, files_skipped: 0 } };
+    await applyScanReport(c.env, pool, skill, findings, fakeJob);
+
+    // Read back from DB
+    const after = await pool.query(
+      `SELECT trust_score, verification_tier, status, scan_coverage, remediation_message FROM skills WHERE id = $1`, [skillId]
+    );
+
+    return c.json({
+      skillId, slug: skill.slug, source: skill.rootSource ?? skill.source,
+      computed: { trustScore, worstSeverity, status, tier, contentUnsafe, findingsCount: findings.length },
+      dbAfter: after.rows[0],
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message, skillId }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // 404 Handler
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -1056,8 +1182,16 @@ export default {
         );
         break;
       case 'runics-cognium':
-        await handleCogniumQueue(
-          batch as MessageBatch<CogniumQueueMessage>,
+        // v5.0: Route to new submit consumer (handles both old and new message formats)
+        await handleCogniumSubmitQueue(
+          batch as MessageBatch<CogniumSubmitMessage>,
+          env
+        );
+        break;
+      case 'runics-cognium-poll':
+        // v5.0: Poll consumer for async Circle-IR job status
+        await handleCogniumPollQueue(
+          batch as MessageBatch<CogniumPollMessage>,
           env
         );
         break;

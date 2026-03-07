@@ -24,26 +24,23 @@ export async function copySkill(
 
   const copy = await pool.query(
     `INSERT INTO skills (
-      name, slug, version, type, status,
+      name, slug, version, skill_type, status,
       description, readme, schema_json, execution_layer,
       tags, categories, ecosystem, license,
       author_id, author_type,
-      fork_of, origin_id, fork_depth,
       trust_score, capabilities_required,
-      source
+      source, verification_tier
     ) VALUES (
-      $1, $2, '1.0.0', $3, 'draft',
-      $4, $5, $6, $7,
-      $8, $9, $10, $11,
-      $12, $13,
-      NULL, NULL, 0,
-      0.5, $14,
-      'direct'
-    ) RETURNING id, slug`,
+      $1, $2, '1.0.0', 'atomic', 'draft',
+      $3, $4, $5, $6,
+      $7, $8, $9, $10,
+      $11, $12,
+      0.5, $13,
+      'direct', 'unverified'
+    ) RETURNING id, slug, version, status`,
     [
       `${s.name} (copy)`,
       slug,
-      s.type,
       s.description,
       s.readme,
       s.schema_json ? JSON.stringify(s.schema_json) : null,
@@ -59,7 +56,8 @@ export async function copySkill(
   );
 
   // Copy composition steps if source is a composition
-  if (['composition', 'pipeline'].includes(s.type)) {
+  const sourceType = s.skill_type ?? s.type;
+  if (['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(sourceType)) {
     await pool.query(
       `INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, condition, on_error)
        SELECT $1, step_order, skill_id, step_name, input_mapping, condition, on_error
@@ -76,9 +74,20 @@ export async function copySkill(
     );
   }
 
-  // Enqueue for embedding and security scanning
+  // Enqueue for embedding and security scanning (v5.0 message format)
   await env.EMBED_QUEUE.send({ skillId: copy.rows[0].id, action: 'embed' });
-  await env.COGNIUM_QUEUE.send({ skillId: copy.rows[0].id, action: 'scan' });
+  await env.COGNIUM_QUEUE.send({
+    skillId: copy.rows[0].id,
+    priority: 'normal' as const,
+    timestamp: Date.now(),
+  });
 
-  return { id: copy.rows[0].id, slug: copy.rows[0].slug };
+  return {
+    id: copy.rows[0].id,
+    slug: copy.rows[0].slug,
+    version: copy.rows[0].version,
+    forkedFrom: '', // copy has no lineage
+    trustScore: 0.5,
+    status: copy.rows[0].status,
+  };
 }

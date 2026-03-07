@@ -8,6 +8,15 @@
 
 export type Appetite = 'strict' | 'cautious' | 'balanced' | 'adventurous';
 
+export type SkillStatus = 'draft' | 'published' | 'deprecated' | 'archived'
+  | 'vulnerable' | 'revoked' | 'degraded' | 'contains-vulnerable';
+
+export type SkillType = 'atomic' | 'auto-composite' | 'human-composite' | 'forked';
+
+export type VerificationTier = 'unverified' | 'scanned' | 'verified' | 'certified';
+
+export type TrustBadge = 'human-verified' | 'auto-distilled' | 'upstream';
+
 export function appetiteToTrustThreshold(appetite: Appetite): number {
   switch (appetite) {
     case 'strict':
@@ -19,6 +28,10 @@ export function appetiteToTrustThreshold(appetite: Appetite): number {
     case 'adventurous':
       return 0.20;
   }
+}
+
+export function appetiteToAllowVulnerable(appetite: Appetite): boolean {
+  return appetite === 'balanced' || appetite === 'adventurous';
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -110,23 +123,44 @@ export interface SkillResult {
   id: string;
   name: string;
   slug: string;
+  version: string;
   agentSummary: string;
+
+  // Trust
   trustScore: number;
+  verificationTier: VerificationTier;
+  trustBadge: TrustBadge | null;
+
+  // Status
+  status: SkillStatus;
+  revokedReason?: string;
+  remediationMessage?: string;
+  remediationUrl?: string;
+
+  // Execution
   executionLayer: string;
   capabilitiesRequired: string[];
+
+  // Composition
+  skillType: SkillType;
+  forkedFrom?: string;
+
+  // Usage
+  runCount: number;
+  lastRunAt?: string;
+
+  // Search signals
   score: number;
   matchSource: string;
   matchText?: string;
 
-  // Composition & social additions (v4)
-  type?: 'skill' | 'composition' | 'pipeline';
-  status?: 'published' | 'deprecated' | 'archived';
+  // Deprecation auto-migration
   replacementSkillId?: string;
   replacementSlug?: string;
+
+  // Social (optional, for enriched results)
   authorHandle?: string;
   authorType?: 'human' | 'bot' | 'org';
-  forkOf?: string;
-  forkDepth?: number;
   humanStarCount?: number;
   humanForkCount?: number;
   agentInvocationCount?: number;
@@ -161,6 +195,10 @@ export interface SearchFilters {
   minTrustScore?: number; // trust-based filtering
   executionLayer?: string; // filter by execution capability
   contentSafetyRequired?: boolean; // default true
+  allowVulnerable?: boolean; // v5.0: include vulnerable/contains-vulnerable skills
+  statusFilter?: SkillStatus[]; // v5.0: explicit status filter
+  slug?: string; // v5.0: pin to specific slug
+  version?: string; // v5.0: pin to specific version
 }
 
 export interface SearchOptions {
@@ -377,12 +415,27 @@ export interface Env {
   // Phase 5: Sync pipelines & publish API
   EMBED_QUEUE: Queue;
   COGNIUM_QUEUE: Queue;
+  COGNIUM_POLL_QUEUE: Queue; // v5.0: poll queue for async job flow
+  COGNIUM_JOBS: KVNamespace; // v5.0: job state KV namespace
   R2_BUCKET: R2Bucket;
   NEON_CONNECTION_STRING: string;
   GITHUB_TOKEN?: string;
   SYNC_MCP_ENABLED?: string; // default "true"
   SYNC_CLAWHUB_ENABLED?: string; // default "true"
   SYNC_GITHUB_ENABLED?: string; // default "true"
+
+  // v5.0: Cognium client configuration
+  COGNIUM_URL?: string; // default "https://circle.phantoms.workers.dev"
+  COGNIUM_API_KEY?: string;
+  COGNIUM_POLL_DELAY_MS?: string; // default "15000"
+  COGNIUM_MAX_POLL_ATTEMPTS?: string; // default "12"
+
+  // v5.0: Notifications
+  ACTIVEPIECES_WEBHOOK_URL?: string;
+
+  // v5.0: Version ranking weights
+  VERSION_TRUST_WEIGHT?: string; // default "0.7"
+  VERSION_USAGE_WEIGHT?: string; // default "0.3"
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -420,6 +473,21 @@ export interface EmbedQueueMessage {
   source?: string;
 }
 
+// v5.0: Cognium submit message (replaces CogniumQueueMessage)
+export interface CogniumSubmitMessage {
+  skillId: string;
+  priority: 'normal' | 'high';
+  timestamp: number;
+}
+
+// v5.0: Cognium poll message
+export interface CogniumPollMessage {
+  skillId: string;
+  jobId: string;
+  attempt: number;
+}
+
+// Legacy alias — kept for backward compat during migration
 export interface CogniumQueueMessage {
   skillId: string;
   action: 'scan';
@@ -467,10 +535,14 @@ export interface CoOccurrenceResult {
 export interface ForkResult {
   id: string;
   slug: string;
+  version: string;
+  forkedFrom: string;
+  trustScore: number;
+  status: SkillStatus;
 }
 
 export interface LeaderboardFilters {
-  type?: 'skill' | 'composition' | 'pipeline';
+  type?: SkillType;
   category?: string;
   ecosystem?: string;
   limit?: number;

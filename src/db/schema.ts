@@ -68,13 +68,27 @@ export const skills = pgTable(
     authorType: text('author_type').notNull().default('human'),
     authorBotModel: text('author_bot_model'),
     authorBotPromptHash: text('author_bot_prompt_hash'),
-    // Type and status
+    // Type and status (v4 legacy — kept for backward compat during migration)
     type: text('type').notNull().default('skill'),
+    // v5.0: skill type replaces v4 'type'
+    skillType: text('skill_type').notNull().default('atomic'),
     status: text('status').notNull().default('published'),
-    // Fork lineage
+    // v5.0: status lifecycle tracking
+    revokedAt: timestamp('revoked_at'),
+    revokedReason: text('revoked_reason'),
+    deprecatedAt: timestamp('deprecated_at'),
+    deprecatedReason: text('deprecated_reason'),
+    remediationMessage: text('remediation_message'),
+    remediationUrl: text('remediation_url'),
+    // Fork lineage (v4 legacy — kept during migration)
     forkOf: uuid('fork_of'),
     originId: uuid('origin_id'),
     forkDepth: integer('fork_depth').default(0),
+    // v5.0: version lineage
+    forkedFrom: text('forked_from'),
+    forkedBy: text('forked_by'),
+    forkChanges: jsonb('fork_changes'),
+    rootSource: text('root_source'),
     // Metadata
     readme: text('readme'),
     categories: text('categories').array().default(sql`'{}'`),
@@ -109,6 +123,20 @@ export const skills = pgTable(
     featured: boolean('featured').default(false),
     verifiedCreator: boolean('verified_creator').default(false),
     collectionIds: uuid('collection_ids').array().default(sql`'{}'`),
+    // v5.0: Cognium attestation
+    verificationTier: text('verification_tier').default('unverified'),
+    scanCoverage: text('scan_coverage'),
+    cogniumFindings: jsonb('cognium_findings'),
+    analyzerSummary: jsonb('analyzer_summary'),
+    // v5.0: composition
+    compositionSkillIds: uuid('composition_skill_ids').array(),
+    // v5.0: trust provenance
+    trustBadge: text('trust_badge'),
+    humanDistilledBy: text('human_distilled_by'),
+    humanDistilledAt: timestamp('human_distilled_at'),
+    // v5.0: usage signals (version ranking)
+    runCount: integer('run_count').notNull().default(0),
+    lastRunAt: timestamp('last_run_at'),
     // Lifecycle
     publishedAt: timestamp('published_at'),
     lastUsedAt: timestamp('last_used_at'),
@@ -124,6 +152,11 @@ export const skills = pgTable(
     typeIdx: index('idx_skills_type').on(table.type),
     forkOfIdx: index('idx_skills_fork_of').on(table.forkOf),
     originIdIdx: index('idx_skills_origin_id').on(table.originId),
+    // v5.0 indexes
+    skillTypeIdx: index('idx_skills_skill_type').on(table.skillType),
+    statusIdx: index('idx_skills_status').on(table.status),
+    verificationTierIdx: index('idx_skills_verification_tier').on(table.verificationTier),
+    runCountIdx: index('idx_skills_run_count').on(table.runCount),
   })
 );
 

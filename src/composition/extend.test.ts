@@ -55,6 +55,7 @@ describe('extendComposition', () => {
           {
             slug: 'comp',
             name: 'Comp',
+            skill_type: 'auto-composite',
             type: 'composition',
             description: 'd',
             readme: null,
@@ -64,14 +65,15 @@ describe('extendComposition', () => {
             categories: [],
             ecosystem: null,
             license: null,
-            origin_id: null,
-            fork_depth: 0,
+            root_source: null,
+            source: 'forge',
+            version: '1.0.0',
             capabilities_required: ['git'],
           },
         ],
       })
       // forkSkill: INSERT fork
-      .mockResolvedValueOnce({ rows: [{ id: 'fork-id', slug: 'comp-fork-ext001' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'fork-id', slug: 'comp-fork-ext001', version: '1.0.0', status: 'draft' }] })
       // forkSkill: copy composition_steps
       .mockResolvedValueOnce({ rows: [] })
       // forkSkill: update human_fork_count
@@ -100,7 +102,14 @@ describe('extendComposition', () => {
       mockEnv
     );
 
-    expect(result).toEqual({ id: 'fork-id', slug: 'comp-fork-ext001' });
+    expect(result).toEqual({
+      id: 'fork-id',
+      slug: 'comp-fork-ext001',
+      version: '1.0.0',
+      forkedFrom: 'comp@1.0.0',
+      trustScore: 0.40,
+      status: 'draft',
+    });
 
     // Verify: the extend function inserted new steps and recomputed trust/capabilities
     // Check that the trust recompute UPDATE was called
