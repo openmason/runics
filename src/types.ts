@@ -425,7 +425,7 @@ export interface Env {
   SYNC_GITHUB_ENABLED?: string; // default "true"
 
   // v5.0: Cognium client configuration
-  COGNIUM_URL?: string; // default "https://circle.phantoms.workers.dev"
+  COGNIUM_URL?: string; // default "https://circle.cognium.net"
   COGNIUM_API_KEY?: string;
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"
   COGNIUM_MAX_POLL_ATTEMPTS?: string; // default "12"
@@ -485,13 +485,6 @@ export interface CogniumPollMessage {
   skillId: string;
   jobId: string;
   attempt: number;
-}
-
-// Legacy alias — kept for backward compat during migration
-export interface CogniumQueueMessage {
-  skillId: string;
-  action: 'scan';
-  source?: string;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

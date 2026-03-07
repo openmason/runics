@@ -25,23 +25,24 @@ Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 - Logging is non-blocking (use executionCtx.waitUntil)
 - Eval suite runs before and after every change — numbers only, no "feels better"
 
-## Build Order (Measure-First)
-
-Phase 1: Single-vector search + eval suite (baseline)
-Phase 2: Confidence gating + LLM fallback (measure lift)
-Phase 3: Multi-vector validation via A/B test (measure lift, decide)
-Phase 4: Production polish
-
 ## Project Structure
 
-See ARCHITECTURE.md Section 19 for the full tree. Key directories:
+See ARCHITECTURE.md for the full tree. Key directories:
 - src/providers/     — SearchProvider interface + PgVectorProvider
-- src/intelligence/  — Confidence gate, deep search, composition detector
+- src/intelligence/  — Confidence gate, deep search, composition detector, reranker
 - src/ingestion/     — Embed pipeline, agent summary, content safety
+- src/cognium/       — Circle-IR scanning, trust scoring, composite cascade
+- src/composition/   — Fork, copy, compose, extend, lineage, publish
+- src/social/        — Stars, invocations, cooccurrence, leaderboards
+- src/authors/       — Author profiles and skill listings
+- src/publish/       — Publish API (CRUD + trust + bundle)
+- src/sync/          — MCP Registry, ClawHub, GitHub sync adapters
+- src/queues/        — Queue consumers (embed)
 - src/monitoring/    — Search logger, quality tracker, perf monitor
 - src/cache/         — KV cache
-- src/db/            — Drizzle schema + SQL migrations
+- src/db/            — Drizzle schema + SQL migrations (0001-0010)
 - src/eval/          — Eval suite (fixtures, runner, metrics)
+- src/resilience/    — Circuit breaker
 
 ## Commands
 
@@ -50,6 +51,7 @@ npm run deploy     — wrangler deploy
 npm run db:migrate — run drizzle migrations
 npm run eval       — run eval suite against live endpoint
 npm run typecheck  — tsc --noEmit
+npm run test:run   — run vitest (single run, no watch)
 
 ## Testing
 

@@ -1,0 +1,2479 @@
+openapi: 3.1.0
+info:
+  title: Runics API
+  description: |
+    Semantic skill registry search service for the Runics platform.
+
+    Runics provides skill discovery, composition, social signals, and leaderboard
+    APIs for both human and agent consumers.
+  version: 5.0.0
+  contact:
+    name: OpenMason
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://runics.phantoms.workers.dev
+    description: Production
+
+tags:
+  - name: Health
+    description: Service health and status
+  - name: Search
+    description: Semantic skill search
+  - name: Skills
+    description: Skill CRUD and ingestion
+  - name: Composition
+    description: Fork, copy, extend, and compose skills
+  - name: Lineage
+    description: Skill ancestry and dependency tracking
+  - name: Social
+    description: Human star/unstar signals
+  - name: Agent Signals
+    description: Agent invocation tracking and co-occurrence
+  - name: Leaderboards
+    description: Skill rankings by popularity and usage
+  - name: Authors
+    description: Author profiles and skill listings
+  - name: Analytics
+    description: Search quality and performance analytics
+  - name: Eval
+    description: Evaluation suite runner
+  - name: Admin
+    description: Administrative endpoints for scanning, testing, and backfill
+
+paths:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Health
+  # ────────────────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Returns database connectivity, Workers AI status, and table presence.
+      tags: [Health]
+      responses:
+        "200":
+          description: Health status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Search
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/search:
+    post:
+      operationId: searchSkills
+      summary: Search for skills
+      description: |
+        Main search endpoint. Accepts a natural-language query and returns
+        ranked skill results with confidence tiers.
+
+        **Tier routing:**
+        - Tier 1: High confidence — returns immediately (~50ms)
+        - Tier 2: Medium confidence — returns + async LLM enrichment
+        - Tier 3: Low confidence — full LLM deep search (~500-1000ms)
+      tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindSkillRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindSkillResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Rate limit exceeded
+        "500":
+          description: Search failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/search/feedback:
+    post:
+      operationId: submitFeedback
+      summary: Submit search quality feedback
+      description: Record quality feedback for a search result (click, use, dismiss, etc.).
+      tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QualityFeedback"
+      responses:
+        "200":
+          description: Feedback recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Skills CRUD
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/skills:
+    post:
+      operationId: publishSkill
+      summary: Publish a new skill
+      description: |
+        Insert a new skill into the registry. The skill is automatically enqueued
+        for async embedding generation and Cognium safety scanning via Circle-IR.
+
+        **v5.0:** Trust score and verification tier are now computed asynchronously
+        by the Cognium pipeline (submit → Circle-IR scan → poll → score → DB update).
+        Initial trust is set by source provenance; Cognium adjustments apply within ~5-30 min.
+      tags: [Skills]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishSkillInput"
+      responses:
+        "201":
+          description: Skill published
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                  status:
+                    type: string
+                    example: published
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/skills/{id}:
+    put:
+      operationId: updateSkill
+      summary: Update an existing skill
+      description: |
+        Partially update a skill. If `description` is changed, the skill is
+        re-enqueued for embedding regeneration.
+      tags: [Skills]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSkillInput"
+      responses:
+        "200":
+          description: Skill updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: updated
+        "400":
+          description: No fields to update
+        "404":
+          description: Skill not found
+        "500":
+          description: Server error
+
+    delete:
+      operationId: deleteSkill
+      summary: Remove skill from search index
+      description: Deletes the skill's embeddings from the search index.
+      tags: [Skills]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      responses:
+        "200":
+          description: Skill deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  skillId:
+                    type: string
+                    format: uuid
+                  deleted:
+                    type: boolean
+        "500":
+          description: Server error
+
+  /v1/skills/{skillId}/index:
+    post:
+      operationId: indexSkill
+      summary: Index a skill (generate embeddings)
+      description: |
+        Content-safety check, agent summary generation, embedding, and database
+        indexing in a single synchronous call.
+      tags: [Skills]
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillInput"
+      responses:
+        "200":
+          description: Skill indexed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  skillId:
+                    type: string
+                    format: uuid
+                  indexed:
+                    type: boolean
+                  contentSafe:
+                    type: boolean
+                  agentSummary:
+                    type: string
+                  alternateCount:
+                    type: integer
+                  alternateQueries:
+                    type: array
+                    items:
+                      type: string
+        "400":
+          description: Content safety failed or ID mismatch
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/trust:
+    put:
+      operationId: updateTrustScore
+      summary: Update trust score (legacy)
+      deprecated: true
+      description: |
+        **Deprecated in v5.0.** Trust scores are now computed automatically by the
+        async Cognium pipeline (submit → Circle-IR → poll → score → DB update).
+        This endpoint is retained for backward compatibility but may be removed.
+      tags: [Skills]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustUpdateInput"
+      responses:
+        "200":
+          description: Trust score updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  trustScore:
+                    type: number
+                  status:
+                    type: string
+                    example: updated
+        "404":
+          description: Skill not found
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/bundle:
+    put:
+      operationId: uploadBundle
+      summary: Upload code bundle
+      description: Upload a `.tar.gz` code bundle to R2 storage.
+      tags: [Skills]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Bundle uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  bundleKey:
+                    type: string
+                  status:
+                    type: string
+                    example: uploaded
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Composition
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/skills/{id}/fork:
+    post:
+      operationId: forkSkill
+      summary: Fork a skill
+      description: |
+        Deep copy a skill with lineage tracking. Increments
+        `human_fork_count` or `bot_fork_count` on the source skill.
+      tags: [Composition]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForkInput"
+      responses:
+        "201":
+          description: Skill forked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForkResult"
+        "404":
+          description: Source skill not found
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/copy:
+    post:
+      operationId: copySkill
+      summary: Copy a skill (no lineage)
+      description: |
+        Deep copy a skill without lineage tracking. The new skill has no
+        `fork_of` reference. Increments `human_copy_count` on the source.
+      tags: [Composition]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyInput"
+      responses:
+        "201":
+          description: Skill copied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForkResult"
+        "404":
+          description: Source skill not found
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/extend:
+    post:
+      operationId: extendComposition
+      summary: Extend a composition
+      description: |
+        Fork a composition and append new steps. The result is a new composition
+        with lineage to the original.
+      tags: [Composition]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtendInput"
+      responses:
+        "201":
+          description: Composition extended
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ForkResult"
+        "400":
+          description: Validation error (not a composition, missing skills)
+        "404":
+          description: Source composition not found
+        "500":
+          description: Server error
+
+  /v1/compositions:
+    post:
+      operationId: createComposition
+      summary: Create a new composition
+      description: |
+        Create a multi-skill composition. Trust score = MIN(step trust scores) * 0.90.
+        Capabilities = UNION of all step skills. Requires at least 2 steps.
+      tags: [Composition]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompositionInput"
+      responses:
+        "201":
+          description: Composition created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                  status:
+                    type: string
+                    example: draft
+        "400":
+          description: Validation error (missing skills, < 2 steps)
+        "500":
+          description: Server error
+
+  /v1/compositions/{id}:
+    get:
+      operationId: getComposition
+      summary: Get composition details
+      description: Returns the composition skill record with its ordered steps.
+      tags: [Composition]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Composition details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompositionDetail"
+        "404":
+          description: Composition not found
+        "500":
+          description: Server error
+
+  /v1/compositions/{id}/steps:
+    put:
+      operationId: replaceCompositionSteps
+      summary: Replace composition steps
+      description: |
+        Replace all steps on a draft composition. At least 2 steps required.
+        Only works on compositions with `status: draft`.
+      tags: [Composition]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [steps]
+              properties:
+                steps:
+                  type: array
+                  minItems: 2
+                  items:
+                    $ref: "#/components/schemas/CompositionStep"
+      responses:
+        "200":
+          description: Steps updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: steps_updated
+        "400":
+          description: Validation error (< 2 steps, not draft)
+        "404":
+          description: Composition not found
+        "500":
+          description: Server error
+
+  /v1/compositions/{id}/publish:
+    post:
+      operationId: publishComposition
+      summary: Publish a composition
+      description: |
+        Transition a composition from `draft` to `published`. All step skills
+        must be in `published` status.
+      tags: [Composition]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Composition published
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    example: published
+        "400":
+          description: Validation error (not draft, unpublished steps)
+        "404":
+          description: Composition not found
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Lineage
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/skills/{id}/lineage:
+    get:
+      operationId: getLineage
+      summary: Get skill ancestry
+      description: Returns the full ancestry chain via recursive CTE (fork_of lineage).
+      tags: [Lineage]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      responses:
+        "200":
+          description: Ancestry chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ancestry:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AncestryNode"
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/forks:
+    get:
+      operationId: getForks
+      summary: Get skill forks
+      description: Returns all skills that were forked from this skill.
+      tags: [Lineage]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      responses:
+        "200":
+          description: Fork list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ForkNode"
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/dependents:
+    get:
+      operationId: getDependents
+      summary: Get composition dependents
+      description: Returns all compositions that include this skill as a step.
+      tags: [Lineage]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      responses:
+        "200":
+          description: Dependent compositions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dependents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DependentNode"
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Social (Human Only)
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/skills/{id}/star:
+    post:
+      operationId: starSkill
+      summary: Star a skill
+      description: |
+        Human-only star. Idempotent (starring twice has no effect).
+        Rate limited to 200 stars per user per day. Bot callers are rejected.
+      tags: [Social]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Star recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starred:
+                    type: boolean
+                  starCount:
+                    type: integer
+        "429":
+          description: Rate limit exceeded (200/day)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Server error
+
+    delete:
+      operationId: unstarSkill
+      summary: Unstar a skill
+      description: Remove a star from a skill.
+      tags: [Social]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Star removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starred:
+                    type: boolean
+                    example: false
+                  starCount:
+                    type: integer
+        "400":
+          description: userId required
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/stars:
+    get:
+      operationId: getStarStatus
+      summary: Get star count and user star status
+      description: Returns the total star count and whether the given user has starred.
+      tags: [Social]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+        - name: userId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: If provided, includes whether this user has starred the skill.
+      responses:
+        "200":
+          description: Star status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  starCount:
+                    type: integer
+                  starred:
+                    type: boolean
+                    description: Only present when userId is provided.
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Agent Signals
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/invocations:
+    post:
+      operationId: recordInvocations
+      summary: Record invocation batch
+      description: |
+        Agent-only bulk invocation recording. Up to 500 invocations per batch.
+        Processing is non-blocking (accepted immediately, processed via waitUntil).
+        Updates rolling averages for execution time and error rate.
+      tags: [Agent Signals]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvocationBatch"
+      responses:
+        "202":
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                    description: Number of invocations accepted.
+        "400":
+          description: Validation error
+        "500":
+          description: Server error
+
+  /v1/skills/{id}/cooccurrence:
+    get:
+      operationId: getCoOccurrence
+      summary: Get skill co-occurrence
+      description: |
+        Returns skills frequently used together with this skill in compositions,
+        sourced from the `skill_cooccurrence` materialized view (refreshed hourly).
+      tags: [Agent Signals]
+      parameters:
+        - $ref: "#/components/parameters/SkillId"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 5
+            maximum: 50
+      responses:
+        "200":
+          description: Co-occurrence pairs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cooccurrence:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CoOccurrenceResult"
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Leaderboards
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/leaderboards/human:
+    get:
+      operationId: getHumanLeaderboard
+      summary: Human leaderboard
+      description: |
+        Top skills ranked by human signals (stars, forks).
+        Excludes bot-authored skills.
+      tags: [Leaderboards]
+      parameters:
+        - $ref: "#/components/parameters/LeaderboardType"
+        - $ref: "#/components/parameters/LeaderboardCategory"
+        - $ref: "#/components/parameters/LeaderboardEcosystem"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+        - $ref: "#/components/parameters/LeaderboardOffset"
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+        "500":
+          description: Server error
+
+  /v1/leaderboards/agents:
+    get:
+      operationId: getAgentLeaderboard
+      summary: Agent leaderboard
+      description: |
+        Top skills ranked by agent invocation count.
+        Includes all author types.
+      tags: [Leaderboards]
+      parameters:
+        - $ref: "#/components/parameters/LeaderboardType"
+        - $ref: "#/components/parameters/LeaderboardCategory"
+        - $ref: "#/components/parameters/LeaderboardEcosystem"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+        - $ref: "#/components/parameters/LeaderboardOffset"
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+        "500":
+          description: Server error
+
+  /v1/leaderboards/trending:
+    get:
+      operationId: getTrendingLeaderboard
+      summary: Trending leaderboard
+      description: |
+        Skills trending this week based on weekly agent invocation count.
+      tags: [Leaderboards]
+      parameters:
+        - $ref: "#/components/parameters/LeaderboardType"
+        - $ref: "#/components/parameters/LeaderboardCategory"
+        - $ref: "#/components/parameters/LeaderboardEcosystem"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+        - $ref: "#/components/parameters/LeaderboardOffset"
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+        "500":
+          description: Server error
+
+  /v1/leaderboards/most-composed:
+    get:
+      operationId: getMostComposedLeaderboard
+      summary: Most-composed leaderboard
+      description: |
+        Skills most frequently included in compositions.
+      tags: [Leaderboards]
+      parameters:
+        - $ref: "#/components/parameters/LeaderboardType"
+        - $ref: "#/components/parameters/LeaderboardCategory"
+        - $ref: "#/components/parameters/LeaderboardEcosystem"
+        - $ref: "#/components/parameters/LeaderboardLimit"
+        - $ref: "#/components/parameters/LeaderboardOffset"
+      responses:
+        "200":
+          description: Leaderboard entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LeaderboardResponse"
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Authors
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/authors/{handle}:
+    get:
+      operationId: getAuthor
+      summary: Get author profile
+      description: Returns author profile with aggregate stats (stars, forks, invocations).
+      tags: [Authors]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Author profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorProfile"
+        "404":
+          description: Author not found
+        "500":
+          description: Server error
+
+  /v1/authors/{handle}/skills:
+    get:
+      operationId: getAuthorSkills
+      summary: Get author's skills
+      description: Paginated list of skills published by this author.
+      tags: [Authors]
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [atomic, auto-composite, human-composite, forked]
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [draft, published, deprecated, archived, vulnerable, revoked, degraded, contains-vulnerable]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Paginated skill list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorSkillsResponse"
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Analytics
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/analytics/tiers:
+    get:
+      operationId: getTierDistribution
+      summary: Tier distribution
+      description: Returns search tier distribution over a time window.
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+      responses:
+        "200":
+          description: Tier distribution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TierDistribution"
+        "500":
+          description: Server error
+
+  /v1/analytics/match-sources:
+    get:
+      operationId: getMatchSources
+      summary: Embedding type effectiveness
+      description: Stats on which embedding types produce the best matches.
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+      responses:
+        "200":
+          description: Match source stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  matchSources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MatchSourceStats"
+        "500":
+          description: Server error
+
+  /v1/analytics/latency:
+    get:
+      operationId: getLatencyPercentiles
+      summary: Latency percentiles
+      description: Returns p50, p95, p99, p999 latency percentiles.
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+      responses:
+        "200":
+          description: Latency percentiles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LatencyPercentiles"
+        "500":
+          description: Server error
+
+  /v1/analytics/cost:
+    get:
+      operationId: getCostBreakdown
+      summary: Cost breakdown
+      description: Cost breakdown by tier (embedding + LLM costs).
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+      responses:
+        "200":
+          description: Cost breakdown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostBreakdown"
+        "500":
+          description: Server error
+
+  /v1/analytics/failed-queries:
+    get:
+      operationId: getFailedQueries
+      summary: Failed queries
+      description: Queries that received no positive feedback.
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Failed queries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/FailedQuery"
+        "500":
+          description: Server error
+
+  /v1/analytics/tier3-patterns:
+    get:
+      operationId: getTier3Patterns
+      summary: Tier 3 query patterns
+      description: Common patterns in Tier 3 (low confidence) queries, useful for planning improvements.
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/HoursParam"
+      responses:
+        "200":
+          description: Tier 3 patterns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patterns:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tier3Pattern"
+        "500":
+          description: Server error
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Eval
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/eval/run:
+    post:
+      operationId: runEval
+      summary: Run eval suite
+      description: |
+        Executes the full eval suite (32 fixtures) against the live search endpoint
+        and returns metrics including Recall@1, Recall@5, MRR, and tier distribution.
+      tags: [Eval]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tenantId:
+                  type: string
+                  default: eval-tenant
+                limit:
+                  type: integer
+                  default: 10
+                verbose:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Eval results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalResult"
+        "500":
+          description: Eval failed
+
+  /v1/eval/results/{runId}:
+    get:
+      operationId: getEvalResults
+      summary: Get eval results
+      description: Not yet implemented (eval results are not persisted in Phase 1).
+      tags: [Eval]
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Not implemented message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Admin (v5.0)
+  # ────────────────────────────────────────────────────────────────────────────
+  /v1/admin/scan/{skillId}:
+    post:
+      operationId: adminScanSkill
+      summary: Scan a single skill via Circle-IR
+      description: |
+        Direct inline Cognium scan bypassing the queue. Submits to Circle-IR,
+        polls until completion, fetches findings, normalizes, computes trust
+        score, and applies the scan report to the database.
+      tags: [Admin]
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scan completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  skillId:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                  jobId:
+                    type: string
+                  findingsCount:
+                    type: integer
+                  status:
+                    type: string
+                    description: Final job status from Circle-IR.
+        "404":
+          description: Skill not found
+        "500":
+          description: Scan failed
+
+  /v1/admin/scan-test/{skillId}:
+    post:
+      operationId: adminScanTest
+      summary: Inject synthetic findings for scoring verification
+      description: |
+        Test endpoint that accepts synthetic findings, runs the full scoring
+        pipeline (computeTrustScore, deriveStatus, deriveTier, isContentUnsafe),
+        and applies results to the database. Used for verifying scoring logic.
+      tags: [Admin]
+      parameters:
+        - name: skillId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [findings]
+              properties:
+                findings:
+                  type: array
+                  items:
+                    type: object
+                    required: [severity]
+                    properties:
+                      severity:
+                        type: string
+                        enum: [CRITICAL, HIGH, MEDIUM, LOW]
+                      cweId:
+                        type: string
+                        description: CWE identifier (e.g. CWE-79, CWE-798).
+                      title:
+                        type: string
+                      description:
+                        type: string
+      responses:
+        "200":
+          description: Synthetic scan applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  skillId:
+                    type: string
+                    format: uuid
+                  slug:
+                    type: string
+                  source:
+                    type: string
+                  computedTrustScore:
+                    type: number
+                  derivedStatus:
+                    type: string
+                  derivedTier:
+                    type: string
+                  contentUnsafe:
+                    type: boolean
+                  worstSeverity:
+                    type: string
+                    nullable: true
+                  findingsCount:
+                    type: integer
+        "404":
+          description: Skill not found
+        "500":
+          description: Test failed
+
+  /v1/admin/backfill:
+    post:
+      operationId: adminBackfill
+      summary: Backfill unscanned skills with Cognium scans
+      description: |
+        Scans a batch of unverified+published skills directly via Circle-IR
+        (bypassing the queue). Limited by Workers subrequest limit to ~15 per batch.
+      tags: [Admin]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 15
+            maximum: 50
+          description: Number of skills to scan in this batch.
+      responses:
+        "200":
+          description: Backfill batch completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned:
+                    type: integer
+                    description: Number of skills successfully scanned.
+                  failed:
+                    type: integer
+                    description: Number of skills that failed scanning.
+                  remaining:
+                    type: integer
+                    description: Approximate number of unscanned skills remaining.
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        skillId:
+                          type: string
+                        error:
+                          type: string
+        "500":
+          description: Backfill error
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Components
+# ══════════════════════════════════════════════════════════════════════════════
+
+components:
+  parameters:
+    SkillId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Skill UUID
+
+    HoursParam:
+      name: hours
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 24
+      description: Time window in hours (default 24)
+
+    LeaderboardType:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [atomic, auto-composite, human-composite, forked]
+
+    LeaderboardCategory:
+      name: category
+      in: query
+      required: false
+      schema:
+        type: string
+
+    LeaderboardEcosystem:
+      name: ecosystem
+      in: query
+      required: false
+      schema:
+        type: string
+
+    LeaderboardLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 20
+        maximum: 100
+
+    LeaderboardOffset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 0
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+    # ── Health ──────────────────────────────────────────────────────────────
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        service:
+          type: string
+          example: runics
+        version:
+          type: string
+          example: 1.0.0
+        environment:
+          type: string
+        dbStatus:
+          type: string
+          enum: [ok, error]
+        dbLatencyMs:
+          type: number
+        dbError:
+          type: string
+          nullable: true
+        tables:
+          type: array
+          items:
+            type: string
+        missingTables:
+          type: array
+          items:
+            type: string
+        aiStatus:
+          type: string
+          enum: [ok, error, untested]
+        aiError:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+
+    # ── Search ──────────────────────────────────────────────────────────────
+    FindSkillRequest:
+      type: object
+      required: [query, tenantId]
+      properties:
+        query:
+          type: string
+          description: Natural language query describing the desired skill.
+          example: format typescript code
+        tenantId:
+          type: string
+          description: Tenant identifier for multi-tenant filtering.
+          example: my-tenant
+        appetite:
+          type: string
+          enum: [strict, cautious, balanced, adventurous]
+          default: balanced
+          description: |
+            Risk appetite controls trust score filtering:
+            - strict: trustScore >= 0.85
+            - cautious: trustScore >= 0.70
+            - balanced: trustScore >= 0.50
+            - adventurous: trustScore >= 0.20
+        tags:
+          type: array
+          items:
+            type: string
+          description: Filter results to skills with these tags.
+        category:
+          type: string
+          description: Filter results to skills in this category.
+        limit:
+          type: integer
+          default: 10
+          description: Maximum number of results.
+
+    FindSkillResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SkillResult"
+        confidence:
+          type: string
+          enum: [high, medium, low_enriched, no_match]
+          description: Overall confidence level of the search results.
+        enriched:
+          type: boolean
+          description: Whether LLM enrichment was applied (Tier 2/3).
+        composition:
+          $ref: "#/components/schemas/CompositionDetection"
+        searchTrace:
+          type: object
+          properties:
+            originalQuery:
+              type: string
+            alternateQueries:
+              type: array
+              items:
+                type: string
+            terminologyMap:
+              type: object
+              additionalProperties:
+                type: string
+            reasoning:
+              type: string
+        generationHints:
+          type: object
+          description: Hints for skill generation when no match is found (Tier 3).
+          properties:
+            intent:
+              type: string
+            capabilities:
+              type: array
+              items:
+                type: string
+            complexity:
+              type: string
+        meta:
+          type: object
+          required: [matchSources, latencyMs, tier, cacheHit, llmInvoked]
+          properties:
+            matchSources:
+              type: array
+              items:
+                type: string
+              description: Which embedding types matched top results.
+            latencyMs:
+              type: number
+              description: Total response time in milliseconds.
+            tier:
+              type: integer
+              enum: [1, 2, 3]
+              description: Confidence tier that was routed to.
+            cacheHit:
+              type: boolean
+            llmInvoked:
+              type: boolean
+            degraded:
+              type: boolean
+              description: True when circuit breaker is open (vector-only results).
+            reranked:
+              type: boolean
+              description: True when cross-encoder reranking was applied.
+
+    SkillResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        version:
+          type: string
+        agentSummary:
+          type: string
+          description: LLM-generated summary optimized for agent consumption.
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        verificationTier:
+          type: string
+          enum: [unverified, scanned, verified, certified]
+          description: |
+            Cognium scanning tier:
+            - unverified: not yet scanned
+            - scanned: Circle-IR scan completed
+            - verified: trust >= 0.70 and no HIGH/CRITICAL findings
+            - certified: reserved for future manual attestation
+        trustBadge:
+          type: string
+          enum: [human-verified, auto-distilled, upstream]
+          nullable: true
+        status:
+          type: string
+          enum: [draft, published, deprecated, archived, vulnerable, revoked, degraded, contains-vulnerable]
+          description: |
+            Lifecycle status. v5.0 additions:
+            - vulnerable: HIGH or MEDIUM findings from Cognium scan
+            - revoked: CRITICAL findings or content safety failure (trust forced to 0)
+            - degraded: performance below threshold
+            - contains-vulnerable: composition containing a vulnerable step skill
+        revokedReason:
+          type: string
+          description: CWE ID or reason for revocation (only when status=revoked).
+        remediationMessage:
+          type: string
+          description: Human-readable remediation guidance from Cognium scan.
+        remediationUrl:
+          type: string
+          format: uri
+          description: URL with remediation details.
+        executionLayer:
+          type: string
+          enum: [mcp-remote, instructions, worker, container]
+        capabilitiesRequired:
+          type: array
+          items:
+            type: string
+        skillType:
+          type: string
+          enum: [atomic, auto-composite, human-composite, forked]
+          description: |
+            v5.0 type taxonomy:
+            - atomic: single skill
+            - auto-composite: automatically composed (from sync or agent)
+            - human-composite: manually composed by a human
+            - forked: forked from another skill
+        forkedFrom:
+          type: string
+          format: uuid
+          description: ID of the skill this was forked from (if applicable).
+        runCount:
+          type: integer
+          description: Total invocation count.
+        lastRunAt:
+          type: string
+          format: date-time
+          description: Last invocation timestamp.
+        score:
+          type: number
+          description: Fused relevance score (0-1).
+        matchSource:
+          type: string
+          description: Which embedding type produced this match.
+        matchText:
+          type: string
+          description: The text that matched (debug).
+        replacementSkillId:
+          type: string
+          format: uuid
+          description: ID of the replacement skill (when status=deprecated).
+        replacementSlug:
+          type: string
+        authorHandle:
+          type: string
+        authorType:
+          type: string
+          enum: [human, bot, org]
+        humanStarCount:
+          type: integer
+        humanForkCount:
+          type: integer
+        agentInvocationCount:
+          type: integer
+        compositionInclusionCount:
+          type: integer
+        avgExecutionTimeMs:
+          type: number
+        errorRate:
+          type: number
+        tags:
+          type: array
+          items:
+            type: string
+        cooccursWith:
+          type: array
+          items:
+            type: object
+            properties:
+              skillId:
+                type: string
+                format: uuid
+              slug:
+                type: string
+              compositionCount:
+                type: integer
+
+    CompositionDetection:
+      type: object
+      properties:
+        detected:
+          type: boolean
+        parts:
+          type: array
+          items:
+            type: object
+            properties:
+              purpose:
+                type: string
+              skill:
+                $ref: "#/components/schemas/SkillResult"
+        reasoning:
+          type: string
+
+    QualityFeedback:
+      type: object
+      required: [searchEventId, skillId, feedbackType, position]
+      properties:
+        searchEventId:
+          type: string
+          format: uuid
+        skillId:
+          type: string
+          format: uuid
+        feedbackType:
+          type: string
+          enum: [click, use, dismiss, explicit_good, explicit_bad]
+        position:
+          type: integer
+          description: 0-based position in search results.
+
+    # ── Skills CRUD ────────────────────────────────────────────────────────
+    SkillInput:
+      type: object
+      required: [id, name, slug, version, source, description, trustScore, executionLayer, tenantId]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        version:
+          type: string
+        source:
+          type: string
+        description:
+          type: string
+        agentSummary:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        category:
+          type: string
+        schemaJson:
+          type: object
+          additionalProperties: true
+        authRequirements:
+          type: object
+          additionalProperties: true
+        installMethod:
+          type: object
+          additionalProperties: true
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        capabilitiesRequired:
+          type: array
+          items:
+            type: string
+        executionLayer:
+          type: string
+          enum: [mcp-remote, instructions, worker, container]
+        tenantId:
+          type: string
+
+    PublishSkillInput:
+      type: object
+      required: [name, slug, description, executionLayer]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          pattern: ^[a-z0-9-]+$
+        version:
+          type: string
+        description:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        schemaJson:
+          type: object
+          additionalProperties: true
+        executionLayer:
+          type: string
+          enum: [mcp-remote, instructions, worker, container]
+        mcpUrl:
+          type: string
+          format: uri
+        skillMd:
+          type: string
+        capabilitiesRequired:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+          enum: [manual, forge, mcp-registry, clawhub, github, human-distilled]
+        sourceUrl:
+          type: string
+        tenantId:
+          type: string
+          format: uuid
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        tags:
+          type: array
+          items:
+            type: string
+        category:
+          type: string
+        authorId:
+          type: string
+          format: uuid
+        authorHandle:
+          type: string
+        authorType:
+          type: string
+          enum: [human, bot, org]
+        authorBotModel:
+          type: string
+
+    UpdateSkillInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        schemaJson:
+          type: object
+          additionalProperties: true
+        executionLayer:
+          type: string
+          enum: [mcp-remote, instructions, worker, container]
+        mcpUrl:
+          type: string
+          format: uri
+        skillMd:
+          type: string
+        capabilitiesRequired:
+          type: array
+          items:
+            type: string
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        tags:
+          type: array
+          items:
+            type: string
+        category:
+          type: string
+
+    TrustUpdateInput:
+      type: object
+      deprecated: true
+      description: |
+        **Deprecated in v5.0.** Trust scores are now computed automatically by the
+        async Cognium pipeline. Use the admin scan endpoint for manual scanning.
+      required: [trustScore, cogniumReport]
+      properties:
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        cogniumReport:
+          type: object
+          required: [contentSafe, findings, scannedAt]
+          properties:
+            contentSafe:
+              type: boolean
+            findings:
+              type: array
+              items:
+                type: object
+                required: [tool, severity, message]
+                properties:
+                  tool:
+                    type: string
+                  severity:
+                    type: string
+                    enum: [low, medium, high, critical]
+                  message:
+                    type: string
+            scannedAt:
+              type: string
+              format: date-time
+
+    # ── Composition ────────────────────────────────────────────────────────
+    ForkInput:
+      type: object
+      required: [authorId, authorType]
+      properties:
+        authorId:
+          type: string
+          format: uuid
+        authorType:
+          type: string
+          enum: [human, bot]
+
+    CopyInput:
+      type: object
+      required: [authorId, authorType]
+      properties:
+        authorId:
+          type: string
+          format: uuid
+        authorType:
+          type: string
+          enum: [human, bot]
+
+    CompositionInput:
+      type: object
+      required: [name, description, authorId, authorType, steps]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          pattern: ^[a-z0-9-]+$
+        description:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        tags:
+          type: array
+          items:
+            type: string
+        authorId:
+          type: string
+          format: uuid
+        authorType:
+          type: string
+          enum: [human, bot]
+        steps:
+          type: array
+          minItems: 2
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/CompositionStep"
+
+    ExtendInput:
+      type: object
+      required: [authorId, authorType, steps]
+      properties:
+        authorId:
+          type: string
+          format: uuid
+        authorType:
+          type: string
+          enum: [human, bot]
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/CompositionStep"
+
+    CompositionStep:
+      type: object
+      required: [skillId]
+      properties:
+        skillId:
+          type: string
+          format: uuid
+        stepName:
+          type: string
+        inputMapping:
+          type: object
+          additionalProperties:
+            type: string
+          description: Maps step input fields to outputs from previous steps.
+        onError:
+          type: string
+          enum: [fail, skip, retry]
+          default: fail
+
+    ForkResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        version:
+          type: string
+        forkedFrom:
+          type: string
+          format: uuid
+        trustScore:
+          type: number
+          minimum: 0
+          maximum: 1
+        status:
+          type: string
+          enum: [draft, published, deprecated, archived, vulnerable, revoked, degraded, contains-vulnerable]
+
+    CompositionDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        type:
+          type: string
+          enum: [auto-composite, human-composite]
+        status:
+          type: string
+          enum: [draft, published, deprecated, archived, vulnerable, revoked, degraded, contains-vulnerable]
+        description:
+          type: string
+        trustScore:
+          type: number
+          description: Trust score = MIN(step trust scores) * 0.90
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              stepOrder:
+                type: integer
+              skillId:
+                type: string
+                format: uuid
+              skillName:
+                type: string
+              skillSlug:
+                type: string
+              stepName:
+                type: string
+                nullable: true
+              inputMapping:
+                type: object
+                additionalProperties:
+                  type: string
+                nullable: true
+              onError:
+                type: string
+                enum: [fail, skip, retry]
+
+    # ── Lineage ────────────────────────────────────────────────────────────
+    AncestryNode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        forkDepth:
+          type: integer
+          nullable: true
+
+    ForkNode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        authorId:
+          type: string
+          format: uuid
+        authorType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DependentNode:
+      type: object
+      properties:
+        compositionId:
+          type: string
+          format: uuid
+        compositionSlug:
+          type: string
+        compositionName:
+          type: string
+        stepOrder:
+          type: integer
+
+    # ── Social / Agent Signals ─────────────────────────────────────────────
+    InvocationBatch:
+      type: object
+      required: [invocations]
+      properties:
+        invocations:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required: [skillId, tenantId, callerType, succeeded]
+            properties:
+              skillId:
+                type: string
+                format: uuid
+              compositionId:
+                type: string
+                format: uuid
+              tenantId:
+                type: string
+              callerType:
+                type: string
+                enum: [agent, human]
+              durationMs:
+                type: integer
+              succeeded:
+                type: boolean
+
+    CoOccurrenceResult:
+      type: object
+      properties:
+        skillId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        compositionCount:
+          type: integer
+        totalPairedInvocations:
+          type: integer
+
+    # ── Leaderboards ───────────────────────────────────────────────────────
+    LeaderboardResponse:
+      type: object
+      properties:
+        leaderboard:
+          type: array
+          items:
+            $ref: "#/components/schemas/LeaderboardEntry"
+
+    LeaderboardEntry:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        authorHandle:
+          type: string
+        authorType:
+          type: string
+        score:
+          type: number
+          description: Ranking score (varies by leaderboard type).
+        trustScore:
+          type: number
+        humanStarCount:
+          type: integer
+        humanForkCount:
+          type: integer
+        agentInvocationCount:
+          type: integer
+        weeklyAgentInvocationCount:
+          type: integer
+        compositionInclusionCount:
+          type: integer
+        avgExecutionTimeMs:
+          type: number
+        errorRate:
+          type: number
+
+    # ── Authors ────────────────────────────────────────────────────────────
+    AuthorProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        handle:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        authorType:
+          type: string
+          enum: [human, bot, org]
+        bio:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        homepageUrl:
+          type: string
+          format: uri
+          nullable: true
+        botModel:
+          type: string
+          nullable: true
+        verified:
+          type: boolean
+        stats:
+          type: object
+          properties:
+            publishedCount:
+              type: integer
+            totalStars:
+              type: integer
+            totalInvocations:
+              type: integer
+            totalForks:
+              type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    AuthorSkillsResponse:
+      type: object
+      properties:
+        skills:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              name:
+                type: string
+              slug:
+                type: string
+              type:
+                type: string
+                enum: [atomic, auto-composite, human-composite, forked]
+              status:
+                type: string
+                enum: [draft, published, deprecated, archived, vulnerable, revoked, degraded, contains-vulnerable]
+              description:
+                type: string
+              trustScore:
+                type: number
+              verificationTier:
+                type: string
+                enum: [unverified, scanned, verified, certified]
+              humanStarCount:
+                type: integer
+              agentInvocationCount:
+                type: integer
+              tags:
+                type: array
+                items:
+                  type: string
+              createdAt:
+                type: string
+                format: date-time
+              publishedAt:
+                type: string
+                format: date-time
+                nullable: true
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ── Analytics ──────────────────────────────────────────────────────────
+    TierDistribution:
+      type: object
+      properties:
+        tier1:
+          type: integer
+        tier2:
+          type: integer
+        tier3:
+          type: integer
+
+    MatchSourceStats:
+      type: object
+      properties:
+        matchSource:
+          type: string
+        queryCount:
+          type: integer
+        avgTopScore:
+          type: number
+        useCount:
+          type: integer
+
+    LatencyPercentiles:
+      type: object
+      properties:
+        p50:
+          type: number
+        p95:
+          type: number
+        p99:
+          type: number
+        p999:
+          type: number
+
+    CostBreakdown:
+      type: object
+      properties:
+        totalCost:
+          type: number
+        embeddingCost:
+          type: number
+        llmCost:
+          type: number
+        byTier:
+          type: object
+          properties:
+            tier1:
+              type: number
+            tier2:
+              type: number
+            tier3:
+              type: number
+
+    FailedQuery:
+      type: object
+      properties:
+        query:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        tier:
+          type: integer
+        topScore:
+          type: number
+          nullable: true
+        dismissCount:
+          type: integer
+
+    Tier3Pattern:
+      type: object
+      properties:
+        pattern:
+          type: string
+        frequency:
+          type: integer
+        avgTopScore:
+          type: number
+        alternateQueriesUsed:
+          type: array
+          items:
+            type: string
+
+    # ── Eval ───────────────────────────────────────────────────────────────
+    EvalResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        runId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        metrics:
+          type: object
+          properties:
+            recall1:
+              type: number
+            recall5:
+              type: number
+            mrr:
+              type: number
+            avgTopScore:
+              type: number
+            tierDistribution:
+              type: object
+              properties:
+                "1":
+                  type: integer
+                "2":
+                  type: integer
+                "3":
+                  type: integer
+            byPattern:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  recall5:
+                    type: number
+                  mrr:
+                    type: number
+        summary:
+          type: object
+          properties:
+            fixtureCount:
+              type: integer
+            passed:
+              type: integer
+            failed:
+              type: integer
+        errors:
+          type: array
+          items:
+            type: string

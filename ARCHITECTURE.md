@@ -1,10 +1,11 @@
 # Runics — Full Architecture & Implementation Spec
 
-> **Purpose:** Single source of truth for Runics: search, sync pipelines, publish API, and implementation spec for Claude Code.  
-> **Parent doc:** `cortex-specification.md` (runtime overview)  
-> **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · R2 · Queues · Hyperdrive  
-> **Date:** March 2026 · v4.0  
-> **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress. Composition & Social layer added.
+> **Purpose:** Single source of truth for Runics: search, sync pipelines, publish API, lifecycle management, and implementation spec for Claude Code.
+> **Parent doc:** `cortex-specification.md`
+> **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · R2 · Queues · Hyperdrive
+> **Date:** March 2026 · v5.0
+> **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress.
+> **v5.0 changes:** Status lifecycle (vulnerable/revoked/degraded), version ranking by trust×usage, Circle-IR async scanning, composite trust formula, human-distilled source.
 
 ---
 
@@ -38,19 +39,21 @@
 
 ## 1. What Runics Is
 
-Runics is the semantic skill registry for the Runics platform. AI agents discover, evaluate, and compose reusable skills through natural language search.
+Runics is the semantic skill registry for the Cortex platform. AI agents discover, evaluate, and compose reusable skills through natural language search.
 
-Skills come from multiple sources: `mcp-registry`, `clawhub`, `skills-sh`, `direct`, `distilled`, `generated`. Each skill has a schema, auth requirements, trust score, execution layer, and content safety classification.
+Skills come from multiple sources: `mcp-registry`, `clawhub`, `github`, `forge`, `human-distilled`, `manual`. Each skill has a schema, auth requirements, trust score, execution layer, verification tier, and lifecycle status.
 
-Agents call `findSkill("make sure we're not shipping GPL code in proprietary product")` and get back ranked, trust-filtered results with confidence signals — fast enough to be inline in agent reasoning loops.
+Agents call `findSkill("make sure we're not shipping GPL code in proprietary product")` and get back ranked, trust-filtered, status-aware results with confidence signals — fast enough to be inline in agent reasoning loops.
 
-**Composition & Social layer (v4.0):** Skills and compositions are first-class registry entities. Any skill or composition can be copied, forked (copy + modify), extended (add steps), or composed into named pipelines — by humans or by agents. Published compositions carry full provenance lineage, creator attribution (human or bot), and a dual-track engagement model: human social signals (stars, human forks) are tracked separately from agent signals (invocations, composition inclusion rate, agent-initiated forks) to prevent pollution.
+**Status awareness (v5.0):** Search automatically excludes `revoked` and `degraded` skills. `vulnerable` skills surface with warning badges, filtered by appetite. The best version per slug is surfaced by trust × usage signal, not newest. Skills are immutable after publish — modifications require a fork.
+
+**Composition & Social layer:** Skills and compositions are first-class registry entities. Any skill or composition can be forked (copy + modify) by humans or agents. Published compositions carry full provenance lineage, creator attribution, and dual-track engagement signals (human and agent metrics kept strictly separate).
 
 ---
 
 ## 2. The Problem
 
-**The vocabulary gap.** A developer searching for a way to "make sure we're not shipping GPL code" needs to find `cargo-deny`, whose description says "check Rust crate licenses and advisories." A single embedding of the skill description yields only 0.58 cosine similarity against that query.
+**The vocabulary gap.** A developer searching for "make sure we're not shipping GPL code" needs to find `cargo-deny`, whose description says "check Rust crate licenses and advisories." A single embedding of the skill description yields only 0.58 cosine similarity against that query.
 
 Target: 0.85+ match quality across diverse phrasing patterns — direct queries, problem descriptions, business language, alternate terminology, and composition contexts.
 
@@ -65,8 +68,6 @@ Target: 0.85+ match quality across diverse phrasing patterns — direct queries,
 ## 3. Architecture Overview
 
 ### Two-Layer Intelligence
-
-The system has two complementary layers with a clean abstraction boundary between infrastructure and intelligence:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -84,38 +85,29 @@ The system has two complementary layers with a clean abstraction boundary betwee
 │  ┌──────┴──────────────┴──────────────────┴───────────┐ │
 │  │  PgVectorProvider (MVP)                             │ │
 │  │  Vector search · Full-text · Score fusion           │ │
+│  │  Status-aware filter · Version ranking              │ │
 │  └────────────────────────────────────────────────────┘ │
-│  ┌────────────────────┐  ┌─────────────────────────────┐│
-│  │ MeilisearchProvider│  │ QdrantProvider              ││
-│  │ (future)           │  │ (future)                    ││
-│  └────────────────────┘  └─────────────────────────────┘│
 ├─────────────────────────────────────────────────────────┤
 │  Neon Postgres (pgvector) · Workers AI · KV Cache       │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Layer A (Index-Time):** When a skill is ingested, generate multiple representations (agent summary + alternate query phrasings), embed all of them. More queries hit Tier 1 without any LLM cost at query time.
+**Layer A (Index-Time):** When a skill is ingested, generate multiple representations (agent summary + alternate query phrasings), embed all of them.
 
-**Layer B (Query-Time):** Confidence-gated LLM fallback. Only fires when vector search results are weak. Intent decomposition, terminology translation, composition detection.
-
-**Key insight:** Layer A reduces how often Layer B fires. Without Layer A, ~30% of queries need LLM fallback. With Layer A, ~10%. That's 3x less LLM cost and 3x fewer users waiting 500ms+.
+**Layer B (Query-Time):** Confidence-gated LLM fallback. Only fires when vector search results are weak.
 
 ### Measure-First Strategy
 
-We do NOT commit to multi-vector (Layer A) upfront. The build plan:
-
 1. **Phase 1:** Single-vector (agent_summary only) + eval suite → measure baseline
-2. **Phase 2:** Add intelligence layer (confidence gating, LLM fallback) → measure lift
-3. **Phase 3:** Add multi-vector, A/B test against single-vector + query expansion → measure lift, decide
-4. **Phase 4:** Production polish with the winning strategy
+2. **Phase 2:** Intelligence layer (confidence gating, LLM fallback) → measure lift
+3. **Phase 3:** Multi-vector, A/B test → measure lift, decide
+4. **Phase 4:** Production polish
 
-Every phase has exit criteria based on measured numbers, not assumptions.
+Every phase has exit criteria based on measured numbers.
 
 ---
 
 ## 4. SearchProvider Abstraction
-
-This is the boundary between commodity infrastructure and our intelligence layer. The provider owns retrieval strategy entirely. The intelligence layer only sees scored results.
 
 ```typescript
 // src/providers/search-provider.ts
@@ -139,15 +131,30 @@ export interface SearchFilters {
   tenantId: string;
   tags?: string[];
   category?: string;
-  minTrustScore?: number;       // trust-based filtering
-  executionLayer?: string;       // filter by execution capability
-  contentSafetyRequired?: boolean; // default true
+  minTrustScore?: number;           // from appetite
+  executionLayer?: string;
+  contentSafetyRequired?: boolean;  // default true
+
+  // v5.0: status lifecycle filters
+  allowVulnerable?: boolean;        // default: depends on appetite (balanced=true, cautious=false)
+  statusFilter?: SkillStatus[];     // override: specific statuses to include
 }
+
+export type SkillStatus =
+  | 'draft'
+  | 'published'
+  | 'deprecated'
+  | 'vulnerable'
+  | 'revoked'
+  | 'degraded'
+  | 'contains-vulnerable';
 
 export interface SearchOptions {
   limit?: number;               // default 10
   offset?: number;
-  includeMatchText?: boolean;   // include source_text for debugging
+  includeMatchText?: boolean;
+  slug?: string;                // restrict to versions of a specific slug
+  version?: string;             // pin to exact version
 }
 
 export interface SearchResult {
@@ -158,17 +165,38 @@ export interface SearchResult {
 
 export interface ScoredSkill {
   skillId: string;
+  slug: string;
+  version: string;
   score: number;                // cosine similarity (0–1)
-  fullTextScore: number;        // tsvector rank (normalized 0–1)
-  fusedScore: number;           // final score after fusion
+  fullTextScore: number;        // tsvector rank (0–1)
+  fusedScore: number;           // final after fusion
   matchSource: string;          // which embedding type matched
-  matchText?: string;           // the text that matched
+  matchText?: string;
+
+  // v5.0: trust provenance
+  trustScore: number;
+  verificationTier: 'unverified' | 'scanned' | 'verified' | 'certified';
+  trustBadge: 'human-verified' | 'auto-distilled' | 'upstream' | null;
+
+  // v5.0: status
+  status: SkillStatus;
+  revokedReason?: string;
+  remediationMessage?: string;
+  remediationUrl?: string;
+
+  // v5.0: composition
+  skillType: 'atomic' | 'auto-composite' | 'human-composite' | 'forked';
+  forkedFrom?: string;          // 'slug@version'
+
+  // v5.0: usage signal (used for version ranking)
+  runCount: number;
+  lastRunAt?: string;
 }
 
 export interface ConfidenceSignal {
   topScore: number;
   gapToSecond: number;
-  clusterDensity: number;       // count of results above tier2 threshold
+  clusterDensity: number;
   keywordHits: number;
   tier: 1 | 2 | 3;
 }
@@ -183,28 +211,18 @@ export interface SearchMeta {
 }
 ```
 
-**Why PgVectorProvider uses multi-vector internally but a future MeilisearchProvider would use query expansion:**
-
-The PgVectorProvider stores 1–6 rows per skill in `skill_embeddings` and uses `DISTINCT ON (skill_id)` to return the best match per skill. A MeilisearchProvider would store 1 document per skill and instead expand the query into multiple reformulations, searching each. Different mechanics, same `SearchResult` interface.
-
-The confidence gating layer doesn't know or care which strategy the provider uses.
-
 ---
 
 ## 5. Layer A: Index-Time Enrichment
 
 ### What It Does
 
-When a skill is ingested, we generate multiple text representations and embed all of them. Each skill has N vectors in `skill_embeddings` (1 in Phase 1, up to 6 in Phase 3).
+When a skill is ingested, generate multiple text representations and embed all of them. Each skill has N vectors in `skill_embeddings` (1 in Phase 1, up to 6 in Phase 3).
 
 ### Alternate Query Generation
 
-The LLM generates queries that real agents would send:
-
 ```typescript
-// src/ingestion/alternate-queries.ts
-
-// Phase 3 only — not used until validated
+// src/ingestion/alternate-queries.ts — Phase 3 only
 
 const ALTERNATE_QUERY_PROMPT = `You generate search queries that developers or AI agents would use
 to find this skill. Generate exactly 5 queries, each using a DIFFERENT strategy:
@@ -216,16 +234,9 @@ to find this skill. Generate exactly 5 queries, each using a DIFFERENT strategy:
 5. COMPOSITION: When this skill would be part of a larger workflow
 
 Return exactly 5 queries as a JSON array of strings. Each query 4-10 words. No explanations.`;
-
-// Example output for cargo-deny:
-// [
-//   "check rust dependency licenses",                 // DIRECT
-//   "are my crate dependencies safe to ship",         // PROBLEM-BASED
-//   "ensure open source compliance rust project",     // BUSINESS LANGUAGE
-//   "cargo ban crate security advisory check",        // ALTERNATE TERMINOLOGY
-//   "rust supply chain security audit pipeline"       // COMPOSITION CONTEXT
-// ]
 ```
+
+Human-distilled skills (from Forge Mode 3) skip LLM alt-query generation — the user's own description drives the embedding directly, which produces better queries than LLM inference.
 
 ### How the layers multiply
 
@@ -243,24 +254,7 @@ WITH BOTH LAYERS (Layer A missed, Layer B rescues):
   → Layer A: nothing anticipated "Oracle audit" → top score 0.61
   → Layer B: LLM reasons "Oracle audit = license compliance, commercial/copyleft risk"
   → Re-search finds: license-checker (0.89), spdx-scanner (0.84)
-  → Correct result, ~500ms
-
-KEY: Layer B's expanded queries ALSO search against Layer A's enriched index.
-LLM-generated query vocabulary × index query vocabulary = multiplicative.
 ```
-
-### Impact Numbers (to be validated by eval)
-
-These are projections from the TDR. They become real numbers only after the eval suite runs.
-
-| Configuration | Projected Match Rate |
-|---|---|
-| Single embedding, no LLM fallback | ~70% (baseline to measure) |
-| Multi-vector (6/skill), no LLM fallback | ~85% (Phase 3 validates) |
-| Single embedding + LLM fallback | ~82% (Phase 2 validates) |
-| Multi-vector + LLM fallback | ~95% (Phase 3+4 validates) |
-
-**These numbers are targets, not commitments. The eval suite is the source of truth.**
 
 ---
 
@@ -268,16 +262,12 @@ These are projections from the TDR. They become real numbers only after the eval
 
 ### Confidence-Gated Routing
 
-Not every query needs LLM assistance. The confidence gate evaluates results and routes to three tiers:
-
-| Tier | Condition | Latency | Projected % | Behavior |
+| Tier | Condition | Latency | ~% | Behavior |
 |---|---|---|---|---|
 | **Tier 1: High** | Top score > threshold, clear gap | ~50ms | ~70% | Return immediately. $0 LLM cost. |
 | **Tier 2: Medium** | Score in middle band | ~50ms initial | ~18% | Return results, stream LLM enrichment async. |
 | **Tier 3: Low** | Score below threshold | 500–1000ms | ~9% | Full LLM deep search. |
-| **No match** | Tier 3 results still poor | 500–1000ms | ~3% | Return generation hints. |
-
-Confidence signals: top cosine similarity, gap between #1 and #2, cluster density above threshold, query specificity, full-text keyword hit count.
+| **No match** | Tier 3 still poor | 500–1000ms | ~3% | Return generation hints. |
 
 **Thresholds are configurable via env vars and derived from eval data in Phase 1.** The TDR assumed 0.85/0.70 — this may be wrong. Measure first.
 
@@ -301,191 +291,247 @@ If even alternate queries didn't match, the query uses truly novel terminology.
 
 Respond as JSON:
 {
-  "alternate_queries": string[],           // 2-4 rephrased search queries
-  "terminology_map": Record<string,string>, // colloquial → technical
+  "alternate_queries": string[],
+  "terminology_map": Record<string,string>,
   "needs_composition": boolean,
-  "composition_parts": string[],           // if composition, ordered sub-tasks
-  "capability_hints": string[],            // inferred execution requirements
-  "reasoning": string                      // brief explanation
+  "composition_parts": string[],
+  "capability_hints": string[],
+  "reasoning": string
 }`;
-```
-
-Deep search flow:
-1. LLM analyzes the query + initial results (including which `match_source` matched)
-2. Generates alternate queries + terminology translations
-3. Each alternate query is embedded and searched against the full index (including Layer A's enriched vectors)
-4. If composition detected, each sub-task is searched independently
-5. Results merged, deduplicated by skill ID (keep best score per skill)
-6. Optionally re-ranked via cross-encoder
-7. If still no good match → return generation hints for skill creation
-
-### Composition Detection
-
-```typescript
-// src/intelligence/composition-detector.ts
-
-// Detects multi-skill queries and returns ordered skill sequences.
-// Example: "lint my rust code, check licenses, then deploy to staging"
-// → [{purpose: "lint rust", skill: "clippy"}, 
-//    {purpose: "check licenses", skill: "cargo-deny"},
-//    {purpose: "deploy staging", skill: "deploy-worker"}]
-
-export interface CompositionResult {
-  detected: boolean;
-  parts: {
-    purpose: string;
-    skill: ScoredSkill | null;
-  }[];
-  reasoning: string;
-}
 ```
 
 ---
 
 ## 7. Platform Integration: Skills Table
 
-The skills table is the source of truth for the Runics platform. Search operates against `skill_embeddings` which references skills. Key platform fields that affect search:
+The `skills` table is the source of truth. Search operates against `skill_embeddings` which references it. **v5.0** expands the status enum, adds skill_type, version lineage, trust provenance, and Cognium scan result fields.
 
 ```sql
--- This table is managed by the broader Runics platform, not the search service.
--- Included here for context on what fields search filters against.
-
 CREATE TABLE IF NOT EXISTS skills (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
-  -- Identity
+  -- Identity & versioning
   name TEXT NOT NULL,
-  slug TEXT UNIQUE NOT NULL,
+  slug TEXT NOT NULL,
   version TEXT NOT NULL DEFAULT '1.0.0',
-  changelog JSONB DEFAULT '[]',              -- [{version, date, notes}]
-  status TEXT NOT NULL DEFAULT 'published'   -- draft | published | deprecated | archived
-    CHECK (status IN ('draft', 'published', 'deprecated', 'archived')),
-  type TEXT NOT NULL DEFAULT 'skill'         -- skill | composition | pipeline
-    CHECK (type IN ('skill', 'composition', 'pipeline')),
+  changelog JSONB DEFAULT '[]',
+
+  -- v5.0: Expanded status
+  -- draft | published | deprecated | vulnerable | revoked | degraded | contains-vulnerable
+  -- deprecated = owner-controlled soft deprecation
+  -- vulnerable  = Cognium: HIGH/MEDIUM severity finding
+  -- revoked     = Cognium: CRITICAL finding or content safety failure
+  -- degraded    = derived: composite with a revoked constituent
+  -- contains-vulnerable = derived: composite with a vulnerable constituent
+  status TEXT NOT NULL DEFAULT 'published'
+    CHECK (status IN (
+      'draft', 'published', 'deprecated',
+      'vulnerable', 'revoked',
+      'degraded', 'contains-vulnerable'
+    )),
+
+  -- v5.0: Skill type
+  skill_type TEXT NOT NULL DEFAULT 'atomic'
+    CHECK (skill_type IN ('atomic', 'auto-composite', 'human-composite', 'forked')),
 
   -- Source & provenance
-  source TEXT NOT NULL,                     -- mcp-registry | clawhub | skills-sh | direct | distilled | generated
+  source TEXT NOT NULL,
+  -- mcp-registry | clawhub | github | forge | human-distilled | manual
   source_url TEXT,
   source_hash TEXT,
 
-  -- Author attribution (human or bot)
-  author_id UUID,                           -- FK to authors table
-  author_type TEXT DEFAULT 'human'          -- human | bot | org
+  -- Author attribution
+  author_id UUID,
+  author_type TEXT DEFAULT 'human'
     CHECK (author_type IN ('human', 'bot', 'org')),
-  author_bot_model TEXT,                    -- if bot: model version (e.g. 'claude-sonnet-4-6')
-  author_bot_prompt_hash TEXT,              -- if bot: hash of generation prompt for audit
+  author_bot_model TEXT,
+  author_bot_prompt_hash TEXT,
 
-  -- Fork / composition lineage
-  fork_of UUID REFERENCES skills(id),       -- immediate parent
-  origin_id UUID REFERENCES skills(id),     -- root of fork chain (denormalized)
-  fork_depth INTEGER DEFAULT 0,             -- 0 = original, 1 = direct fork, etc.
+  -- v5.0: Version lineage (immutable after publish)
+  forked_from TEXT,             -- 'slug@version' of parent (NULL if original)
+  forked_by TEXT,               -- user ID or 'forge'
+  fork_changes JSONB,           -- list of human-readable changes
+  root_source TEXT,             -- original registry source preserved across forks
+                                -- (set at first fork from parent.source; copied from parent.root_source on re-fork)
+                                -- used for trust floor lookup to prevent floor regression on fork-of-fork
+  fork_changes JSONB,           -- list of human-readable changes from parent
+
+  -- v5.0: Composition
+  composition_skill_ids UUID[], -- ordered constituent skill IDs (for composites)
+
+  -- v5.0: Human distillation
+  human_distilled_by TEXT,
+  human_distilled_at TIMESTAMPTZ,
 
   -- Content
-  description TEXT,                         -- human-readable, author-provided
-  readme TEXT,                              -- long-form markdown
-  agent_summary TEXT,                       -- LLM-generated, search-optimized
+  description TEXT,
+  readme TEXT,
+  agent_summary TEXT,           -- LLM-generated, search-optimized
   alternate_queries TEXT[],
   schema_json JSONB,
   auth_requirements JSONB,
   install_method JSONB,
+  skill_md TEXT,                -- SKILL.md instructions (L1 skills)
+  mcp_url TEXT,                 -- MCP endpoint URL (L0 skills)
+  r2_bundle_key TEXT,           -- R2 path for code bundle (L2/L3)
+  environment_variables TEXT[], -- declared env vars needed
+  capabilities_required TEXT[],
+  execution_layer TEXT NOT NULL
+    CHECK (execution_layer IN ('mcp-remote', 'instructions', 'worker', 'container', 'composite')),
 
   -- Discoverability
   tags TEXT[] DEFAULT '{}',
-  categories TEXT[] DEFAULT '{}',           -- curated taxonomy
-  ecosystem TEXT,                           -- rust | node | python | agnostic
+  categories TEXT[] DEFAULT '{}',
+  ecosystem TEXT,
   language TEXT,
-  license TEXT,                             -- MIT | Apache-2.0 | GPL-3.0 | proprietary | etc.
+  license TEXT,
 
   -- Presentation
   logo_url TEXT,
   homepage_url TEXT,
-  demo_url TEXT,                            -- live one-click try page
+  demo_url TEXT,
   share_url TEXT GENERATED ALWAYS AS (
     'https://runics.dev/skills/' || slug
   ) STORED,
 
-  -- Execution
-  capabilities_required TEXT[],
-  execution_layer TEXT NOT NULL,
-  source_execution_id UUID,
+  -- v5.0: Lifecycle management
+  revoked_at TIMESTAMPTZ,
+  revoked_reason TEXT,          -- CVE ID or 'content_safety_failed'
+  deprecated_at TIMESTAMPTZ,
+  deprecated_reason TEXT,
+  remediation_message TEXT,     -- human-readable path forward (from Cognium)
+  remediation_url TEXT,         -- link to CVE advisory
 
-  -- Trust & safety
+  -- v5.0: Trust & Cognium scan results
   trust_score NUMERIC(3,2) DEFAULT 0.5,
-  cognium_scanned BOOLEAN DEFAULT FALSE,
+  verification_tier TEXT DEFAULT 'unverified'
+    CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
+  scan_coverage TEXT
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+  trust_badge TEXT
+    CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
   cognium_scanned_at TIMESTAMPTZ,
-  cognium_report JSONB,
+  cognium_findings JSONB,       -- [{severity, cwe_id, tool, title, description, confidence, verdict}]
+  analyzer_summary JSONB,       -- per-analyzer result summary
   content_safety_passed BOOLEAN,
-  adversarial_tested BOOLEAN DEFAULT FALSE, -- tested vs prompt injection / malformed input
-  provenance_attested BOOLEAN DEFAULT FALSE, -- signed publish (trusted publishing model)
+  adversarial_tested BOOLEAN DEFAULT FALSE,
+  provenance_attested BOOLEAN DEFAULT FALSE,
 
-  -- Agent-specific quality signals
-  avg_execution_time_ms REAL,               -- p50 from live invocations
+  -- v5.0: Run signal (for version ranking)
+  run_count INTEGER NOT NULL DEFAULT 0,
+  last_run_at TIMESTAMPTZ,
+
+  -- Agent quality signals
+  avg_execution_time_ms REAL,
   p95_execution_time_ms REAL,
-  error_rate REAL,                          -- rolling 7-day error rate (0.0–1.0)
-  agent_consumption_pattern TEXT            -- standalone | always-composed | mixed
+  error_rate REAL,
+  agent_consumption_pattern TEXT
     CHECK (agent_consumption_pattern IN ('standalone', 'always-composed', 'mixed', NULL)),
-  schema_compatibility_score REAL,          -- how well output feeds other skills (0–1)
-  replacement_skill_id UUID REFERENCES skills(id), -- for deprecated skills: auto-migrate target
+  schema_compatibility_score REAL,
+  replacement_skill_id UUID REFERENCES skills(id),
 
-  -- Human social metrics (separate from agent metrics — never polluted by bots)
+  -- Human social metrics (separate from agent — never polluted by bots)
   human_star_count INTEGER DEFAULT 0,
   human_fork_count INTEGER DEFAULT 0,
   human_copy_count INTEGER DEFAULT 0,
-  human_use_count INTEGER DEFAULT 0,       -- human-initiated installs
+  human_use_count INTEGER DEFAULT 0,
 
   -- Agent metrics (raw from live invocations)
   agent_invocation_count BIGINT DEFAULT 0,
   agent_fork_count INTEGER DEFAULT 0,
-  composition_inclusion_count INTEGER DEFAULT 0, -- how many compositions include this
-  dependent_count INTEGER DEFAULT 0,            -- how many other skills depend on this
-  weekly_agent_invocation_count INTEGER DEFAULT 0, -- rolling 7-day (for trending)
+  composition_inclusion_count INTEGER DEFAULT 0,
+  dependent_count INTEGER DEFAULT 0,
+  weekly_agent_invocation_count INTEGER DEFAULT 0,
 
   -- Hybrid/editorial
   featured BOOLEAN DEFAULT FALSE,
   verified_creator BOOLEAN DEFAULT FALSE,
   collection_ids UUID[] DEFAULT '{}',
+  tenant_id UUID,
 
-  -- Lifecycle
+  -- Lifecycle timestamps
   published_at TIMESTAMPTZ,
-  last_used_at TIMESTAMPTZ,                 -- last agent invocation
+  last_used_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Core search indices
 CREATE INDEX idx_skills_trust_score ON skills(trust_score);
+CREATE INDEX idx_skills_status ON skills(status);
 CREATE INDEX idx_skills_source ON skills(source);
 CREATE INDEX idx_skills_slug ON skills(slug);
+CREATE INDEX idx_skills_slug_version ON skills(slug, version);
 CREATE INDEX idx_skills_execution_layer ON skills(execution_layer);
+CREATE INDEX idx_skills_skill_type ON skills(skill_type);
 CREATE INDEX idx_skills_tags ON skills USING gin(tags);
 CREATE INDEX idx_skills_categories ON skills USING gin(categories);
-CREATE INDEX idx_skills_fork_of ON skills(fork_of);
-CREATE INDEX idx_skills_origin_id ON skills(origin_id);
-CREATE INDEX idx_skills_author_id ON skills(author_id);
-CREATE INDEX idx_skills_type ON skills(type);
-CREATE INDEX idx_skills_weekly_agent_invocations ON skills(weekly_agent_invocation_count DESC);
+CREATE INDEX idx_skills_composition_ids ON skills USING gin(composition_skill_ids);
+CREATE INDEX idx_skills_run_count ON skills(run_count DESC);
+CREATE INDEX idx_skills_weekly_agent ON skills(weekly_agent_invocation_count DESC);
 CREATE INDEX idx_skills_human_stars ON skills(human_star_count DESC);
+```
+
+### Version Ranking
+
+The default search surfaces the best version per slug using trust × run signal, not newest:
+
+```sql
+-- Best version per slug query (used in PgVectorProvider)
+SELECT DISTINCT ON (s.slug)
+  s.id, s.slug, s.version, s.trust_score, s.run_count, s.status
+FROM skills s
+WHERE s.slug = :slug
+  AND s.status NOT IN ('revoked', 'draft', 'degraded')
+  AND (s.tenant_id IS NULL OR s.tenant_id = :tenantId)
+ORDER BY
+  s.slug,
+  (s.trust_score * 0.7 + LEAST(s.run_count::float / 100, 0.3)) DESC;
+```
+
+Users can pin to a specific version by including `version` in search options.
+
+### Status Filtering in Search
+
+```typescript
+// appetite → status filter policy
+function buildStatusFilter(appetite: Appetite): {
+  excludedStatuses: SkillStatus[];
+  allowVulnerable: boolean;
+} {
+  const alwaysExclude: SkillStatus[] = ['revoked', 'draft', 'degraded'];
+
+  switch (appetite) {
+    case 'strict':
+    case 'cautious':
+      return {
+        excludedStatuses: [...alwaysExclude, 'vulnerable', 'contains-vulnerable'],
+        allowVulnerable: false,
+      };
+    case 'balanced':
+    case 'adventurous':
+      return {
+        excludedStatuses: alwaysExclude,
+        allowVulnerable: true,  // vulnerable surfaces with warning badge
+      };
+  }
+}
 ```
 
 ### Trust-Based Filtering
 
-Agents have a risk appetite that maps to a minimum trust score:
-
 ```typescript
-// src/types.ts
-
 export type Appetite = 'strict' | 'cautious' | 'balanced' | 'adventurous';
 
 export function appetiteToTrustThreshold(appetite: Appetite): number {
   switch (appetite) {
     case 'strict':      return 0.85;
     case 'cautious':    return 0.70;
-    case 'balanced':    return 0.50;  // default
+    case 'balanced':    return 0.50;
     case 'adventurous': return 0.20;
   }
 }
 ```
-
-This is passed through `SearchFilters.minTrustScore` and applied as a WHERE clause in the provider.
 
 ---
 
@@ -494,10 +540,6 @@ This is passed through `SearchFilters.minTrustScore` and applied as a WHERE clau
 ### Migration 0001: skill_embeddings
 
 ```sql
--- 0001_skill_embeddings.sql
--- Search index. Starts with 1 row per skill (agent_summary).
--- Multi-vector adds additional rows — no schema change needed.
-
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS skill_embeddings (
@@ -518,19 +560,14 @@ CREATE TABLE IF NOT EXISTS skill_embeddings (
   )
 );
 
--- HNSW index for vector similarity search
 CREATE INDEX idx_skill_embeddings_hnsw
   ON skill_embeddings
   USING hnsw (embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 128);
 
-CREATE INDEX idx_skill_embeddings_skill_id
-  ON skill_embeddings (skill_id);
+CREATE INDEX idx_skill_embeddings_skill_id ON skill_embeddings (skill_id);
+CREATE INDEX idx_skill_embeddings_tenant_id ON skill_embeddings (tenant_id);
 
-CREATE INDEX idx_skill_embeddings_tenant_id
-  ON skill_embeddings (tenant_id);
-
--- Full-text search on source_text
 ALTER TABLE skill_embeddings ADD COLUMN tsv tsvector
   GENERATED ALWAYS AS (to_tsvector('english', source_text)) STORED;
 
@@ -540,23 +577,14 @@ CREATE INDEX idx_skill_embeddings_tsv ON skill_embeddings USING gin(tsv);
 ### Migration 0002: search_logs
 
 ```sql
--- 0002_search_logs.sql
--- Every search event logged. Drives quality learning and cost tracking.
-
 CREATE TABLE IF NOT EXISTS search_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   timestamp TIMESTAMPTZ DEFAULT NOW(),
-
-  -- Query
   query TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
-  appetite TEXT,                           -- risk appetite used
-
-  -- Routing
+  appetite TEXT,
   tier SMALLINT NOT NULL CHECK (tier IN (1, 2, 3)),
   cache_hit BOOLEAN DEFAULT FALSE,
-
-  -- Results
   top_score REAL,
   gap_to_second REAL,
   cluster_density SMALLINT,
@@ -564,24 +592,16 @@ CREATE TABLE IF NOT EXISTS search_logs (
   result_count SMALLINT,
   match_source TEXT,
   result_skill_ids TEXT[],
-
-  -- Performance
   total_latency_ms REAL,
   vector_search_ms REAL,
   full_text_search_ms REAL,
   fusion_strategy TEXT,
-
-  -- LLM usage
   llm_invoked BOOLEAN DEFAULT FALSE,
   llm_latency_ms REAL,
   llm_model TEXT,
   llm_tokens_used INTEGER,
-
-  -- Cost tracking (USD estimates)
   embedding_cost REAL DEFAULT 0,
   llm_cost REAL DEFAULT 0,
-
-  -- Deep search trace (Tier 3 only)
   alternate_queries_used TEXT[],
   composition_detected BOOLEAN DEFAULT FALSE,
   generation_hint_returned BOOLEAN DEFAULT FALSE
@@ -596,9 +616,6 @@ CREATE INDEX idx_search_logs_match_source ON search_logs (match_source);
 ### Migration 0003: quality_feedback
 
 ```sql
--- 0003_quality_feedback.sql
--- Closes the quality learning loop.
-
 CREATE TABLE IF NOT EXISTS quality_feedback (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   search_event_id UUID REFERENCES search_logs(id),
@@ -614,7 +631,6 @@ CREATE INDEX idx_feedback_event ON quality_feedback (search_event_id);
 CREATE INDEX idx_feedback_skill ON quality_feedback (skill_id);
 CREATE INDEX idx_feedback_type ON quality_feedback (feedback_type, timestamp DESC);
 
--- Materialized view for hourly quality metrics (refresh via cron)
 CREATE MATERIALIZED VIEW search_quality_summary AS
 SELECT
   date_trunc('hour', sl.timestamp) AS hour,
@@ -640,29 +656,21 @@ CREATE UNIQUE INDEX idx_quality_summary_pk
 ### Migration 0004: authors
 
 ```sql
--- 0004_authors.sql
--- First-class author identity for humans and bots.
-
 CREATE TABLE IF NOT EXISTS authors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  handle TEXT UNIQUE NOT NULL,              -- @eyal | @cortex-forge-bot
+  handle TEXT UNIQUE NOT NULL,
   display_name TEXT,
   author_type TEXT NOT NULL DEFAULT 'human'
     CHECK (author_type IN ('human', 'bot', 'org')),
   bio TEXT,
   avatar_url TEXT,
   homepage_url TEXT,
-
-  -- Bot-specific fields
-  bot_model TEXT,                           -- model that powers this bot author
-  bot_operator_id UUID,                     -- human/org that owns this bot
-
-  -- Social stats (human leaderboard)
+  bot_model TEXT,
+  bot_operator_id UUID,
   total_skills_published INTEGER DEFAULT 0,
   total_human_stars_received INTEGER DEFAULT 0,
   total_human_forks_received INTEGER DEFAULT 0,
   verified BOOLEAN DEFAULT FALSE,
-
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -670,29 +678,20 @@ CREATE INDEX idx_authors_handle ON authors(handle);
 CREATE INDEX idx_authors_type ON authors(author_type);
 ```
 
-### Migration 0005: compositions
+### Migration 0005: composition_steps
 
 ```sql
--- 0005_compositions.sql
--- Named, versioned, forkable skill pipelines.
--- compositions are also rows in skills (type = 'composition' | 'pipeline').
--- This table stores the ordered step graph.
-
 CREATE TABLE IF NOT EXISTS composition_steps (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   composition_id UUID NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
   step_order SMALLINT NOT NULL,
   skill_id UUID NOT NULL REFERENCES skills(id),
-
-  -- Step-level overrides
-  step_name TEXT,                           -- human label for this step
-  input_mapping JSONB,                      -- how previous step output maps to this input
-  condition JSONB,                          -- optional conditional execution
-  on_error TEXT DEFAULT 'fail'              -- fail | skip | retry
+  step_name TEXT,
+  input_mapping JSONB,
+  condition JSONB,
+  on_error TEXT DEFAULT 'fail'
     CHECK (on_error IN ('fail', 'skip', 'retry')),
-
   created_at TIMESTAMPTZ DEFAULT NOW(),
-
   UNIQUE(composition_id, step_order)
 );
 
@@ -703,16 +702,12 @@ CREATE INDEX idx_composition_steps_skill ON composition_steps(skill_id);
 ### Migration 0006: invocation_graph
 
 ```sql
--- 0006_invocation_graph.sql
--- Live dependency graph from actual agent invocations.
--- Powers: composition fitness score, co-occurrence map, trending.
-
 CREATE TABLE IF NOT EXISTS skill_invocations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   skill_id UUID NOT NULL REFERENCES skills(id),
-  composition_id UUID REFERENCES skills(id), -- NULL if standalone invocation
+  composition_id UUID REFERENCES skills(id),
   tenant_id TEXT NOT NULL,
-  caller_type TEXT NOT NULL DEFAULT 'agent'  -- agent | human
+  caller_type TEXT NOT NULL DEFAULT 'agent'
     CHECK (caller_type IN ('agent', 'human')),
   duration_ms INTEGER,
   succeeded BOOLEAN NOT NULL,
@@ -723,7 +718,6 @@ CREATE INDEX idx_invocations_skill ON skill_invocations(skill_id, invoked_at DES
 CREATE INDEX idx_invocations_composition ON skill_invocations(composition_id);
 CREATE INDEX idx_invocations_tenant ON skill_invocations(tenant_id, invoked_at DESC);
 
--- Co-occurrence pairs: which skills appear together in compositions
 CREATE MATERIALIZED VIEW skill_cooccurrence AS
 SELECT
   cs1.skill_id AS skill_a,
@@ -733,7 +727,7 @@ SELECT
 FROM composition_steps cs1
 JOIN composition_steps cs2
   ON cs1.composition_id = cs2.composition_id
-  AND cs1.skill_id < cs2.skill_id    -- avoid duplicates
+  AND cs1.skill_id < cs2.skill_id
 JOIN skills si ON si.id = cs1.composition_id
 GROUP BY cs1.skill_id, cs2.skill_id
 HAVING COUNT(DISTINCT cs1.composition_id) >= 2;
@@ -745,67 +739,102 @@ CREATE INDEX idx_cooccurrence_skill_a ON skill_cooccurrence(skill_a, total_paire
 ### Migration 0007: leaderboards
 
 ```sql
--- 0007_leaderboards.sql
--- Dual-track leaderboards: human signals and agent signals kept separate.
-
--- Human leaderboard (materialized hourly)
 CREATE MATERIALIZED VIEW leaderboard_human AS
 SELECT
-  s.id,
-  s.slug,
-  s.name,
-  s.type,
-  a.handle AS author_handle,
-  a.author_type,
-  s.human_star_count,
-  s.human_fork_count,
-  s.human_copy_count,
-  s.human_use_count,
-  s.fork_depth,
-  s.origin_id,
-  s.trust_score,
-  s.verified_creator,
-  s.featured,
-  -- Weighted score for ranking
+  s.id, s.slug, s.name, s.type,
+  a.handle AS author_handle, a.author_type,
+  s.human_star_count, s.human_fork_count, s.human_copy_count, s.human_use_count,
+  s.fork_depth, s.origin_id, s.trust_score, s.verified_creator, s.featured,
   (s.human_star_count * 3 + s.human_fork_count * 5 + s.human_copy_count * 2 + s.human_use_count) AS human_score
 FROM skills s
 LEFT JOIN authors a ON a.id = s.author_id
 WHERE s.status = 'published'
-  AND s.author_type = 'human';  -- HUMAN ONLY: bots excluded from human leaderboard
+  AND s.author_type = 'human';
 
 CREATE UNIQUE INDEX idx_leaderboard_human_pk ON leaderboard_human(id);
 CREATE INDEX idx_leaderboard_human_score ON leaderboard_human(human_score DESC);
 
--- Agent leaderboard (materialized hourly)
 CREATE MATERIALIZED VIEW leaderboard_agent AS
 SELECT
-  s.id,
-  s.slug,
-  s.name,
-  s.type,
-  a.handle AS author_handle,
-  a.author_type,
-  a.bot_model,
-  s.agent_invocation_count,
-  s.weekly_agent_invocation_count,
-  s.composition_inclusion_count,
-  s.dependent_count,
-  s.agent_fork_count,
-  s.avg_execution_time_ms,
-  s.error_rate,
-  s.trust_score,
-  -- Weighted score for agent leaderboard
+  s.id, s.slug, s.name,
+  a.handle AS author_handle, a.author_type, a.bot_model,
+  s.agent_invocation_count, s.weekly_agent_invocation_count,
+  s.composition_inclusion_count, s.dependent_count, s.agent_fork_count,
+  s.avg_execution_time_ms, s.error_rate, s.trust_score, s.trust_badge,
   (s.agent_invocation_count * 1
    + s.composition_inclusion_count * 10
    + s.dependent_count * 8
    - COALESCE(s.error_rate, 0) * 1000) AS agent_score
 FROM skills s
 LEFT JOIN authors a ON a.id = s.author_id
-WHERE s.status = 'published';
+WHERE s.status NOT IN ('revoked', 'degraded', 'draft');
 
 CREATE UNIQUE INDEX idx_leaderboard_agent_pk ON leaderboard_agent(id);
 CREATE INDEX idx_leaderboard_agent_score ON leaderboard_agent(agent_score DESC);
 CREATE INDEX idx_leaderboard_agent_weekly ON leaderboard_agent(weekly_agent_invocation_count DESC);
+```
+
+### Migration 0008: skill lifecycle (v5.0)
+
+```sql
+-- 0008_skill_lifecycle.sql
+-- Adds status lifecycle, version lineage, trust provenance, Cognium attestation fields.
+-- Run after 0007. The skills table may already have trust_score and cognium_scanned_at
+-- from earlier migrations — this migration adds the new v5.0 fields.
+
+ALTER TABLE skills
+  -- Status lifecycle
+  ALTER COLUMN status TYPE TEXT,
+  ALTER COLUMN status SET DEFAULT 'published',
+  ADD CONSTRAINT skills_status_check CHECK (status IN (
+    'draft', 'published', 'deprecated',
+    'vulnerable', 'revoked',
+    'degraded', 'contains-vulnerable'
+  )),
+  ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS revoked_reason TEXT,
+  ADD COLUMN IF NOT EXISTS deprecated_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS deprecated_reason TEXT,
+  ADD COLUMN IF NOT EXISTS remediation_message TEXT,
+  ADD COLUMN IF NOT EXISTS remediation_url TEXT,
+
+  -- Skill type
+  ADD COLUMN IF NOT EXISTS skill_type TEXT NOT NULL DEFAULT 'atomic'
+    CHECK (skill_type IN ('atomic', 'auto-composite', 'human-composite', 'forked')),
+
+  -- Version lineage (immutable after publish)
+  ADD COLUMN IF NOT EXISTS forked_from TEXT,
+  ADD COLUMN IF NOT EXISTS forked_by TEXT,
+  ADD COLUMN IF NOT EXISTS fork_changes JSONB,
+  ADD COLUMN IF NOT EXISTS root_source TEXT,    -- original source preserved across forks, for trust floor lookup
+
+  -- Composition
+  ADD COLUMN IF NOT EXISTS composition_skill_ids UUID[],
+
+  -- Human distillation
+  ADD COLUMN IF NOT EXISTS human_distilled_by TEXT,
+  ADD COLUMN IF NOT EXISTS human_distilled_at TIMESTAMPTZ,
+
+  -- Trust provenance
+  ADD COLUMN IF NOT EXISTS verification_tier TEXT DEFAULT 'unverified'
+    CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
+  ADD COLUMN IF NOT EXISTS scan_coverage TEXT
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+  ADD COLUMN IF NOT EXISTS trust_badge TEXT
+    CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
+  ADD COLUMN IF NOT EXISTS cognium_findings JSONB,
+  ADD COLUMN IF NOT EXISTS analyzer_summary JSONB,
+
+  -- Run signal
+  ADD COLUMN IF NOT EXISTS run_count INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
+
+-- New indices
+CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
+CREATE INDEX IF NOT EXISTS idx_skills_slug_version ON skills(slug, version);
+CREATE INDEX IF NOT EXISTS idx_skills_skill_type ON skills(skill_type);
+CREATE INDEX IF NOT EXISTS idx_skills_composition_ids ON skills USING gin(composition_skill_ids);
+CREATE INDEX IF NOT EXISTS idx_skills_run_count ON skills(run_count DESC);
 ```
 
 ---
@@ -818,26 +847,21 @@ CREATE INDEX idx_leaderboard_agent_weekly ON leaderboard_agent(weekly_agent_invo
 export class EmbedPipeline {
   constructor(private env: Env) {}
 
-  // ── Phase 1: Single embedding ──
   async processSkill(skill: SkillInput): Promise<EmbeddingSet> {
-    // Generate agent summary if not provided
     const agentSummaryText = skill.agentSummary ?? await this.generateAgentSummary(skill);
-
-    // Embed
     const embedding = await this.embed(agentSummaryText);
-
-    return {
-      agentSummary: { text: agentSummaryText, embedding },
-    };
+    return { agentSummary: { text: agentSummaryText, embedding } };
   }
 
-  // ── Phase 3: Multi-vector (enabled after validation) ──
+  // Phase 3 only — multi-vector
   async processSkillMultiVector(skill: SkillInput): Promise<EmbeddingSet> {
     const base = await this.processSkill(skill);
 
-    const alternateTexts = await this.generateAlternateQueries(skill);
+    // Human-distilled: use user-provided alt queries directly (better quality than LLM inference)
+    const alternateTexts = skill.source === 'human-distilled' && skill.altQueries
+      ? skill.altQueries
+      : await this.generateAlternateQueries(skill);
 
-    // Batch embed all alternates in single API call
     const embedResult = await this.env.AI.run(this.env.EMBEDDING_MODEL as BaseAiTextEmbeddingModels, {
       text: alternateTexts,
     });
@@ -851,94 +875,40 @@ export class EmbedPipeline {
     return { ...base, alternates };
   }
 
-  // ── Content safety check ──
   async checkContentSafety(skill: SkillInput): Promise<boolean> {
     const textToCheck = `${skill.name} ${skill.description} ${skill.agentSummary ?? ''}`;
-    // Llama Guard classification via Workers AI
     const result = await this.env.AI.run(
       '@cf/meta/llama-guard-3-8b' as BaseAiTextClassificationModels,
       { text: textToCheck }
     );
-    // Llama Guard returns "safe" or "unsafe" with category
     return (result as any).response?.toLowerCase().startsWith('safe') ?? false;
   }
 
-  private async generateAgentSummary(skill: SkillInput): Promise<string> {
-    const response = await this.env.AI.run(this.env.LLM_MODEL as BaseAiTextGenerationModels, {
-      messages: [
-        {
-          role: 'system',
-          content: `Generate a concise search-optimized description of this tool/skill for AI agents.
-Focus on: what it does, what problems it solves, what inputs/outputs it has, when to use it.
-Start with "Use this tool when you need to..."
-2-3 sentences max. Return only the description.`,
-        },
-        {
-          role: 'user',
-          content: `Name: ${skill.name}\nDescription: ${skill.description}\nTags: ${skill.tags.join(', ')}\nCategory: ${skill.category}\nCapabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`,
-        },
-      ],
-    });
-    return (response as any).response;
-  }
-
-  private async generateAlternateQueries(skill: SkillInput): Promise<string[]> {
-    const response = await this.env.AI.run(this.env.LLM_MODEL as BaseAiTextGenerationModels, {
-      messages: [
-        { role: 'system', content: ALTERNATE_QUERY_PROMPT },
-        {
-          role: 'user',
-          content: `Name: ${skill.name}\nAgent summary: ${skill.agentSummary}\nCapabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}\nSchema: ${JSON.stringify(skill.schemaJson ?? {}).slice(0, 500)}`,
-        },
-      ],
-      max_tokens: 200,
-    });
-
-    try {
-      const parsed = JSON.parse((response as any).response);
-      return Array.isArray(parsed) ? parsed.slice(0, 5) : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private async embed(text: string): Promise<number[]> {
-    const result = await this.env.AI.run(this.env.EMBEDDING_MODEL as BaseAiTextEmbeddingModels, {
-      text: [text],
-    });
-    return (result as any).data[0];
-  }
+  private async generateAgentSummary(skill: SkillInput): Promise<string> { /* ... */ }
+  private async generateAlternateQueries(skill: SkillInput): Promise<string[]> { /* ... */ }
+  private async embed(text: string): Promise<number[]> { /* ... */ }
 }
-
-const ALTERNATE_QUERY_PROMPT = `You generate search queries that developers or AI agents would use to find this skill. Think about:
-
-1. DIRECT: How someone who knows exactly what they want would ask
-2. PROBLEM-BASED: How someone describing their problem (not the solution) would ask
-3. BUSINESS LANGUAGE: How a non-technical person or PM would describe the need
-4. ALTERNATE TERMINOLOGY: Different words for the same concept
-5. COMPOSITION: When this skill would be part of a larger workflow
-
-Return exactly 5 queries as a JSON array of strings. Each query 4-10 words. No explanations, just the JSON array.`;
 ```
 
 ### Full ingestion flow
 
 ```
-Skill arrives (sync worker / publish API / distillation)
+Skill arrives (sync worker / publish API / forge / human-distill)
   │
   ├─ 1. Generate agent_summary (LLM, ~500ms)
-  │     "Use this tool when you need to..."
   │
-  ├─ 2. Content safety check (Llama Guard, ~50ms)
-  │     If unsafe → mark skill, do not index
+  ├─ 2. Content safety check (Workers AI Llama Guard 3 8B, ~50ms)
+  │     If unsafe → mark skill content_safety_passed=false, do not index
+  │     (interim: pending Circle-IR native content safety support)
   │
-  ├─ 3. [Phase 3] Generate 5 alternate queries (LLM, ~300ms)
-  │     ["direct", "problem-based", "business", "alt terminology", "composition"]
+  ├─ 3. [Phase 3] Generate 5 alternate queries
+  │     Human-distilled: use user's description directly (skip LLM)
+  │     Others: LLM generation
   │
   ├─ 4. Embed all texts (Workers AI bge-small, ~30ms batch)
-  │     → 1 vector (Phase 1) or 6 vectors (Phase 3)
+  │     → 1 vector (Phase 1) or up to 6 vectors (Phase 3)
   │
-  ├─ 5. Atomic upsert: delete old embeddings, insert new (Neon, ~20ms)
+  ├─ 5. Atomic upsert: delete old embeddings, insert new
   │
   └─ 6. Cache TTL handles invalidation (60s)
 ```
@@ -947,7 +917,9 @@ Skill arrives (sync worker / publish API / distillation)
 
 ## 10. Sync Pipelines
 
-Sync workers keep the skill index fresh by polling upstream registries and normalizing their data into the `skills` table. Each adapter runs on a Cloudflare Cron Trigger and shares a common pipeline: fetch → normalize → upsert → enqueue for embedding + Cognium scan.
+Sync workers poll upstream registries and normalize into the `skills` table. Each adapter runs on a Cloudflare Cron Trigger.
+
+**v5.0 change:** Sync workers no longer set `trust_score` directly. They set `trust_score = 0.5` and `verification_tier = 'unverified'` on insert. Cognium owns all trust score updates after that.
 
 ### Common Infrastructure
 
@@ -962,30 +934,28 @@ export abstract class BaseSyncWorker {
 
   async run(): Promise<SyncResult> {
     let cursor: string | undefined;
-    let synced = 0;
-    let skipped = 0;
+    let synced = 0, skipped = 0;
 
     do {
       const batch = await this.fetchBatch(cursor);
 
       for (const raw of batch.skills) {
-        // Change detection: skip if source_hash unchanged
         const existing = await this.findBySourceUrl(raw.sourceUrl);
         const hash = sha256(JSON.stringify(raw));
         if (existing?.source_hash === hash) { skipped++; continue; }
 
-        // Normalize to unified schema
         const skill = this.normalize(raw);
         skill.source_hash = hash;
+        // v5.0: trust_score NOT set here — Cognium owns it
+        // skill arrives at default (0.5, 'unverified') until Cognium scans
 
-        // Upsert skill row
         await this.upsertSkill(skill);
-
-        // Enqueue for agent summary + embedding generation
         await this.env.EMBED_QUEUE.send({ skillId: skill.id, action: 'embed' });
-
-        // Enqueue for Cognium trust scoring
-        await this.env.COGNIUM_QUEUE.send({ skillId: skill.id, action: 'scan' });
+        await this.env.COGNIUM_QUEUE.send({
+          skillId: skill.id,
+          priority: 'normal',
+          timestamp: Date.now(),
+        });
 
         synced++;
       }
@@ -1000,7 +970,13 @@ export abstract class BaseSyncWorker {
 
   private async upsertSkill(skill: SkillUpsert): Promise<void> {
     await db.insert(skills)
-      .values(skill)
+      .values({
+        ...skill,
+        trustScore: 0.5,               // default until Cognium scans
+        verificationTier: 'unverified', // default until Cognium scans
+        status: 'published',           // searchable immediately at default trust
+        // trustBadge: set by normalize() — 'upstream' for mcp-registry/clawhub, null for github
+      })
       .onConflictDoUpdate({
         target: [skills.source, skills.sourceUrl],
         set: {
@@ -1011,6 +987,9 @@ export abstract class BaseSyncWorker {
           capabilitiesRequired: skill.capabilitiesRequired,
           sourceHash: skill.sourceHash,
           updatedAt: new Date(),
+          // NOTE: do NOT reset trust_score, status, or trust_badge on re-sync
+          // Cognium's values are authoritative once set
+          // trust_badge reflects provenance — set once at ingest, never changed
         },
       });
   }
@@ -1020,188 +999,85 @@ interface SkillUpsert {
   id?: string;
   name: string;
   slug: string;
+  version?: string;
   description: string;
   schemaJson?: Record<string, unknown>;
-  executionLayer: 'mcp-remote' | 'instructions' | 'worker' | 'container';
+  executionLayer: string;
   mcpUrl?: string;
   skillMd?: string;
   capabilitiesRequired?: string[];
   source: string;
   sourceUrl: string;
   sourceHash: string;
-  trustScore?: number;
 }
 ```
 
 ### 10.1 MCP Registry Sync
 
-The primary source. Polls the MCP Registry API for skills published as MCP servers.
-
 ```typescript
-// src/sync/mcp-registry.ts
-
 export class McpRegistrySync extends BaseSyncWorker {
   protected get sourceName() { return 'mcp-registry'; }
-
-  async fetchBatch(cursor?: string) {
-    const url = new URL('https://registry.mcp.run/api/skills');
-    if (cursor) url.searchParams.set('cursor', cursor);
-    url.searchParams.set('limit', '100');
-
-    const res = await fetch(url.toString(), {
-      headers: { 'Accept': 'application/json' },
-    });
-    const data = await res.json() as McpRegistryResponse;
-
-    return {
-      skills: data.items,
-      nextCursor: data.nextCursor ?? undefined,
-    };
-  }
 
   normalize(raw: McpRegistrySkill): SkillUpsert {
     return {
       name: raw.name,
       slug: slugify(raw.name),
       description: raw.description,
-      schemaJson: raw.tools?.[0]?.inputSchema,
       executionLayer: 'mcp-remote',
-      mcpUrl: raw.serverUrl,
-      capabilitiesRequired: raw.capabilities ?? [],
+      mcpUrl: raw.endpoint,
+      capabilitiesRequired: raw.requiredScopes ?? [],
       source: 'mcp-registry',
-      sourceUrl: raw.url,
-      sourceHash: '',             // set by base class
-      trustScore: 0.7,            // upstream registry default
+      sourceUrl: raw.registryUrl,
+      sourceHash: '',
+      trustBadge: 'upstream',   // mcp-registry skills carry upstream provenance badge
     };
   }
 }
 ```
-
-**Frequency:** Every 5 minutes. **Estimated lines:** ~150.
 
 ### 10.2 ClawHub Sync
 
-ClawHub hosts community-contributed skills in the OpenClaw pattern (SKILL.md + bins/ + scripts/). Some skills have VirusTotal flags — these are ingested but with `trust_score = 0.3`.
-
 ```typescript
-// src/sync/clawhub.ts
-
 export class ClawHubSync extends BaseSyncWorker {
   protected get sourceName() { return 'clawhub'; }
 
-  async fetchBatch(cursor?: string) {
-    const url = new URL('https://api.clawhub.io/v1/skills');
-    if (cursor) url.searchParams.set('after', cursor);
-    url.searchParams.set('limit', '100');
-
-    const res = await fetch(url.toString());
-    const data = await res.json() as ClawHubResponse;
-
-    return {
-      skills: data.skills,
-      nextCursor: data.skills.length === 100
-        ? data.skills[data.skills.length - 1].id
-        : undefined,
-    };
-  }
-
   normalize(raw: ClawHubSkill): SkillUpsert {
-    // ClawHub skills with VirusTotal flags get reduced trust
-    const hasVtFlags = raw.virustotal_flagged === true;
-
     return {
       name: raw.name,
       slug: slugify(raw.name),
-      description: raw.description ?? raw.skill_md_excerpt ?? '',
+      description: raw.description ?? '',
+      executionLayer: raw.hasCode ? 'worker' : 'instructions',
+      skillMd: raw.skillMd,
       schemaJson: raw.schema,
-      executionLayer: this.inferExecutionLayer(raw),
-      skillMd: raw.skill_md,
-      capabilitiesRequired: this.extractCapabilities(raw),
       source: 'clawhub',
-      sourceUrl: `https://clawhub.io/skills/${raw.slug}`,
+      sourceUrl: raw.pageUrl,
       sourceHash: '',
-      trustScore: hasVtFlags ? 0.3 : 0.6,
+      trustBadge: 'upstream',   // clawhub skills carry upstream provenance badge
     };
-  }
-
-  private inferExecutionLayer(raw: ClawHubSkill): SkillUpsert['executionLayer'] {
-    // If skill has only SKILL.md (instructions), it's Layer 1
-    if (raw.has_code === false && raw.skill_md) return 'instructions';
-    // If it has bins/ or heavy deps, it needs a container
-    if (raw.has_bins || raw.capabilities?.includes('browser')) return 'container';
-    // Default to worker (pure function)
-    return 'worker';
-  }
-
-  private extractCapabilities(raw: ClawHubSkill): string[] {
-    const caps: string[] = [];
-    if (raw.has_bins) caps.push('native-binaries');
-    if (raw.capabilities) caps.push(...raw.capabilities);
-    return caps;
   }
 }
 ```
 
-**Frequency:** Every 10 minutes. **Estimated lines:** ~200.
-
-**VirusTotal handling:** Of ~2,857 skills on ClawHub, 341 are flagged by VirusTotal. These are ingested (agents might still want them in adventurous mode) but with `trust_score = 0.3`. Cognium will do a deeper scan and adjust the score.
-
-### 10.3 GitHub / skills.sh Sync
-
-Polls GitHub for repositories tagged with skill metadata (topics: `mcp-skill`, `agent-skill`, or the skills.sh registry format).
+### 10.3 GitHub Sync
 
 ```typescript
-// src/sync/github.ts
-
 export class GitHubSync extends BaseSyncWorker {
   protected get sourceName() { return 'github'; }
-
-  async fetchBatch(cursor?: string) {
-    const query = 'topic:mcp-skill OR topic:agent-skill';
-    const url = new URL('https://api.github.com/search/repositories');
-    url.searchParams.set('q', query);
-    url.searchParams.set('sort', 'updated');
-    url.searchParams.set('per_page', '100');
-    if (cursor) url.searchParams.set('page', cursor);
-
-    const res = await fetch(url.toString(), {
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${this.env.GITHUB_TOKEN}`,
-      },
-    });
-    const data = await res.json() as GitHubSearchResponse;
-    const page = parseInt(cursor ?? '1');
-
-    return {
-      skills: data.items,
-      nextCursor: data.items.length === 100 ? String(page + 1) : undefined,
-    };
-  }
 
   normalize(raw: GitHubRepo): SkillUpsert {
     return {
       name: raw.name,
       slug: slugify(raw.full_name.replace('/', '-')),
       description: raw.description ?? '',
-      executionLayer: 'container',      // GitHub repos generally need clone + run
+      executionLayer: 'container',
       capabilitiesRequired: ['git'],
       source: 'github',
       sourceUrl: raw.html_url,
       sourceHash: '',
-      trustScore: 0.5,                  // unscanned GitHub default
     };
   }
 }
 ```
-
-**Frequency:** Every 15 minutes. **Estimated lines:** ~150.
-
-**Note:** GitHub rate limits apply (5,000 requests/hour authenticated). The sync worker uses conditional requests (`If-None-Match` / ETags) to minimize API calls. SKILL.md parsing (extracting schema, description) happens in the embedding queue consumer, not in the sync worker itself.
-
-### 10.4 Direct Publish (Internal)
-
-Not a sync worker — this is the internal API endpoint used by Forge (distilled/generated skills), Cognium (trust score updates), and manual uploads. Covered in Section 11.
 
 ### Cron Configuration
 
@@ -1212,279 +1088,294 @@ crons = [
   "*/5 * * * *",    # sync-mcp-registry (every 5 min)
   "*/10 * * * *",   # sync-clawhub (every 10 min)
   "*/15 * * * *",   # sync-github (every 15 min)
+  "0 3 * * 0",      # weekly prune cron (Sunday 3am)
 ]
-```
-
-```typescript
-// src/index.ts — scheduled handler
-export default {
-  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    const minute = new Date(event.scheduledTime).getMinutes();
-
-    // Every 5 minutes: MCP Registry
-    if (minute % 5 === 0) {
-      ctx.waitUntil(new McpRegistrySync(env).run());
-    }
-    // Every 10 minutes: ClawHub
-    if (minute % 10 === 0) {
-      ctx.waitUntil(new ClawHubSync(env).run());
-    }
-    // Every 15 minutes: GitHub
-    if (minute % 15 === 0) {
-      ctx.waitUntil(new GitHubSync(env).run());
-    }
-  },
-};
 ```
 
 ### Sync Summary
 
-| Source | Frequency | Est. Skills | Trust Default | Lines |
-|---|---|---|---|---|
-| MCP Registry | 5 min | ~5,000 | 0.7 | ~150 |
-| ClawHub | 10 min | ~3,000 (341 flagged) | 0.3–0.6 | ~200 |
-| GitHub / skills.sh | 15 min | ~2,000 | 0.5 | ~150 |
-| Direct publish | Immediate | — | varies | ~100 (in Publish API) |
-| Base sync class | shared | — | — | ~150 |
-| **Total sync code** | — | **~10,000** | — | **~750** |
+| Source | Frequency | Trust Default | Notes |
+|---|---|---|---|
+| MCP Registry | 5 min | 0.5 (Cognium updates) | `mcp-remote` execution layer |
+| ClawHub | 10 min | 0.5 (Cognium updates) | ~3,000 skills |
+| GitHub | 15 min | 0.5 (Cognium updates) | `container` layer |
+| Direct publish | Immediate | 0.5 (Cognium updates) | Forge / manual |
+| Human-distilled | Immediate | min(sub-skills)×0.90 | Forge Mode 3 |
 
 ---
 
 ## 11. Publish API
 
-The Publish API is the write path for skills entering Runics from internal sources: Forge (generated/distilled), Cognium (trust score updates), manual uploads, and tenant-specific skill registration.
+The Publish API is the write path for Forge (generated/distilled/human-distilled), Cognium (trust + status updates), and manual uploads.
 
 ### Endpoints
 
 ```typescript
-// POST /v1/skills — Publish a new skill
-// PUT  /v1/skills/:id — Update existing skill
-// PUT  /v1/skills/:id/trust — Update trust score only (Cognium)
-// DELETE /v1/skills/:id — Remove skill from registry
+POST   /v1/skills                    // publish a new skill
+PUT    /v1/skills/:id                // update existing skill (draft only)
+// (no PUT /v1/skills/:id/trust — Cognium Client writes trust directly to DB)
+PATCH  /v1/skills/:id/status         // owner-initiated status changes (deprecate/restore)
+DELETE /v1/skills/:id                // remove skill (draft only; published = deprecate)
+```
 
+### POST /v1/skills
+
+```typescript
 app.post('/v1/skills', zValidator('json', publishSkillSchema), async (c) => {
   const input = c.req.valid('json');
 
-  // 1. Validate schema
-  const skill = publishSkillSchema.parse(input);
-
-  // 2. Upload bundle to R2 (if provided)
   let r2BundleKey: string | undefined;
-  if (skill.bundle) {
-    r2BundleKey = `skills/${skill.slug}/${skill.version}/bundle.tar.gz`;
-    await c.env.R2_BUCKET.put(r2BundleKey, skill.bundle);
+  if (input.bundle) {
+    r2BundleKey = `skills/${input.slug}/${input.version ?? '1.0.0'}/bundle.tar.gz`;
+    await c.env.R2_BUCKET.put(r2BundleKey, input.bundle);
   }
 
-  // 3. Insert skill row
   const [inserted] = await db.insert(skills).values({
-    name: skill.name,
-    slug: skill.slug,
-    version: skill.version ?? '1.0.0',
-    description: skill.description,
-    schemaJson: skill.schemaJson,
-    executionLayer: skill.executionLayer,
-    mcpUrl: skill.mcpUrl,
-    skillMd: skill.skillMd,
-    capabilitiesRequired: skill.capabilitiesRequired,
-    source: skill.source ?? 'manual',
-    sourceUrl: skill.sourceUrl,
-    tenantId: skill.tenantId ?? null,
-    trustScore: skill.trustScore ?? 0.5,
+    name: input.name,
+    slug: input.slug,
+    version: input.version ?? '1.0.0',
+    description: input.description,
+    schemaJson: input.schemaJson,
+    executionLayer: input.executionLayer,
+    mcpUrl: input.mcpUrl,
+    skillMd: input.skillMd,
+    capabilitiesRequired: input.capabilitiesRequired,
+    source: input.source ?? 'manual',
+    sourceUrl: input.sourceUrl,
+    tenantId: input.tenantId ?? null,
     r2BundleKey,
+
+    // v5.0: skill type and lineage
+    skillType: input.skillType ?? 'atomic',
+    compositionSkillIds: input.compositionSkillIds,
+    forkedFrom: input.forkedFrom,
+    forkedBy: input.forkedBy,
+    forkChanges: input.forkChanges,
+    humanDistilledBy: input.humanDistilledBy,
+    humanDistilledAt: input.humanDistilledBy ? new Date() : undefined,
+    trustBadge: input.trustBadge,
+
+    // v5.0: trust starts at default — Cognium owns updates
+    trustScore: input.trustScore ?? 0.5,
+    verificationTier: 'unverified',
+    status: 'published',
   }).returning();
 
-  // 4. Enqueue for embedding generation (async)
   await c.env.EMBED_QUEUE.send({ skillId: inserted.id, action: 'embed' });
 
-  // 5. Enqueue for Cognium scanning (async, unless source is 'cognium')
-  if (skill.source !== 'cognium') {
-    await c.env.COGNIUM_QUEUE.send({ skillId: inserted.id, action: 'scan' });
-  }
+  // Enqueue for Cognium (high priority for forge/human-distilled)
+  await c.env.COGNIUM_QUEUE.send({
+    skillId: inserted.id,
+    priority: ['forge', 'human-distilled'].includes(input.source ?? '') ? 'high' : 'normal',
+    timestamp: Date.now(),
+  });
 
-  return c.json({ id: inserted.id, slug: inserted.slug, status: 'published' }, 201);
+  return c.json({ id: inserted.id, slug: inserted.slug, version: inserted.version }, 201);
 });
 ```
 
-### Trust Score Update (Cognium Callback)
+### Trust Update — Internal (no HTTP callback)
+
+Trust scores, status, and findings are applied directly to the DB by the Cognium poll consumer via `applyScanReport()` in `src/cognium/scan-report-handler.ts`. There is no `PUT /v1/skills/:id/trust` HTTP endpoint — Cognium does not push to Runics; Runics pulls from Circle-IR.
+
+
+### PATCH /v1/skills/:id/status — Owner-Initiated Status Changes
+
+Owner can only deprecate or restore to published. Cognium controls vulnerable/revoked.
 
 ```typescript
-// PUT /v1/skills/:id/trust — called by Cognium after scan
-app.put('/v1/skills/:id/trust', zValidator('json', trustUpdateSchema), async (c) => {
+app.patch('/v1/skills/:id/status', async (c) => {
   const skillId = c.req.param('id');
-  const { trustScore, cogniumReport } = c.req.valid('json');
+  const { status, reason } = await c.req.json();
 
-  await db.update(skills)
-    .set({
-      trustScore,
-      cogniumScannedAt: new Date(),
-      contentSafetyPassed: cogniumReport.contentSafe,
-      updatedAt: new Date(),
-    })
-    .where(eq(skills.id, skillId));
+  // Only owners can deprecate/restore. Cognium controls vulnerable/revoked.
+  if (!['deprecated', 'published'].includes(status)) {
+    return c.json({ error: 'owners can only set deprecated or published' }, 400);
+  }
 
-  // Invalidate cached search results that might include this skill
-  // (KV TTL handles this — 60s max staleness)
+  await db.update(skills).set({
+    status,
+    deprecatedAt: status === 'deprecated' ? new Date() : null,
+    deprecatedReason: status === 'deprecated' ? reason : null,
+    updatedAt: new Date(),
+  }).where(eq(skills.id, skillId));
 
-  return c.json({ id: skillId, trustScore, status: 'updated' });
+  return c.json({ id: skillId, status });
 });
 ```
 
 ### Validation Schema
 
 ```typescript
-// src/publish/schema.ts
-
 export const publishSkillSchema = z.object({
   name: z.string().min(1).max(200),
   slug: z.string().regex(/^[a-z0-9-]+$/),
   version: z.string().optional(),
   description: z.string().min(10).max(2000),
   schemaJson: z.record(z.unknown()).optional(),
-  executionLayer: z.enum(['mcp-remote', 'instructions', 'worker', 'container']),
+  executionLayer: z.enum(['mcp-remote', 'instructions', 'worker', 'container', 'composite']),
   mcpUrl: z.string().url().optional(),
   skillMd: z.string().optional(),
   capabilitiesRequired: z.array(z.string()).optional(),
-  source: z.enum(['manual', 'forge', 'cognium']).optional(),
+  source: z.enum(['manual', 'forge', 'human-distilled', 'mcp-registry', 'clawhub', 'github']).optional(),
   sourceUrl: z.string().optional(),
   tenantId: z.string().uuid().optional(),
+
+  // v5.0: new fields
+  skillType: z.enum(['atomic', 'auto-composite', 'human-composite', 'forked']).optional(),
+  compositionSkillIds: z.array(z.string().uuid()).optional(),
+  forkedFrom: z.string().optional(),       // 'slug@version'
+  forkedBy: z.string().optional(),
+  forkChanges: z.array(z.string()).optional(),
+  humanDistilledBy: z.string().optional(),
+  trustBadge: z.enum(['human-verified', 'auto-distilled', 'upstream']).optional(),
   trustScore: z.number().min(0).max(1).optional(),
+  altQueries: z.array(z.string()).optional(), // provided by Forge Mode 3
   bundle: z.instanceof(ArrayBuffer).optional(),
 });
-
-export const trustUpdateSchema = z.object({
-  trustScore: z.number().min(0).max(1),
-  cogniumReport: z.object({
-    contentSafe: z.boolean(),
-    findings: z.array(z.object({
-      tool: z.string(),
-      severity: z.enum(['low', 'medium', 'high', 'critical']),
-      message: z.string(),
-    })),
-    scannedAt: z.string().datetime(),
-  }),
-});
 ```
-
-### Publish Flow
-
-```
-Forge / Manual / Tenant upload
-    │
-    ├─ 1. Validate input (Zod schema)
-    ├─ 2. Upload bundle to R2 (if code skill)
-    ├─ 3. Insert/upsert skill row in Neon
-    ├─ 4. Enqueue → EMBED_QUEUE (agent summary + embeddings)
-    ├─ 5. Enqueue → COGNIUM_QUEUE (trust scoring)
-    └─ 6. Return skill ID + slug
-
-Later (async):
-    ├─ EMBED_QUEUE consumer: generate agent_summary, alternate queries, embeddings
-    └─ COGNIUM_QUEUE consumer: boot container, scan, update trust_score
-```
-
-**Estimated lines:** ~100 (handler + schema).
 
 ---
 
 ## 12. Query Pipeline
 
-### The complete findSkill flow
+### Status-Aware Search Query (PgVectorProvider)
+
+The core SQL query is now fully status-aware with version ranking:
 
 ```typescript
-// src/intelligence/confidence-gate.ts
+// src/providers/pgvector-provider.ts
 
-export class ConfidenceGate {
-  constructor(
-    private env: Env,
-    private provider: SearchProvider,
-    private logger: SearchLogger
-  ) {}
-
-  async findSkill(
+export class PgVectorProvider implements SearchProvider {
+  async search(
     query: string,
+    embedding: number[],
     filters: SearchFilters,
-    options?: SearchOptions & { appetite?: Appetite }
-  ): Promise<FindSkillResponse> {
+    options?: SearchOptions,
+  ): Promise<SearchResult> {
+    const {
+      tenantId,
+      minTrustScore = 0.5,
+      allowVulnerable = true,
+      statusFilter,
+    } = filters;
 
-    // Apply trust threshold from appetite
-    if (options?.appetite) {
-      filters.minTrustScore = appetiteToTrustThreshold(options.appetite);
-    }
-    filters.contentSafetyRequired ??= true;
+    // Build status exclusion list
+    const alwaysExclude = ['revoked', 'draft', 'degraded'];
+    const excludeStatuses = allowVulnerable
+      ? alwaysExclude
+      : [...alwaysExclude, 'vulnerable', 'contains-vulnerable'];
 
-    // 1. Embed query
-    const embedding = await this.embed(query);
+    // Full text search for keyword hits
+    const tsQuery = plainto_tsquery(query);
 
-    // 2. Provider search (vector + full-text + fusion)
-    const result = await this.provider.search(query, embedding, filters, options);
+    const rows = await db.execute(sql`
+      WITH vector_search AS (
+        SELECT DISTINCT ON (s.slug)
+          se.skill_id,
+          s.slug,
+          s.version,
+          1 - (se.embedding <=> ${embedding}::vector) AS vector_score,
+          ts_rank(se.tsv, to_tsquery('english', ${query})) AS ft_score,
+          se.source AS match_source,
+          se.source_text AS match_text,
 
-    // 3. Route based on confidence tier
-    switch (result.confidence.tier) {
-      case 1:
-        return this.buildResponse(query, result, {
-          enriched: false,
-          confidence: 'high',
-        });
+          -- Trust × usage rank (best version per slug)
+          (s.trust_score * 0.7 + LEAST(s.run_count::float / 100, 0.3)) AS version_rank,
 
-      case 2:
-        // Return results now. Enrichment available async.
-        const enrichmentPromise = this.asyncEnrich(query, result);
-        return this.buildResponse(query, result, {
-          enriched: false,
-          confidence: 'medium',
-          enrichmentPromise,
-        });
+          -- Pass-through fields for ScoredSkill
+          s.trust_score,
+          s.verification_tier,
+          s.trust_badge,
+          s.status,
+          s.revoked_reason,
+          s.remediation_message,
+          s.remediation_url,
+          s.skill_type,
+          s.forked_from,
+          s.run_count,
+          s.last_run_at
 
-      case 3:
-        // Full LLM deep search
-        const deepResult = await this.deepSearch(query, embedding, filters, result);
-        return this.buildResponse(query, deepResult.result, {
-          enriched: true,
-          confidence: deepResult.noMatch ? 'no_match' : 'low_enriched',
-          composition: deepResult.composition,
-          searchTrace: deepResult.trace,
-          generationHints: deepResult.generationHints,
-        });
-    }
+        FROM skill_embeddings se
+        JOIN skills s ON se.skill_id = s.id
+
+        WHERE
+          -- Status filter (always)
+          s.status NOT IN (${sql.join(excludeStatuses.map(s => sql`${s}`), sql`,`)})
+
+          -- Content safety (always)
+          AND (s.content_safety_passed IS NOT FALSE)
+
+          -- Trust threshold (appetite)
+          AND s.trust_score >= ${minTrustScore}
+
+          -- Tenant scope
+          AND (s.tenant_id IS NULL OR s.tenant_id = ${tenantId})
+
+          -- Optional: pin to specific slug
+          ${options?.slug ? sql`AND s.slug = ${options.slug}` : sql``}
+
+          -- Optional: pin to specific version
+          ${options?.version ? sql`AND s.version = ${options.version}` : sql``}
+
+        ORDER BY
+          s.slug,
+          version_rank DESC,     -- best version per slug first
+          vector_score DESC      -- then best embedding match
+      )
+      SELECT
+        skill_id,
+        slug,
+        version,
+        vector_score,
+        ft_score,
+        -- Score fusion: vector 70%, full-text 30%
+        (vector_score * ${VECTOR_WEIGHT} + COALESCE(ft_score, 0) * ${FULLTEXT_WEIGHT}) AS fused_score,
+        match_source,
+        match_text,
+        trust_score,
+        verification_tier,
+        trust_badge,
+        status,
+        revoked_reason,
+        remediation_message,
+        remediation_url,
+        skill_type,
+        forked_from,
+        run_count,
+        last_run_at
+      FROM vector_search
+      ORDER BY fused_score DESC
+      LIMIT ${options?.limit ?? 10}
+    `);
+
+    return this.buildSearchResult(rows, embedding);
   }
-
-  // ... (deep search, async enrich, composition detection implementations)
 }
 ```
 
-### Response shape (agent-friendly)
+### FindSkill Response
 
 ```typescript
-// src/types.ts
-
 export interface FindSkillResponse {
   results: SkillResult[];
   confidence: 'high' | 'medium' | 'low_enriched' | 'no_match';
   enriched: boolean;
-
-  // Tier 2: available if caller wants to await better results
   enrichmentPromise?: Promise<FindSkillResponse>;
-
-  // Tier 3: composition detection
   composition?: CompositionResult;
-
-  // Tier 3: debug/analytics trace
   searchTrace?: {
     originalQuery: string;
     alternateQueries?: string[];
     terminologyMap?: Record<string, string>;
     reasoning?: string;
   };
-
-  // Tier 3 no-match: hints for skill generation
   generationHints?: {
     intent: string;
     capabilities: string[];
     complexity: string;
   };
-
   meta: {
-    matchSources: string[];     // which embedding types matched top 3
+    matchSources: string[];
     latencyMs: number;
     tier: 1 | 2 | 3;
     cacheHit: boolean;
@@ -1496,13 +1387,40 @@ export interface SkillResult {
   id: string;
   name: string;
   slug: string;
+  version: string;
   agentSummary: string;
+
+  // Trust
   trustScore: number;
+  verificationTier: 'unverified' | 'scanned' | 'verified' | 'certified';
+  trustBadge: 'human-verified' | 'auto-distilled' | 'upstream' | null;
+
+  // Status
+  status: SkillStatus;
+  revokedReason?: string;
+  remediationMessage?: string;
+  remediationUrl?: string;
+
+  // Execution
   executionLayer: string;
   capabilitiesRequired: string[];
+
+  // Composition
+  skillType: 'atomic' | 'auto-composite' | 'human-composite' | 'forked';
+  forkedFrom?: string;
+
+  // Usage
+  runCount: number;
+  lastRunAt?: string;
+
+  // Search signals
   score: number;
   matchSource: string;
   matchText?: string;
+
+  // Deprecation auto-migration
+  replacementSkillId?: string;
+  replacementSlug?: string;
 }
 ```
 
@@ -1515,162 +1433,78 @@ findSkill("make sure we're not shipping GPL code in proprietary product")
   │
   ├─ Embed query (Workers AI bge-small, ~5ms)
   │
-  ├─ Provider.search() against skill_embeddings (Neon/Hyperdrive, ~30ms)
-  │   Searches all vectors (100K skills × N embeddings each)
-  │   Returns best match per skill (DISTINCT ON skill_id)
-  │   Includes match_source: which embedding type matched
-  │   Filters: trust_score >= threshold, content_safety_passed = true
+  ├─ Provider.search() (Neon/Hyperdrive, ~30ms)
+  │   Status filter: exclude revoked/draft/degraded
+  │   Appetite (balanced): allowVulnerable = true
+  │   Trust threshold: >= 0.50
+  │   Version ranking: trust×0.7 + usage×0.3 per slug
+  │   DISTINCT ON slug: best version per skill surfaced
+  │   Includes match_source, status, trustBadge
   │
-  ├─ Score-based fusion: vector (0.7) + full-text (0.3)
+  ├─ Score fusion: vector (0.7) + full-text (0.3)
   │
   ├─ Confidence assessment:
   │   Top: 0.88, Gap: 0.12, Cluster: 3 above 0.80
   │   → TIER 1: HIGH CONFIDENCE
   │
-  ├─ Return immediately (~50ms total):
-  │   {
-  │     results: [
-  │       { name: "cargo-deny", score: 0.88,
-  │         matchSource: "alt_query_2",
-  │         matchText: "ensure open source compliance rust project" },
-  │       { name: "license-checker", score: 0.84,
-  │         matchSource: "alt_query_0",
-  │         matchText: "check open source license violations" }
-  │     ],
-  │     confidence: "high",
-  │     enriched: false,
-  │     meta: { tier: 1, llmInvoked: false, latencyMs: 48 }
-  │   }
-  │
-  └─ Cache result (KV, TTL: 60s)
+  └─ Return ~50ms:
+      {
+        results: [
+          { slug: "cargo-deny", version: "1.0.0", score: 0.88,
+            trustScore: 0.92, verificationTier: "verified",
+            trustBadge: "upstream", status: "published",
+            matchSource: "alt_query_2" }
+        ],
+        confidence: "high",
+        meta: { tier: 1, llmInvoked: false, latencyMs: 48 }
+      }
 ```
 
 ---
 
 ## 13. Monitoring & Quality Learning
 
-Three components that work together to make search improve over time.
-
-### 11.1 Search Logger
+### Search Logger
 
 Every search event logged to `search_logs`. Non-blocking via `waitUntil()`.
 
-```typescript
-// src/monitoring/search-logger.ts
-
-export class SearchLogger {
-  constructor(private pool: Pool) {}
-
-  async log(event: SearchLogEntry): Promise<string> {
-    // Insert into search_logs, return event ID for feedback correlation
-    // Includes: query, tier, scores, latency, match_source, cost estimates,
-    //           alternate_queries_used (Tier 3), composition_detected, generation_hint_returned
-    const { rows } = await this.pool.query(
-      `INSERT INTO search_logs (...) VALUES (...) RETURNING id`,
-      [/* all fields */]
-    );
-    return rows[0].id;
-  }
-}
-```
-
-### 11.2 Quality Tracker
-
-Records feedback and exposes analytics for quality learning.
+### Quality Tracker
 
 ```typescript
-// src/monitoring/quality-tracker.ts
-
 export class QualityTracker {
-  constructor(private pool: Pool) {}
-
-  // Record implicit/explicit feedback
+  // Record feedback
   async recordFeedback(feedback: QualityFeedback): Promise<void>;
 
-  // ── Analytics queries ──
-
-  // Tier distribution over time — validates confidence thresholds
+  // Analytics
   async getTierDistribution(hours: number): Promise<TierDistribution>;
-
-  // Which embedding types drive actual usage (not just high scores)
   async getMatchSourceStats(hours: number): Promise<MatchSourceStats[]>;
-
-  // Latency percentiles by tier
   async getLatencyPercentiles(hours: number): Promise<LatencyPercentiles>;
-
-  // Cost breakdown by tier and component
   async getCostBreakdown(hours: number): Promise<CostBreakdown>;
-
-  // Queries where users dismissed all results — candidates for:
-  //   1. New skill generation
-  //   2. Alternate query prompt tuning
-  //   3. New embedding category
   async getFailedQueries(hours: number, limit: number): Promise<FailedQuery[]>;
-
-  // Queries that landed in Tier 3 — patterns here suggest
-  // new alternate query categories for Layer A
   async getTier3Patterns(hours: number): Promise<Tier3Pattern[]>;
 
-  // Refresh materialized view (call from cron trigger)
+  // v5.0: status-related analytics
+  async getRevokedSkillImpact(): Promise<{ revokedCount: number; affectedSearches30d: number }>;
+  async getVulnerableSkillUsage(): Promise<{ vulnerableCount: number; appearedInSearch30d: number }>;
   async refreshSummary(): Promise<void>;
 }
 ```
 
-### 11.3 Performance Monitor
-
-Per-request structured timing for Logpush / tail workers.
-
-```typescript
-// src/monitoring/perf-monitor.ts
-
-export class PerfMonitor {
-  private marks: Map<string, number> = new Map();
-  private startTime = Date.now();
-
-  mark(label: string): void {
-    this.marks.set(label, Date.now());
-  }
-
-  since(label: string): number {
-    return Date.now() - (this.marks.get(label) ?? this.startTime);
-  }
-
-  toStructuredLog(extra?: Record<string, unknown>): Record<string, unknown> {
-    return {
-      _type: 'search_perf',
-      totalMs: Date.now() - this.startTime,
-      marks: Object.fromEntries(this.marks),
-      ...extra,
-    };
-  }
-}
-```
-
-### 11.4 Quality Learning Loop
-
-The monitoring system feeds back into architecture decisions:
+### Quality Learning Loop
 
 ```
 search_logs + quality_feedback
   │
-  ├─ match_source stats → Which alt_query types pull their weight?
-  │   If alt_query_4 consistently underperforms → drop it or retune prompt
-  │   If LLM fallback patterns cluster → add new embedding category
-  │
+  ├─ match_source stats → Which alt_query types drive usage?
   ├─ Tier distribution → Are confidence thresholds correct?
-  │   If tier 3 > 15% → thresholds too high, or Layer A not effective
-  │   If tier 1 > 85% and bad feedback high → thresholds too low
+  ├─ Failed queries → Vocabulary gaps → new alt query categories
+  ├─ Cost breakdown → LLM spend within budget?
+  ├─ Latency percentiles → SLOs met?
   │
-  ├─ Failed queries → What vocabulary gaps remain?
-  │   Common patterns → new alternate query strategy
-  │   Truly novel → skill generation pipeline
-  │
-  ├─ Cost breakdown → Is LLM spend within budget?
-  │   If tier 3 cost escalates → raise thresholds, improve caching
-  │
-  └─ Latency percentiles → Are we meeting SLOs?
-      p50 should be < 60ms (Tier 1 dominates)
-      p99 should be < 1000ms (Tier 3 with LLM)
+  └─ v5.0 additions:
+      ├─ Revoked skill impact → How many searches were disrupted?
+      │   (helps prioritize fix speed)
+      └─ Vulnerable skill usage → Are users knowingly using flagged skills?
 ```
 
 ---
@@ -1678,69 +1512,74 @@ search_logs + quality_feedback
 ## 14. API Surface
 
 ```typescript
-// src/index.ts — Hono router
-
 // ── Search ──
-POST   /v1/search                      // findSkill — the main endpoint
+POST   /v1/search                       // findSkill — main endpoint
 POST   /v1/search/feedback              // record quality feedback
 
 // ── Publish ──
 POST   /v1/skills                       // publish a new skill
-PUT    /v1/skills/:id                   // update existing skill
-PUT    /v1/skills/:id/trust             // update trust score (Cognium callback)
-DELETE /v1/skills/:id                   // remove skill from registry
+PUT    /v1/skills/:id                   // update skill (draft only)
+// (no PUT /v1/skills/:id/trust — Cognium poll consumer writes via applyScanReport())
+PATCH  /v1/skills/:id/status            // owner: deprecate / restore to published
+DELETE /v1/skills/:id                   // remove (draft only; published = deprecate)
+
+// ── Versions ──
+GET    /v1/skills/:slug/versions        // all versions of a skill slug
+GET    /v1/skills/:slug/:version        // specific version
 
 // ── Composition ──
-POST   /v1/skills/:id/fork              // fork a skill or composition → returns new draft
+POST   /v1/skills/:id/fork              // fork → new version, trust resets
 POST   /v1/skills/:id/copy              // shallow copy (no lineage tracking)
-POST   /v1/skills/:id/extend            // add steps to an existing composition
-POST   /v1/compositions                 // create a new named composition from skill list
+POST   /v1/skills/:id/extend            // add steps to existing composition
+POST   /v1/compositions                 // create named composition from skill list
 GET    /v1/compositions/:id             // get composition with steps
 PUT    /v1/compositions/:id/steps       // replace step list
 POST   /v1/compositions/:id/publish     // publish a draft composition
 
 // ── Lineage ──
 GET    /v1/skills/:id/lineage           // full fork ancestry tree
-GET    /v1/skills/:id/forks             // direct forks of this skill
+GET    /v1/skills/:id/forks             // direct forks
 GET    /v1/skills/:id/dependents        // compositions that include this skill
 
-// ── Social (human only — agent actions never touch these) ──
-POST   /v1/skills/:id/star              // star a skill (human)
-DELETE /v1/skills/:id/star              // unstar
-GET    /v1/skills/:id/stars             // star count + did current user star
+// ── Social (human only) ──
+POST   /v1/skills/:id/star
+DELETE /v1/skills/:id/star
+GET    /v1/skills/:id/stars
 
-// ── Agent Signals (agent runtime → Runics) ──
-POST   /v1/invocations                  // record a skill invocation (bulk-friendly)
+// ── Agent Signals ──
+POST   /v1/invocations                  // record skill invocations (bulk)
 GET    /v1/skills/:id/cooccurrence      // top skills used alongside this one
 
 // ── Leaderboards ──
-GET    /v1/leaderboards/human           // top skills by human engagement
-GET    /v1/leaderboards/agents          // top skills by agent invocation/composition
-GET    /v1/leaderboards/trending        // rising by weekly_agent_invocation_count
-GET    /v1/leaderboards/most-forked     // human fork count only
-GET    /v1/leaderboards/most-composed   // composition_inclusion_count
+GET    /v1/leaderboards/human
+GET    /v1/leaderboards/agents
+GET    /v1/leaderboards/trending
+GET    /v1/leaderboards/most-forked
+GET    /v1/leaderboards/most-composed
 
 // ── Authors ──
-GET    /v1/authors/:handle              // author profile + stats
-GET    /v1/authors/:handle/skills       // all published skills/compositions by author
+GET    /v1/authors/:handle
+GET    /v1/authors/:handle/skills
 
 // ── Ingestion (internal) ──
-POST   /v1/skills/:skillId/index        // re-index a skill (single or multi-vector)
+POST   /v1/skills/:skillId/index        // re-index a skill
 
 // ── Analytics (internal/admin) ──
-GET    /v1/analytics/tiers              // tier distribution
-GET    /v1/analytics/match-sources      // which embedding types drive usage
-GET    /v1/analytics/latency            // latency percentiles
-GET    /v1/analytics/cost               // cost breakdown
-GET    /v1/analytics/failed-queries     // queries with no positive feedback
-GET    /v1/analytics/tier3-patterns     // common tier 3 query patterns
+GET    /v1/analytics/tiers
+GET    /v1/analytics/match-sources
+GET    /v1/analytics/latency
+GET    /v1/analytics/cost
+GET    /v1/analytics/failed-queries
+GET    /v1/analytics/tier3-patterns
+GET    /v1/analytics/revoked-impact     // v5.0
+GET    /v1/analytics/vulnerable-usage   // v5.0
 
 // ── Eval ──
-POST   /v1/eval/run                     // run eval suite, return metrics
-GET    /v1/eval/results/:runId          // get eval run results
+POST   /v1/eval/run
+GET    /v1/eval/results/:runId
 
 // ── Health ──
-GET    /health                          // db connectivity + latency
+GET    /health
 ```
 
 ### Search request/response
@@ -1750,13 +1589,14 @@ GET    /health                          // db connectivity + latency
 {
   "query": "make sure we're not shipping GPL code in proprietary product",
   "tenantId": "tenant-123",
-  "appetite": "balanced",            // optional, default "balanced"
-  "tags": ["rust"],                  // optional filter
-  "category": "security",           // optional filter
-  "limit": 10                        // optional, default 10
+  "appetite": "balanced",    // optional, default "balanced"
+  "tags": ["rust"],
+  "category": "security",
+  "limit": 10,
+  "version": "1.0.0"         // optional: pin to specific version
 }
 
-// Response: FindSkillResponse (see Section 12)
+// Response: FindSkillResponse
 ```
 
 ---
@@ -1767,23 +1607,22 @@ GET    /health                          // db connectivity + latency
 // src/cache/kv-cache.ts
 
 export class SearchCache {
-  constructor(private kv: KVNamespace, private ttlSeconds: number) {}
-
-  // Key: SHA-256 of normalized (tenantId + query + appetite)
+  // Key: SHA-256 of normalized (tenantId + query + appetite + allowVulnerable)
   // Value: serialized FindSkillResponse
 
   async get(query: string, tenantId: string, appetite: string): Promise<FindSkillResponse | null>;
   async set(query: string, tenantId: string, appetite: string, result: FindSkillResponse): Promise<void>;
+
+  // v5.0: invalidate when a skill's status changes
+  // Called by trust update endpoint after revocation
+  async invalidateBySlug(slug: string): Promise<void>;
 }
 ```
 
 **TTL strategy:**
-- Tier 1 results: 60s (stable, high confidence)
-- Tier 2/3 results: 30s (may improve as new skills arrive)
-- Cache invalidation: rely on TTL. 60s staleness is acceptable.
-- Future: tenant version counter in KV for instant invalidation on skill publish
-
-**Why not prefix-delete:** KV doesn't support prefix delete. TTL-based expiry is fine for V1. If staleness becomes a problem, add a version counter to the cache key and bump it on skill publish.
+- Tier 1 results: 60s
+- Tier 2/3 results: 30s
+- **v5.0: Status changes (revoke/flag) invalidate cache for affected slug immediately**. KV doesn't support prefix-delete, so maintain a `revoked_slugs` KV key (set) updated on revoke; cache reads check this list first.
 
 ---
 
@@ -1797,11 +1636,10 @@ export class SearchCache {
 | Embeddings | Workers AI bge-small-en-v1.5 (384 dim) | Query + skill embedding |
 | Reranker | Workers AI bge-reranker-base | Cross-encoder reranking (Phase 4) |
 | LLM | Workers AI Llama 3.3 70B Instruct FP8 | Agent summary, alt queries, deep search |
-| Content safety | Workers AI Llama Guard 3 8B | Skill content classification |
+| Content safety | Workers AI Llama Guard 3 8B | Ingest-time check (interim; pending Circle-IR support) |
 | API layer | Cloudflare Workers + Hono | Request handling |
 | Connection pool | Hyperdrive | Postgres connection pooling |
 | Cache | Cloudflare KV (60s TTL) | Query result caching |
-| Analytics | Langfuse (Sprint 6) | Search quality dashboards |
 
 ### Monthly cost (100K skills, 10K queries/day)
 
@@ -1816,10 +1654,10 @@ export class SearchCache {
 
 | Tier | Daily queries | Per-query cost | Daily cost |
 |---|---|---|---|
-| Tier 1 (70%) | 7,000 | $0.0000004 (embed only) | $0.003 |
-| Tier 2 (18%) | 1,800 | $0.0001 (embed + async LLM) | $0.18 |
-| Tier 3 (9%) | 900 | $0.0003 (embed + deep search) | $0.27 |
-| No match (3%) | 300 | $0.0005 (deep search + suggest) | $0.15 |
+| Tier 1 (70%) | 7,000 | ~$0.0000004 | ~$0.003 |
+| Tier 2 (18%) | 1,800 | ~$0.0001 | ~$0.18 |
+| Tier 3 (9%) | 900 | ~$0.0003 | ~$0.27 |
+| No match (3%) | 300 | ~$0.0005 | ~$0.15 |
 | **Daily total** | | | **~$0.60** |
 
 ### Storage
@@ -1827,7 +1665,7 @@ export class SearchCache {
 ```
 Phase 1:  100K skills × 1 embedding  × 384d × 4B = ~150MB + HNSW ~300MB
 Phase 3:  100K skills × 6 embeddings × 384d × 4B = ~920MB + HNSW ~1.8GB
-Both well within Neon Pro 10GB limit.
+Both within Neon Pro 10GB limit.
 ```
 
 ---
@@ -1836,98 +1674,77 @@ Both well within Neon Pro 10GB limit.
 
 ### Phase 1: Foundation + Eval (Week 1)
 
-**Deliverable:** Working single-vector search endpoint + benchmark suite
-
 - [ ] `wrangler.toml` with all Cloudflare bindings
-- [ ] Drizzle schema + migrations 0001, 0002, 0003
-- [ ] `SearchProvider` interface
-- [ ] `PgVectorProvider` — single-vector search, score-based fusion, confidence assessment
-- [ ] `EmbedPipeline.processSkill()` — agent summary generation + single embedding
-- [ ] `EmbedPipeline.checkContentSafety()` — Llama Guard on ingest
-- [ ] `SearchCache` — KV with TTL
+- [ ] Drizzle schema + migrations 0001–0003
+- [ ] `SearchProvider` interface (with v5.0 `SearchFilters`)
+- [ ] `PgVectorProvider` — single-vector, status-aware filter, version ranking
+- [ ] `EmbedPipeline.processSkill()`
+- [ ] `EmbedPipeline.checkContentSafety()`
+- [ ] `SearchCache` — KV with TTL + slug invalidation
 - [ ] `SearchLogger` — log every search event (non-blocking)
 - [ ] `PerfMonitor` — structured timing
-- [ ] Hono router: `/v1/search`, `/v1/skills/:id/index`, `/v1/skills/:id` DELETE, `/health`
-- [ ] Trust-based filtering (`appetite` → `minTrustScore`)
+- [ ] Hono router: `/v1/search`, `/v1/skills/:id/index`, `/health`
+- [ ] Trust filtering (`appetite` → `minTrustScore` + status exclusion)
 - [ ] **Eval suite: 100+ query/skill pairs, Recall@1, Recall@5, MRR**
-- [ ] Seed script with test skills
 - [ ] **Run eval → record baseline numbers**
 - [ ] **Derive tier thresholds from actual score distribution**
 
-**Exit criteria:** Baseline match rate measured. Tier thresholds set from data. p50 < 60ms.
+**Exit criteria:** Baseline measured. Status filter tested. Version ranking verified. p50 < 60ms.
 
 ### Phase 2: Intelligence Layer (Week 2)
 
-**Deliverable:** Three-tier routing with LLM deep search
-
-- [ ] `ConfidenceGate` — full tier routing with configurable thresholds
-- [ ] Tier 2 async enrichment (query expansion via LLM)
-- [ ] Tier 3 deep search (intent decomposition, terminology translation, capability reasoning)
-- [ ] Expanded query → re-embed → re-search → merge + deduplicate
-- [ ] Deep search prompt includes `match_source` context
-- [ ] `CompositionDetector` — detect multi-skill queries, parallel sub-search
-- [ ] No-match → generation hints pipeline
+- [ ] `ConfidenceGate` — full tier routing
+- [ ] Tier 2 async enrichment
+- [ ] Tier 3 deep search
+- [ ] `CompositionDetector`
 - [ ] `QualityTracker.recordFeedback()` + feedback endpoint
-- [ ] Analytics endpoints: tiers, match-sources, latency, cost, failed-queries
-- [ ] **Re-run eval with LLM fallback enabled → measure lift per tier**
-
-**Exit criteria:** Measured lift from LLM fallback on Tier 3 queries. Cost per query validated. Tier distribution matches expectations.
+- [ ] Analytics endpoints
+- [ ] **Re-run eval with LLM fallback → measure lift**
 
 ### Phase 3: Multi-Vector Validation (Week 3)
 
-**Deliverable:** Data-driven decision on multi-vector vs query expansion
-
-- [ ] `EmbedPipeline.processSkillMultiVector()` — alternate query generation
-- [ ] Batch ingest alternates into `skill_embeddings` (6 per skill)
-- [ ] `match_source` tracking in search logs (which alt type matched)
+- [ ] `EmbedPipeline.processSkillMultiVector()`
+- [ ] Human-distilled alt query passthrough (skip LLM generation)
 - [ ] **A/B test: single-vector vs multi-vector vs single + query expansion**
-- [ ] Per-embedding-type lift measurement (which alternates help?)
-- [ ] Tier3 pattern analysis → do patterns suggest new alt categories?
 - [ ] **Decision: keep multi-vector if lift ≥ 5% over query expansion**
-- [ ] If multi-vector wins: which N alternates? (maybe 4 is better than 5)
-
-**Exit criteria:** Quantified lift. Decision documented. Underperforming alternates dropped.
 
 ### Phase 4: Production Polish (Week 4)
 
-- [ ] Cross-encoder reranking stage (bge-reranker-base, optional per-query)
+- [ ] Cross-encoder reranking (bge-reranker-base, optional per-query)
 - [ ] Score-based fusion vs RRF A/B test
-- [ ] Materialized view refresh via cron trigger
 - [ ] Rate limiting on search endpoint
-- [ ] Error handling: retries, circuit breaker for Workers AI
-- [ ] Load test: p50 < 60ms, p99 < 500ms, p99.9 < 1500ms
-- [ ] `getTier3Patterns()` analytics for ongoing quality tuning
-- [ ] **Final eval run with production config**
-
-**Exit criteria:** Production-ready. SLOs met. Monitoring in place. Quality loop operational.
+- [ ] Error handling: retries, circuit breaker
+- [ ] Load test: p50 < 60ms, p99 < 500ms
 
 ### Phase 5: Sync Pipelines & Publish API (Weeks 5–6)
 
-**Deliverable:** All skill sources flowing into the registry.
+- [ ] `BaseSyncWorker` — v5.0: no trust_score set on sync
+- [ ] `McpRegistrySync`, `ClawHubSync`, `GitHubSync` adapters
+- [ ] `POST /v1/skills` — full publishSkillSchema with v5.0 fields
+- [ ] Cognium poll consumer writes trust scores directly via `applyScanReport()` — no HTTP callback endpoint
+- [ ] `PATCH /v1/skills/:id/status` — owner deprecate/restore
+- [ ] `GET /v1/skills/:slug/versions` — version listing
+- [ ] Queue integration: EMBED_QUEUE + COGNIUM_QUEUE (submit) + COGNIUM_POLL_QUEUE producers; COGNIUM_JOBS KV namespace
+- [ ] Migration 0008 (lifecycle columns)
+- [ ] Cache invalidation on status change
 
-- [ ] `BaseSyncWorker` abstract class (change detection, upsert, queue dispatch)
-- [ ] `McpRegistrySync` adapter + cron trigger (every 5 min)
-- [ ] `ClawHubSync` adapter + VirusTotal flag handling + cron trigger (every 10 min)
-- [ ] `GitHubSync` adapter + ETag caching + cron trigger (every 15 min)
-- [ ] Publish API: `POST /v1/skills`, `PUT /v1/skills/:id`, `DELETE /v1/skills/:id`
-- [ ] Trust update endpoint: `PUT /v1/skills/:id/trust` (Cognium callback)
-- [ ] R2 bundle upload for code skills
-- [ ] Queue integration: EMBED_QUEUE + COGNIUM_QUEUE producers
-- [ ] Queue consumers: embedding generation, Cognium dispatch
-- [ ] Sync monitoring: per-source success/skip/error counts
-- [ ] End-to-end test: sync → embed → search → find newly synced skill
+### Phase 6: Lifecycle & Composition (Sprint 4, alongside Cognium)
 
-**Exit criteria:** All three upstream sources syncing. Publish API operational. Skills discoverable within 5 minutes of upstream publish.
+- [ ] Migrations 0004–0008
+- [ ] `POST /v1/skills/:id/fork` — v5.0: trust resets, provenance set
+- [ ] `POST /v1/compositions` — v5.0: trust = min(constituents) × 0.90
+- [ ] `POST /v1/compositions/:id/publish` — composition status machine
+- [ ] Dual-track social model (stars, invocations)
+- [ ] Leaderboard materialized views
+- [ ] Co-occurrence map
 
 ---
 
 ## 18. Eval Suite
 
-The eval suite is a **Phase 1 deliverable**. No match quality number is cited as architecture-driving until validated here.
+The eval suite is a Phase 1 deliverable. No match quality number drives architecture decisions until validated here.
 
 ```typescript
-// src/eval/fixtures.ts
-
 export interface EvalFixture {
   id: string;
   query: string;
@@ -1935,26 +1752,17 @@ export interface EvalFixture {
   pattern: 'direct' | 'problem' | 'business' | 'alternate' | 'composition';
 }
 
-// Minimum 100 pairs across all 5 patterns.
-// Expand from real query logs after Phase 1.
-export const evalFixtures: EvalFixture[] = [
-  { id: 'eval-001', query: 'check rust dependency licenses', expectedSkillId: 'cargo-deny', pattern: 'direct' },
-  { id: 'eval-002', query: 'make sure we are not shipping GPL code in proprietary product', expectedSkillId: 'cargo-deny', pattern: 'problem' },
-  { id: 'eval-003', query: 'ensure open source compliance for rust project', expectedSkillId: 'cargo-deny', pattern: 'business' },
-  // ... expand to 100+
-];
-```
-
-```typescript
-// src/eval/metrics.ts
-
 export interface EvalMetrics {
-  recall1: number;       // correct skill in top 1
-  recall5: number;       // correct skill in top 5
-  mrr: number;           // mean reciprocal rank
+  recall1: number;
+  recall5: number;
+  mrr: number;
   avgTopScore: number;
   tierDistribution: Record<1 | 2 | 3, number>;
-  byPattern: Record<string, { recall5: number; mrr: number }>;  // per phrasing pattern
+  byPattern: Record<string, { recall5: number; mrr: number }>;
+
+  // v5.0 additions
+  statusFilterAccuracy: number;    // % of vulnerable/revoked correctly excluded
+  versionRankingAccuracy: number;  // % of queries where best-trust version surfaced first
 }
 ```
 
@@ -1966,19 +1774,16 @@ The eval runner hits the live search endpoint and computes metrics. Results stor
 
 ### Add Meilisearch when:
 - User-facing search UI needed (InstantSearch.js)
-- Typo tolerance critical (human users, not agents)
+- Typo tolerance critical
 - Faceted/filtered search with counts
-- Multi-language tokenization (CJK, Arabic, Hebrew)
 
 ### Swap to Qdrant when:
 - pgvector HNSW latency > 30ms consistently
-- ColBERT late-interaction reranking needed
-- Matryoshka cascade search adds meaningful savings
+- Scale past 1M skills
 
 ### Upgrade embedding model when:
 - Eval shows baseline match rate < 65% with bge-small
-- Newer models (GTE-large, e5-base-v2) close vocabulary gap meaningfully
-- HyDE (hypothetical document embeddings) shows significant lift in Phase 2
+- Newer models close vocabulary gap meaningfully
 
 ---
 
@@ -1986,14 +1791,13 @@ The eval runner hits the live search endpoint and computes metrics. Results stor
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Baseline match rate < 60% | Tier distribution skews to Tier 3, cost model breaks | Eval catches in Week 1. Investigate model upgrade or HyDE. |
+| Baseline match rate < 60% | Tier 3 over-triggered, cost breaks | Eval catches in Week 1. Investigate model upgrade or HyDE. |
 | Multi-vector lift < 5% | 6x storage for marginal gain | Phase 3 A/B test validates. Query expansion as alternative. |
-| Confidence thresholds wrong | Over-triggering Tier 3 (cost) or under-triggering (quality) | Derive from eval data. Monitor daily. Auto-adjust from running averages. |
-| LLM cost escalation | Tier 2/3 queries more expensive than projected | Conservative thresholds. KV caching deduplicates. Cap LLM calls/minute. |
-| Neon cold starts | Latency spikes | Hyperdrive pooling. Neon Pro = no auto-suspend. |
-| Embedding model drift | Workers AI updates bge-small, breaks existing embeddings | Pin model version. Re-embed corpus on model change (batch job). |
-| Provider abstraction too leaky | Switching providers still requires significant rework | Keep interface at scored-results level. Provider internals stay contained. |
-| Scale past 1M skills | pgvector HNSW degrades | Migrate vector layer to Qdrant. Abstraction makes this clean. |
+| Status filter false exclusions | Good skills excluded when vulnerable | `allowVulnerable=true` for balanced/adventurous. Vulnerable skills searchable with badge, not hidden. |
+| Version ranking surfacing wrong version | Old/low-trust version shown despite better newer version | Formula is trust×0.7 + usage×0.3. New versions catch up quickly once they earn runs. |
+| Cache staleness after revocation | Revoked skill appears in search results up to 60s | Slug-based KV invalidation on revoke. Acceptable window for MVP; reduce TTL if needed. |
+| Confidence thresholds wrong | Over/under-triggering Tier 3 | Derive from eval data. Monitor daily. |
+| LLM cost escalation | Tier 2/3 more expensive than projected | Conservative thresholds. KV caching deduplicates. |
 
 ---
 
@@ -2007,11 +1811,11 @@ runics/
 ├── drizzle.config.ts
 ├── src/
 │   ├── index.ts                          # Worker entry, Hono router, scheduled handler
-│   ├── types.ts                          # All shared types and interfaces
+│   ├── types.ts                          # All shared types (SkillStatus, SearchFilters, etc.)
 │   │
 │   ├── providers/
-│   │   ├── search-provider.ts            # SearchProvider interface
-│   │   └── pgvector-provider.ts          # PgVector implementation
+│   │   ├── search-provider.ts            # SearchProvider interface (v5.0)
+│   │   └── pgvector-provider.ts          # PgVector: status filter, version ranking
 │   │
 │   ├── intelligence/
 │   │   ├── confidence-gate.ts            # Tier routing + findSkill orchestration
@@ -2020,47 +1824,56 @@ runics/
 │   │
 │   ├── ingestion/
 │   │   ├── embed-pipeline.ts             # Skill → embedding pipeline
-│   │   ├── agent-summary.ts              # LLM summary generation prompts
+│   │   ├── agent-summary.ts              # LLM summary generation
 │   │   ├── alternate-queries.ts          # Multi-vector query generation
-│   │   └── content-safety.ts             # Llama Guard classification
+│   │   └── content-safety.ts            # Llama Guard classification (interim — remove when Circle-IR adds native content safety)
 │   │
 │   ├── composition/
-│   │   ├── fork.ts                       # Fork handler — deep copy + lineage tracking
-│   │   ├── compose.ts                    # Composition builder — ordered step graph
-│   │   ├── extend.ts                     # Extend handler — append steps to composition
+│   │   ├── fork.ts                       # Fork: lineage + trust reset
+│   │   ├── compose.ts                    # Composition: trust = min×0.90
+│   │   ├── extend.ts                     # Extend: append steps
 │   │   ├── lineage.ts                    # Ancestry tree queries
 │   │   ├── publish.ts                    # Draft → published state machine
-│   │   └── schema.ts                     # Zod schemas for composition endpoints
+│   │   └── schema.ts                     # Zod schemas
 │   │
 │   ├── social/
-│   │   ├── stars.ts                      # Star/unstar — human only, rate-limited
-│   │   ├── invocations.ts                # Agent invocation recording (bulk)
-│   │   ├── cooccurrence.ts               # Co-occurrence map queries
-│   │   └── leaderboards.ts               # Human / agent / trending leaderboard queries
+│   │   ├── stars.ts                      # Human only, rate-limited
+│   │   ├── invocations.ts                # Agent invocation (bulk)
+│   │   ├── cooccurrence.ts               # Co-occurrence map
+│   │   └── leaderboards.ts               # Human / agent / trending
 │   │
 │   ├── authors/
-│   │   └── handler.ts                    # Author profile + stats endpoints
+│   │   └── handler.ts
 │   │
 │   ├── sync/
-│   │   ├── base-sync.ts                  # BaseSyncWorker abstract class
-│   │   ├── mcp-registry.ts               # MCP Registry adapter (every 5 min)
-│   │   ├── clawhub.ts                    # ClawHub adapter (every 10 min)
-│   │   └── github.ts                     # GitHub / skills.sh adapter (every 15 min)
+│   │   ├── base-sync.ts                  # BaseSyncWorker (v5.0: no trust_score on sync)
+│   │   ├── mcp-registry.ts
+│   │   ├── clawhub.ts
+│   │   └── github.ts
 │   │
 │   ├── publish/
-│   │   ├── handler.ts                    # POST /v1/skills, PUT trust, DELETE
-│   │   └── schema.ts                     # Zod schemas for publish/trust endpoints
+│   │   ├── handler.ts                    # POST /v1/skills, PUT trust, PATCH status
+│   │   └── schema.ts                     # publishSkillSchema
+│   │
+│   ├── cognium/
+│   │   ├── queue-consumer.ts             # HTTP client → Cognium Server
+│   │   ├── request-builder.ts            # Skill → ScanRequest (no source/priority/composite)
+│   │   ├── scoring-policy.ts             # Runics trust formula, severity→status, tier, remediation
+│   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status (in src/cognium/)
+│   │   ├── composite-cascade.ts          # Cascade status to composites
+│   │   ├── notification-trigger.ts       # Webhook to Activepieces on revoke/flag
+│   │   └── types.ts                      # CogniumSubmitMessage, CogniumPollMessage, ScanFinding, CircleIRFinding
 │   │
 │   ├── monitoring/
-│   │   ├── search-logger.ts              # Structured search event logging
-│   │   ├── quality-tracker.ts            # Feedback + analytics queries
-│   │   └── perf-monitor.ts               # Per-request timing
+│   │   ├── search-logger.ts
+│   │   ├── quality-tracker.ts            # + v5.0 status analytics
+│   │   └── perf-monitor.ts
 │   │
 │   ├── cache/
-│   │   └── kv-cache.ts                   # KV caching with TTL
+│   │   └── kv-cache.ts                   # + slug-based invalidation (v5.0)
 │   │
 │   ├── db/
-│   │   ├── schema.ts                     # Drizzle schema definitions
+│   │   ├── schema.ts                     # Drizzle schema (v5.0 columns)
 │   │   └── migrations/
 │   │       ├── 0001_skill_embeddings.sql
 │   │       ├── 0002_search_logs.sql
@@ -2068,27 +1881,30 @@ runics/
 │   │       ├── 0004_authors.sql
 │   │       ├── 0005_compositions.sql
 │   │       ├── 0006_invocation_graph.sql
-│   │       └── 0007_leaderboards.sql
+│   │       ├── 0007_leaderboards.sql
+│   │       └── 0008_skill_lifecycle.sql  ← NEW (v5.0)
 │   │
 │   └── eval/
-│       ├── runner.ts                     # Eval suite runner
-│       ├── fixtures.ts                   # Test query/skill pairs (100+)
-│       └── metrics.ts                    # Recall@K, MRR, per-pattern breakdown
+│       ├── runner.ts
+│       ├── fixtures.ts                   # 100+ query/skill pairs + v5.0 status fixtures
+│       └── metrics.ts                    # + statusFilterAccuracy, versionRankingAccuracy
 │
 ├── scripts/
-│   ├── seed-eval-corpus.ts               # Seed test skills
-│   └── run-eval.ts                       # CLI eval runner
+│   ├── seed-eval-corpus.ts
+│   └── run-eval.ts
 │
 └── tests/
-    ├── providers/pgvector-provider.test.ts
+    ├── providers/pgvector-provider.test.ts  # + status filter + version ranking tests
     ├── intelligence/confidence-gate.test.ts
-    ├── composition/fork.test.ts
-    ├── composition/compose.test.ts
+    ├── composition/fork.test.ts             # + trust reset test
+    ├── composition/compose.test.ts          # + min×0.90 trust test
+    ├── cognium/scan-report-handler.test.ts  # + cascade test
+    ├── cognium/composite-cascade.test.ts    ← NEW (v5.0)
+    ├── publish/handler.test.ts              # + publish schema test (v5.0)
     ├── social/leaderboards.test.ts
     ├── social/invocations.test.ts
     ├── sync/mcp-registry.test.ts
     ├── sync/clawhub.test.ts
-    ├── publish/handler.test.ts
     └── monitoring/quality-tracker.test.ts
 ```
 
@@ -2098,26 +1914,29 @@ runics/
 
 ### Critical decisions
 
-1. **Use `@neondatabase/serverless` or Hyperdrive HTTP driver**, not `pg`. Standard `pg` doesn't work in Workers. Query patterns stay the same — just the connection method changes.
+1. **Use `@neondatabase/serverless` or Hyperdrive HTTP driver**, not `pg`. Standard `pg` doesn't work in Workers.
 
-2. **SearchProvider interface is sacred.** Never import Postgres types outside `pgvector-provider.ts`. The intelligence layer talks only through the interface.
+2. **SearchProvider interface is sacred.** Never import Postgres types outside `pgvector-provider.ts`.
 
-3. **Logging is non-blocking.** Use `c.executionCtx.waitUntil()` for all writes to `search_logs` and `quality_feedback`. Never block the response on analytics.
+3. **Logging is non-blocking.** Use `c.executionCtx.waitUntil()` for all writes to `search_logs`.
 
-4. **Every threshold is configurable.** Tier boundaries, fusion weights, cache TTL, trust score mappings — all from env vars. Never hardcode.
+4. **Every threshold is configurable.** Tier boundaries, fusion weights, cache TTL — all from env vars.
 
-5. **Content safety runs on ingest, not query.** Skills that fail Llama Guard get `content_safety_passed = false` and are excluded from search results via WHERE clause.
+5. **Content safety runs on ingest, not query.** Llama Guard sets `content_safety_passed = false` at ingest → excluded via WHERE filter. Interim until Circle-IR adds native content safety.
 
-6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, and `quality_feedback`. It reads from `skills` but doesn't own it.
+6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, `quality_feedback`. It reads from `skills` but adds columns via migration 0008.
 
-7. **Eval runs before and after every change.** The eval suite is the source of truth. No "feels better" — numbers only.
+7. **Status filter is not optional.** `revoked`, `draft`, `degraded` are always excluded. `vulnerable` exclusion depends on appetite.
 
-8. **Phase 3 is optional.** If single-vector + LLM fallback achieves acceptable match quality in Phase 2, multi-vector may not be needed. The eval data decides.
+8. **Version ranking, not newest.** `ORDER BY trust×0.7 + min(run_count/100, 1.0)×0.3`. Never `ORDER BY created_at DESC`.
+
+9. **Trust is Cognium's responsibility.** Sync workers do NOT set trust_score. `0.5 / unverified` is the default until Cognium scans.
+
+10. **Eval runs before and after every change.** Numbers only — no "feels better."
 
 ### Cloudflare bindings
 
 ```toml
-# wrangler.toml
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
@@ -2145,6 +1964,10 @@ queue = "runics-embed"
 binding = "COGNIUM_QUEUE"
 queue = "runics-cognium"
 
+[[queues.producers]]
+binding = "COGNIUM_POLL_QUEUE"
+queue = "runics-cognium-poll"
+
 [[queues.consumers]]
 queue = "runics-embed"
 max_batch_size = 10
@@ -2153,13 +1976,27 @@ max_batch_timeout = 30
 [[queues.consumers]]
 queue = "runics-cognium"
 max_batch_size = 5
-max_batch_timeout = 60
+max_batch_timeout = 30
+max_retries = 2
+dead_letter_queue = "cognium-dlq"
+
+[[queues.consumers]]
+queue = "runics-cognium-poll"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 0                     # self-manages retries via delayed re-enqueue
+dead_letter_queue = "cognium-poll-dlq"
+
+[[kv_namespaces]]
+binding = "COGNIUM_JOBS"
+id = "..."                          # stores job state: cognium:job:{skillId}
 
 [triggers]
 crons = [
-  "*/5 * * * *",    # sync-mcp-registry
-  "*/10 * * * *",   # sync-clawhub
-  "*/15 * * * *",   # sync-github
+  "*/5 * * * *",
+  "*/10 * * * *",
+  "*/15 * * * *",
+  "0 3 * * 0",     # weekly prune (Forge auto-distilled cleanup)
 ]
 
 [ai]
@@ -2177,6 +2014,11 @@ CACHE_TTL_SECONDS = "60"
 DEFAULT_APPETITE = "balanced"
 VECTOR_WEIGHT = "0.7"
 FULLTEXT_WEIGHT = "0.3"
+VERSION_TRUST_WEIGHT = "0.7"
+VERSION_USAGE_WEIGHT = "0.3"
+COGNIUM_URL = "https://circle.cognium.net"
+COGNIUM_POLL_DELAY_MS = "15000"
+COGNIUM_MAX_POLL_ATTEMPTS = "12"
 ```
 
 ### Dependencies
@@ -2186,7 +2028,8 @@ FULLTEXT_WEIGHT = "0.3"
   "dependencies": {
     "hono": "^4.0.0",
     "@neondatabase/serverless": "^0.10.0",
-    "drizzle-orm": "^0.38.0"
+    "drizzle-orm": "^0.38.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
@@ -2201,12 +2044,9 @@ FULLTEXT_WEIGHT = "0.3"
 ### HNSW performance reference
 
 ```
-100K skills × 1 embedding:   ~5ms query,  ~300MB memory
+100K skills × 1 embedding:   ~5ms query,   ~300MB memory
 100K skills × 6 embeddings:  ~8-12ms query, ~1.8GB memory
-150K skills × 6 embeddings:  ~12-15ms query, ~3GB memory
-
-HNSW config: m=16, ef_construction=128
-Query scales O(log N) — 6x vectors ≈ +3-5ms
+HNSW: m=16, ef_construction=128 — scales O(log N)
 ```
 
 ---
@@ -2215,17 +2055,27 @@ Query scales O(log N) — 6x vectors ≈ +3-5ms
 
 ### Overview
 
-Skills and compositions are the same entity (`type: 'skill' | 'composition' | 'pipeline'`) stored in the same `skills` table. A composition is a named, versioned, ordered set of skill references. The composition layer adds four operations — fork, copy, extend, compose — plus a dual-track social model that keeps human and agent signals clean.
+Skills and compositions are the same entity stored in the `skills` table (`skill_type: 'atomic' | 'auto-composite' | 'human-composite' | 'forked'`). A composition is a named, versioned, ordered set of skill references stored in `composition_steps`.
+
+**v5.0 key changes:**
+- Fork trust always resets — no inheritance from parent
+- Composition trust = min(constituent scores) × 0.90 (not min() alone)
+- Human-distilled composites get `trustBadge: 'human-verified'`
+- Revoked/vulnerable status cascades to composites
 
 ### 23.1 Operations
 
-| Operation | Lineage tracked | Author | Creates new entity |
+| Operation | Lineage | Author | Trust |
 |---|---|---|---|
-| **Copy** | No | Copier | Yes — identical clone, `fork_of = null` |
-| **Fork** | Yes | Forker | Yes — `fork_of = source.id`, `origin_id = source.origin_id ?? source.id` |
-| **Extend** | Yes | Extender | Yes — fork + appended steps |
-| **Compose** | N/A | Composer | Yes — new composition from N skill refs |
-| **Publish** | — | — | Draft → published state transition |
+| **Fork** | Yes — `forked_from` set | Forker | Resets to source floor |
+| **Copy** | No — `forked_from = null` | Copier | Resets to source floor |
+| **Extend** | Yes — fork + append | Extender | Resets to source floor |
+| **Compose** | N/A | Composer | min(constituents) × 0.90 |
+| **Human-distill** | Yes — `forked_from` if applicable | User | min(constituents) × 0.90 |
+
+### 23.2 Fork Handler (v5.0)
+
+Trust resets on fork. No parent trust inheritance.
 
 ```typescript
 // src/composition/fork.ts
@@ -2233,33 +2083,52 @@ Skills and compositions are the same entity (`type: 'skill' | 'composition' | 'p
 export async function forkSkill(
   sourceId: string,
   authorId: string,
-  db: Pool
+  changes: string[],
+  db: Pool,
 ): Promise<ForkResult> {
   const source = await db.query(`SELECT * FROM skills WHERE id = $1`, [sourceId]);
   if (!source.rows[0]) throw new NotFoundError();
 
+  // v5.0: trust resets to source floor — no inheritance
+  // root_source tracks the original registry source across all fork generations.
+  // Fork of mcp-registry skill: root_source = 'mcp-registry' (floor: 0.80)
+  // Fork-of-fork: root_source still = 'mcp-registry' (no regression to 0.50)
+  const BASE_TRUST: Record<string, number> = {
+    'mcp-registry': 0.80, 'clawhub': 0.65, 'github': 0.55,
+    'forge': 0.40, 'human-distilled': 0.50, 'manual': 0.60,
+  };
+  const originSource = source.rows[0].root_source ?? source.rows[0].source;
+  const resetTrust = BASE_TRUST[originSource] ?? 0.40;
+
+  // Increment version
+  const nextVersion = incrementPatch(source.rows[0].version);  // 1.0.0 → 1.0.1
+
   const fork = await db.query(`
     INSERT INTO skills (
-      name, slug, version, type, status,
+      name, slug, version, skill_type, status,
       description, readme, schema_json, execution_layer,
       tags, categories, ecosystem, license,
       author_id, author_type,
-      fork_of, origin_id, fork_depth,
-      trust_score, capabilities_required,
-      source
+      forked_from, forked_by, fork_changes,
+      root_source,
+      trust_score, verification_tier, trust_badge,
+      run_count,
+      capabilities_required, source
     ) VALUES (
-      $1, $2, '1.0.0', $3, 'draft',
+      $1, $2, $3, 'forked', 'draft',
       $4, $5, $6, $7,
       $8, $9, $10, $11,
-      $12, $13,
-      $14, $15, $16,
-      0.5, $17,
-      'direct'
-    ) RETURNING id, slug`,
+      $12, 'human',
+      $13, $14, $15,
+      $16,
+      $17, 'unverified', NULL,
+      0,
+      $18, 'human-distilled'
+    ) RETURNING id, slug, version`,
     [
-      `${source.rows[0].name} (fork)`,
-      `${source.rows[0].slug}-fork-${nanoid(6)}`,
-      source.rows[0].type,
+      `${source.rows[0].name}`,           // keep original name
+      source.rows[0].slug,                // same slug, different version
+      nextVersion,
       source.rows[0].description,
       source.rows[0].readme,
       source.rows[0].schema_json,
@@ -2269,194 +2138,234 @@ export async function forkSkill(
       source.rows[0].ecosystem,
       source.rows[0].license,
       authorId,
-      'human',                              // caller sets correct author_type
-      sourceId,
-      source.rows[0].origin_id ?? sourceId,
-      (source.rows[0].fork_depth ?? 0) + 1,
+      `${source.rows[0].slug}@${source.rows[0].version}`,  // forked_from
+      authorId,
+      JSON.stringify(changes),            // fork_changes
+      originSource,                       // root_source: preserved across all fork generations
+      resetTrust,                         // trust reset — not inherited
       source.rows[0].capabilities_required,
     ]
   );
 
-  // If source is a composition, copy its steps
-  if (['composition', 'pipeline'].includes(source.rows[0].type)) {
+  // Copy composition steps if source is composite.
+  // INVARIANT: composition_skill_ids array must match composition_steps rows.
+  // Always update both together — the array is a denorm for fast cascade queries.
+  if (['auto-composite', 'human-composite'].includes(source.rows[0].skill_type)) {
     await db.query(`
       INSERT INTO composition_steps (composition_id, step_order, skill_id, input_mapping, condition, on_error)
       SELECT $1, step_order, skill_id, input_mapping, condition, on_error
       FROM composition_steps WHERE composition_id = $2`,
       [fork.rows[0].id, sourceId]
     );
+    // Sync composition_skill_ids array from the copied steps
+    await db.query(`
+      UPDATE skills SET composition_skill_ids = (
+        SELECT ARRAY_AGG(skill_id ORDER BY step_order)
+        FROM composition_steps WHERE composition_id = $1
+      ) WHERE id = $1`,
+      [fork.rows[0].id]
+    );
+  }
+      FROM composition_steps WHERE composition_id = $2`,
+      [fork.rows[0].id, sourceId]
+    );
   }
 
-  // Increment source fork count (human or agent depending on caller_type)
+  // Increment human fork count on source
   await db.query(
     `UPDATE skills SET human_fork_count = human_fork_count + 1 WHERE id = $1`,
     [sourceId]
   );
 
-  return { id: fork.rows[0].id, slug: fork.rows[0].slug };
+  return {
+    id: fork.rows[0].id,
+    slug: fork.rows[0].slug,
+    version: fork.rows[0].version,
+    forkedFrom: `${source.rows[0].slug}@${source.rows[0].version}`,
+    trustScore: resetTrust,
+    status: 'draft',
+  };
 }
 ```
 
-### 23.2 Composition Builder
+### 23.3 Composition Builder (v5.0)
+
+Composition trust = min(constituent scores) × 0.90.
 
 ```typescript
 // src/composition/compose.ts
 
-export interface CompositionInput {
-  name: string;
-  description: string;
-  tags?: string[];
-  authorId: string;
-  authorType: 'human' | 'bot';
-  steps: {
-    skillId: string;
-    stepName?: string;
-    inputMapping?: Record<string, string>;
-    onError?: 'fail' | 'skip' | 'retry';
-  }[];
-}
-
 export async function createComposition(
   input: CompositionInput,
-  db: Pool
+  db: Pool,
 ): Promise<{ id: string; slug: string }> {
-  // 1. Validate all skill IDs exist and are published
-  // 2. Compute union of capabilities_required across all steps
-  // 3. Insert skills row (type = 'composition', status = 'draft')
-  // 4. Insert composition_steps rows
-  // 5. Enqueue for embedding (agent_summary generated from step descriptions)
-  // 6. Enqueue for Cognium (trust score = min trust of all steps)
+  // 1. Validate all constituent skills exist, are published or deprecated (not revoked)
+  const constituents = await db.query(
+    `SELECT id, trust_score, status FROM skills WHERE id = ANY($1)`,
+    [input.steps.map(s => s.skillId)]
+  );
+
+  const invalidConstituents = constituents.rows.filter(c =>
+    ['revoked', 'degraded', 'draft'].includes(c.status)
+  );
+  if (invalidConstituents.length > 0) {
+    throw new Error(`Cannot compose revoked or draft skills: ${invalidConstituents.map(c => c.id).join(', ')}`);
+  }
+
+  // 2. v5.0: trust = min(constituents) × 0.90 (composition discount)
+  const minTrust = Math.min(...constituents.rows.map(c => parseFloat(c.trust_score)));
+  const compositionTrust = Math.round(minTrust * 0.90 * 100) / 100;
+
+  // 3. Trust badge based on author type
+  const trustBadge = input.authorType === 'human' ? 'human-verified' : 'auto-distilled';
+
+  // 4. Determine composition status — if any constituent is vulnerable, start as contains-vulnerable
+  const hasVulnerable = constituents.rows.some(c =>
+    ['vulnerable', 'contains-vulnerable'].includes(c.status)
+  );
+
+  // 5. Insert skill row
+  const composition = await db.query(`
+    INSERT INTO skills (
+      name, slug, version, skill_type, status,
+      description, execution_layer,
+      author_id, author_type,
+      trust_score, verification_tier, trust_badge,
+      composition_skill_ids,
+      human_distilled_by, human_distilled_at,
+      run_count, source, tenant_id
+    ) VALUES (
+      $1, $2, '1.0.0', $3, $4,
+      $5, 'composite',
+      $6, $7,
+      $8, 'scanned', $9,
+      $10,
+      $11, $12,
+      0, $13, $14
+    ) RETURNING id, slug`,
+    [
+      input.name,
+      slugify(input.name),
+      input.authorType === 'human' ? 'human-composite' : 'auto-composite',
+      hasVulnerable ? 'contains-vulnerable' : 'published',
+      input.description,
+      input.authorId,
+      input.authorType,
+      compositionTrust,           // min × 0.90
+      trustBadge,
+      input.steps.map(s => s.skillId),
+      input.authorType === 'human' ? input.authorId : null,
+      input.authorType === 'human' ? new Date() : null,
+      input.authorType === 'human' ? 'human-distilled' : 'forge',
+      input.tenantId ?? null,
+    ]
+  );
+
+  // 6. Insert composition steps, then sync composition_skill_ids array.
+  // INVARIANT: composition_skill_ids must always match composition_steps rows (in order).
+  // The array is a denorm used for fast O(1) cascade queries.
+  // Always update both together — never write to one without updating the other.
+  for (const [i, step] of input.steps.entries()) {
+    await db.query(`
+      INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, on_error)
+      VALUES ($1, $2, $3, $4, $5, $6)`,
+      [composition.rows[0].id, i, step.skillId, step.stepName, step.inputMapping, step.onError ?? 'fail']
+    );
+  }
+  // Sync array from authoritative steps table (order guaranteed)
+  await db.query(`
+    UPDATE skills SET composition_skill_ids = (
+      SELECT ARRAY_AGG(skill_id ORDER BY step_order)
+      FROM composition_steps WHERE composition_id = $1
+    ) WHERE id = $1`,
+    [composition.rows[0].id]
+  );
+
+  // 7. Enqueue for embedding and Cognium
+  // (Cognium will verify via constituent skills — composite trust is pre-computed)
+
+  return { id: composition.rows[0].id, slug: composition.rows[0].slug };
 }
 ```
 
-**Trust score inheritance:** A composition's trust score is the minimum trust score of its component skills. A high-trust composition cannot include low-trust skills.
+### 23.4 Dual-Track Social Model
 
-### 23.3 Dual-Track Social Model
-
-**The problem:** At scale, agents invoke skills millions of times. If agent actions fed into the same counters as human stars and forks, every social signal would be noise. A single bot could game any leaderboard in minutes.
-
-**The solution:** Strict separation at the data model level. Human actions and agent actions write to entirely different columns and materialize into entirely different leaderboard views. There is no "combined" score.
+Human and agent actions write to entirely different columns and materialize into entirely different leaderboard views. There is no combined score.
 
 ```typescript
 // src/social/stars.ts — HUMAN ONLY
-
 export async function starSkill(skillId: string, userId: string, db: Pool): Promise<void> {
-  // Idempotent upsert into user_stars table (not shown — simple join table)
-  // Then increment human_star_count on skills
-  // Rate-limited per user: max 100 stars/day
+  // Idempotent upsert into user_stars
+  // Rate-limited: max 100 stars/day per user
   // Bot detection: reject if caller has author_type = 'bot'
 }
 
 // src/social/invocations.ts — AGENT ONLY
-
-export interface InvocationBatch {
-  invocations: {
-    skillId: string;
-    compositionId?: string;
-    tenantId: string;
-    callerType: 'agent' | 'human';
-    durationMs?: number;
-    succeeded: boolean;
-  }[];
-}
-
 export async function recordInvocations(batch: InvocationBatch, db: Pool): Promise<void> {
   // Bulk insert into skill_invocations
-  // Async update agent_invocation_count, weekly_agent_invocation_count on skills
-  // Update avg_execution_time_ms (rolling average), error_rate (rolling 7-day)
-  // Update last_used_at
+  // Update agent_invocation_count, weekly_agent_invocation_count
+  // Update run_count (used in version ranking)  ← v5.0
+  // Update avg_execution_time_ms, error_rate
+  // Update last_run_at, last_used_at
 }
 ```
 
-### 23.4 Co-Occurrence Map
+### 23.5 Status Cascade
 
-The co-occurrence map is the agent equivalent of "people also bought." Materialized from actual composition step pairs. Refreshed hourly.
+When Cognium updates a skill's status, Runics cascades to composites. This is handled by `src/cognium/composite-cascade.ts`:
 
 ```typescript
-// src/social/cooccurrence.ts
+// revoked constituent → composite becomes 'degraded'
+// vulnerable constituent → composite becomes 'contains-vulnerable'
+// repaired constituent → re-evaluate composite, restore if all clean
+```
 
-export async function getCoOccurrence(
-  skillId: string,
-  limit: number = 5,
-  db: Pool
-): Promise<CoOccurrenceResult[]> {
-  // Query skill_cooccurrence materialized view
-  // Returns: [{ skillId, compositionCount, totalPairedInvocations, skill: SkillResult }]
-  // Used by agents to discover complementary skills
-  // Used by UI to show "frequently used with" section
+The cascade is triggered within `scan-report-handler.ts` (`applyScanReport()`) after the primary skill's status is updated. See `src/cognium/composite-cascade.ts` for full implementation.
+
+### 23.6 Deprecation & Auto-Migration
+
+```typescript
+// Owner-initiated: PATCH /v1/skills/:id/status { status: 'deprecated', reason: '...' }
+// Cognium-initiated: poll consumer calls applyScanReport() → status: 'revoked' (internal, no HTTP callback)
+
+interface SkillResult {
+  // ...
+  status: SkillStatus;
+  replacementSkillId?: string;    // for deprecated: agent auto-migrates
+  replacementSlug?: string;
+  remediationMessage?: string;    // for revoked: human-readable path forward + CVE
+  remediationUrl?: string;        // CVE advisory link
 }
 ```
 
-### 23.5 Leaderboards
+Deprecated skills show `replacementSkillId` — agents auto-substitute. Revoked skills show `remediationMessage` — agents and users get the CVE + path forward.
 
-Four leaderboards. Human and agent are entirely separate. Trending uses rolling weekly invocations. Most-composed uses `composition_inclusion_count`.
-
-```
-GET /v1/leaderboards/human
-  → Sorted by human_score (star×3 + fork×5 + copy×2 + use)
-  → Only skills with author_type = 'human'
-  → Filters: type, category, ecosystem, time window
-
-GET /v1/leaderboards/agents
-  → Sorted by agent_score (invocations + composition_inclusion×10 + dependents×8 - error_rate×1000)
-  → All skill types included
-  → Filters: type, category, ecosystem
-
-GET /v1/leaderboards/trending
-  → Sorted by weekly_agent_invocation_count DESC
-  → "Rising" = (this_week / last_week) > 1.5
-  → Refreshed hourly
-
-GET /v1/leaderboards/most-composed
-  → Sorted by composition_inclusion_count DESC
-  → Shows which atomic skills form the backbone of the ecosystem
-```
-
-**Leaderboard refresh:** All four are materialized views refreshed by the existing cron trigger cadence. No real-time computation.
-
-### 23.6 Author Attribution
-
-Both humans and bots are first-class authors. A bot author carries its model version and operator (human/org responsible for it), enabling trust and accountability at the ecosystem level.
+### 23.7 Version Surfacing Rules
 
 ```
-Author page (/authors/:handle) shows:
-  - Skills published (filterable by type, status)
-  - Total human stars received
-  - Total agent invocations received
-  - Fork lineage map (what they forked, what forked them)
-  - For bots: model version, operator handle
-  - Verified badge (earned, not purchasable)
+timon-security-review
+  ├── @1.0.0  trust: 0.81  runs: 47  ← default (trust×0.7 + usage×0.3 highest)
+  ├── @1.1.0  trust: 0.71  runs: 12
+  └── @2.0.0  trust: 0.63  runs: 2   (recently forked, hasn't earned usage yet)
 ```
 
-### 23.7 Viral Mechanics Summary
+- `GET /v1/search` always returns best version per slug by default
+- `GET /v1/search?version=2.0.0` pins to that version
+- `GET /v1/skills/timon-security-review/versions` lists all versions
+- Workflows that pinned a specific version are unaffected when new versions publish
 
-| Mechanic | Signal type | Anti-gaming measure |
+### 23.8 Viral Mechanics Summary
+
+| Mechanic | Signal type | Anti-gaming |
 |---|---|---|
 | Star | Human only | Rate-limited, bot-rejected |
 | Human fork | Human only | author_type check |
 | Agent invocation | Agent only | tenant-scoped, bulk API |
+| run_count | Agent only | Used in version ranking |
 | Weekly trending | Agent only | Rolling window, not cumulative |
-| Co-occurrence | Agent only | Minimum 2 compositions required |
+| Co-occurrence | Agent only | Min 2 compositions required |
 | Fork lineage | Both | Factual — no score attached |
-| Share URL | Presentation | Stable permalink per slug |
-| Embeddable badge | Presentation | Links back to registry |
-
-### 23.8 Deprecation & Auto-Migration
-
-When a skill is deprecated, `replacement_skill_id` enables agents to auto-migrate compositions without human intervention:
-
-```typescript
-// Agent queries a skill → receives deprecated status + replacement
-// Agent auto-substitutes replacement_skill_id in its local composition plan
-// Runics records the substitution in invocation log for analytics
-
-interface SkillResult {
-  // ... existing fields ...
-  status: 'published' | 'deprecated' | 'archived';
-  replacementSkillId?: string;   // agents auto-migrate on deprecated
-  replacementSlug?: string;
-}
-```
+| Trust badge | Provenance | Set at publish, not earned |
 
 ---
 
