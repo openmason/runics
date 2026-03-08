@@ -78,19 +78,21 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
 
     const inserted = result.rows[0];
 
-    // Enqueue for embedding generation (async)
-    await c.env.EMBED_QUEUE.send({
-      skillId: inserted.id,
-      action: 'embed',
-      source: input.source ?? 'manual',
-    });
-
-    // Enqueue for Cognium scanning (v5.0: submit message format)
-    await c.env.COGNIUM_QUEUE.send({
-      skillId: inserted.id,
-      priority: ['forge', 'human-distilled'].includes(input.source ?? '') ? 'high' : 'normal',
-      timestamp: Date.now(),
-    } satisfies CogniumSubmitMessage);
+    // Enqueue for embedding generation and scanning (best-effort)
+    try {
+      await c.env.EMBED_QUEUE.send({
+        skillId: inserted.id,
+        action: 'embed',
+        source: input.source ?? 'manual',
+      });
+      await c.env.COGNIUM_QUEUE.send({
+        skillId: inserted.id,
+        priority: ['forge', 'human-distilled'].includes(input.source ?? '') ? 'high' : 'normal',
+        timestamp: Date.now(),
+      } satisfies CogniumSubmitMessage);
+    } catch (queueErr) {
+      console.error(`[PUBLISH] Queue send failed for ${inserted.id}: ${(queueErr as Error).message}`);
+    }
 
     // Upsert author (non-blocking)
     if (input.authorId) {
@@ -180,13 +182,17 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
       return c.json({ error: 'Skill not found' }, 404);
     }
 
-    // Re-enqueue for embedding if description changed
+    // Re-enqueue for embedding if description changed (best-effort)
     if (input.description !== undefined) {
-      await c.env.EMBED_QUEUE.send({
-        skillId,
-        action: 'embed',
-        source: 'update',
-      });
+      try {
+        await c.env.EMBED_QUEUE.send({
+          skillId,
+          action: 'embed',
+          source: 'update',
+        });
+      } catch (queueErr) {
+        console.error(`[PUBLISH] Queue send failed for update ${skillId}: ${(queueErr as Error).message}`);
+      }
     }
 
     return c.json({ id: skillId, status: 'updated' });

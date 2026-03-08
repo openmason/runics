@@ -149,6 +149,13 @@ describe('isContentUnsafe', () => {
     expect(isContentUnsafe([])).toBe(false);
   });
 
+  it('should detect CWE-89 (SQL injection) as content unsafe', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', cweId: 'CWE-89', tool: 'test', title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
+  });
+
   it('should detect CWE-94 (code injection) as content unsafe', () => {
     const findings: ScanFinding[] = [
       { severity: 'CRITICAL', cweId: 'CWE-94', tool: 'test', title: 't', description: 'd', confidence: 0.95, verdict: 'VULNERABLE', llmVerified: true },

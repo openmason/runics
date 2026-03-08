@@ -42,6 +42,6 @@ export function isContentUnsafe(findings: ScanFinding[]): boolean {
   return findings.some(
     f => f.severity === 'CRITICAL'
       && f.llmVerified
-      && ['CWE-77', 'CWE-78', 'CWE-79', 'CWE-94'].includes(f.cweId ?? '')
+      && ['CWE-77', 'CWE-78', 'CWE-79', 'CWE-89', 'CWE-94'].includes(f.cweId ?? '')
   );
 }

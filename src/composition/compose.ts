@@ -87,13 +87,17 @@ export async function createComposition(
     );
   }
 
-  // Enqueue for embedding and security scanning (v5.0 message format)
-  await env.EMBED_QUEUE.send({ skillId: compositionId, action: 'embed' });
-  await env.COGNIUM_QUEUE.send({
-    skillId: compositionId,
-    priority: 'normal' as const,
-    timestamp: Date.now(),
-  });
+  // Enqueue for embedding and security scanning (best-effort)
+  try {
+    await env.EMBED_QUEUE.send({ skillId: compositionId, action: 'embed' });
+    await env.COGNIUM_QUEUE.send({
+      skillId: compositionId,
+      priority: 'normal' as const,
+      timestamp: Date.now(),
+    });
+  } catch (queueErr) {
+    console.error(`[COMPOSITION] Queue send failed for ${compositionId}: ${(queueErr as Error).message}`);
+  }
 
   return { id: compositionId, slug: result.rows[0].slug };
 }

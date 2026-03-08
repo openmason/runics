@@ -74,13 +74,17 @@ export async function copySkill(
     );
   }
 
-  // Enqueue for embedding and security scanning (v5.0 message format)
-  await env.EMBED_QUEUE.send({ skillId: copy.rows[0].id, action: 'embed' });
-  await env.COGNIUM_QUEUE.send({
-    skillId: copy.rows[0].id,
-    priority: 'normal' as const,
-    timestamp: Date.now(),
-  });
+  // Enqueue for embedding and security scanning (best-effort)
+  try {
+    await env.EMBED_QUEUE.send({ skillId: copy.rows[0].id, action: 'embed' });
+    await env.COGNIUM_QUEUE.send({
+      skillId: copy.rows[0].id,
+      priority: 'normal' as const,
+      timestamp: Date.now(),
+    });
+  } catch (queueErr) {
+    console.error(`[COPY] Queue send failed for ${copy.rows[0].id}: ${(queueErr as Error).message}`);
+  }
 
   return {
     id: copy.rows[0].id,
