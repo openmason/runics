@@ -139,6 +139,7 @@ export interface SkillResult {
 
   // Execution
   executionLayer: string;
+  mcpUrl?: string;
   capabilitiesRequired: string[];
 
   // Composition

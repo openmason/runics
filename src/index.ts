@@ -501,6 +501,103 @@ app.get('/v1/eval/results/:runId', async (c) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Skill Detail (read)
+// ──────────────────────────────────────────────────────────────────────────────
+
+app.get('/v1/skills/:slug', async (c) => {
+  const slug = c.req.param('slug');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    const result = await pool.query(
+      `SELECT
+        s.id, s.name, s.slug, s.version, s.description, s.agent_summary,
+        s.trust_score, s.verification_tier, s.trust_badge, s.status,
+        s.execution_layer, s.mcp_url, s.skill_md, s.capabilities_required,
+        s.skill_type, s.schema_json, s.source, s.source_url,
+        s.tags, s.category, s.categories, s.ecosystem, s.language, s.license,
+        s.readme, s.r2_bundle_key, s.auth_requirements, s.install_method,
+        s.forked_from, s.run_count, s.last_run_at,
+        s.author_id, s.author_type, s.tenant_id,
+        s.revoked_reason, s.remediation_message, s.remediation_url,
+        s.replacement_skill_id, rs.slug AS replacement_slug,
+        s.avg_execution_time_ms, s.error_rate,
+        s.human_star_count, s.human_fork_count, s.agent_invocation_count,
+        s.cognium_scanned, s.cognium_scanned_at, s.content_safety_passed,
+        s.created_at, s.updated_at, s.published_at
+      FROM skills s
+      LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
+      WHERE s.slug = $1
+      ORDER BY s.created_at DESC
+      LIMIT 1`,
+      [slug]
+    );
+
+    if (result.rows.length === 0) {
+      return c.json({ error: 'Skill not found' }, 404);
+    }
+
+    const row = result.rows[0];
+
+    return c.json({
+      id: row.id,
+      name: row.name,
+      slug: row.slug,
+      version: row.version,
+      description: row.description,
+      agentSummary: row.agent_summary,
+      trustScore: parseFloat(row.trust_score),
+      verificationTier: row.verification_tier ?? 'unverified',
+      trustBadge: row.trust_badge ?? null,
+      status: row.status,
+      executionLayer: row.execution_layer,
+      mcpUrl: row.mcp_url ?? null,
+      skillMd: row.skill_md ?? null,
+      capabilitiesRequired: row.capabilities_required ?? [],
+      skillType: row.skill_type ?? 'atomic',
+      schemaJson: row.schema_json ?? null,
+      source: row.source,
+      sourceUrl: row.source_url ?? null,
+      tags: row.tags ?? [],
+      category: row.category ?? null,
+      categories: row.categories ?? [],
+      ecosystem: row.ecosystem ?? null,
+      language: row.language ?? null,
+      license: row.license ?? null,
+      readme: row.readme ?? null,
+      r2BundleKey: row.r2_bundle_key ?? null,
+      authRequirements: row.auth_requirements ?? null,
+      installMethod: row.install_method ?? null,
+      forkedFrom: row.forked_from ?? null,
+      runCount: parseInt(row.run_count) || 0,
+      lastRunAt: row.last_run_at?.toISOString() ?? null,
+      authorId: row.author_id ?? null,
+      authorType: row.author_type,
+      tenantId: row.tenant_id ?? null,
+      revokedReason: row.revoked_reason ?? null,
+      remediationMessage: row.remediation_message ?? null,
+      remediationUrl: row.remediation_url ?? null,
+      replacementSkillId: row.replacement_skill_id ?? null,
+      replacementSlug: row.replacement_slug ?? null,
+      avgExecutionTimeMs: row.avg_execution_time_ms ?? null,
+      errorRate: row.error_rate ?? null,
+      humanStarCount: parseInt(row.human_star_count) || 0,
+      humanForkCount: parseInt(row.human_fork_count) || 0,
+      agentInvocationCount: parseInt(row.agent_invocation_count) || 0,
+      cogniumScanned: row.cognium_scanned ?? false,
+      cogniumScannedAt: row.cognium_scanned_at?.toISOString() ?? null,
+      contentSafetyPassed: row.content_safety_passed ?? null,
+      createdAt: row.created_at?.toISOString() ?? null,
+      updatedAt: row.updated_at?.toISOString() ?? null,
+      publishedAt: row.published_at?.toISOString() ?? null,
+    });
+  } catch (error) {
+    console.error('[SKILL DETAIL] Error:', error);
+    return c.json({ error: 'Failed to fetch skill', message: (error as Error).message }, 500);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Publish API (Phase 5)
 // ──────────────────────────────────────────────────────────────────────────────
 
