@@ -13,7 +13,7 @@
 
 import { Pool } from '@neondatabase/serverless';
 import type { Env } from '../types';
-import type { CogniumPollMessage, CircleIRJobStatus, CircleIRFinding, SkillRow } from './types';
+import type { CogniumPollMessage, CircleIRJobStatus, CircleIRFinding, CircleIRSkillResult, SkillRow } from './types';
 import { normalizeFindings } from './finding-mapper';
 import { applyScanReport, markScanFailed } from './scan-report-handler';
 
@@ -101,10 +101,13 @@ async function handleCompleted(
   jobId: string,
   job: CircleIRJobStatus,
 ): Promise<void> {
-  // Fetch findings
-  const findingsRes = await fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, {
-    headers: { 'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}` },
-  });
+  const authHeaders = { 'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}` };
+
+  // Fetch findings and skill-result in parallel
+  const [findingsRes, skillResultRes] = await Promise.all([
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, { headers: authHeaders }),
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`, { headers: authHeaders }),
+  ]);
 
   if (!findingsRes.ok) {
     console.error(`[COGNIUM-POLL] Findings fetch failed for job ${jobId}: ${findingsRes.status}`);
@@ -115,6 +118,14 @@ async function handleCompleted(
   const { findings: raw } = await findingsRes.json() as { findings: CircleIRFinding[] };
   const findings = normalizeFindings(raw);
 
+  // Skill result is best-effort — don't fail the scan if it's unavailable
+  let skillResult: CircleIRSkillResult | null = null;
+  if (skillResultRes.ok) {
+    skillResult = await skillResultRes.json() as CircleIRSkillResult;
+  } else {
+    console.warn(`[COGNIUM-POLL] Skill-result fetch failed for job ${jobId}: ${skillResultRes.status} (non-fatal)`);
+  }
+
   // Fetch skill row
   const skill = await fetchSkillById(pool, skillId);
   if (!skill) {
@@ -122,8 +133,9 @@ async function handleCompleted(
     return;
   }
 
-  await applyScanReport(env, pool, skill, findings, job);
-  console.log(`[COGNIUM-POLL] Scan report applied for skill ${skill.slug} (${findings.length} findings)`);
+  await applyScanReport(env, pool, skill, findings, job, skillResult);
+  const verdict = skillResult?.verdict ?? job.summary?.verdict ?? 'unknown';
+  console.log(`[COGNIUM-POLL] Scan report applied for skill ${skill.slug} (${findings.length} findings, verdict=${verdict})`);
 }
 
 async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | null> {
@@ -135,7 +147,9 @@ async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | n
             source_url AS "sourceUrl",
             root_source AS "rootSource",
             skill_type AS "skillType",
-            composition_skill_ids AS "compositionSkillIds"
+            composition_skill_ids AS "compositionSkillIds",
+            schema_json AS "schemaJson",
+            capabilities_required AS "capabilitiesRequired"
      FROM skills WHERE id = $1`,
     [skillId]
   );

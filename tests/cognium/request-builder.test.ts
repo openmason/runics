@@ -8,7 +8,7 @@ function makeSkill(overrides?: Partial<SkillRow>): SkillRow {
     slug: 'test-skill',
     version: '1.0.0',
     name: 'Test Skill',
-    description: 'A test skill for testing',
+    description: 'A test skill for testing purposes',
     source: 'github',
     status: 'published',
     executionLayer: 'mcp-remote',
@@ -17,43 +17,99 @@ function makeSkill(overrides?: Partial<SkillRow>): SkillRow {
 }
 
 describe('buildCircleIRRequest', () => {
-  it('should use skillMd as code when available', () => {
-    const skill = makeSkill({ skillMd: '# Skill\nSome markdown content' });
-    const req = buildCircleIRRequest(skill);
-    expect(req.code).toBe('# Skill\nSome markdown content');
+  describe('skill_context', () => {
+    it('should include name, description, source_registry, execution_layer', () => {
+      const skill = makeSkill();
+      const req = buildCircleIRRequest(skill);
+      expect(req.skill_context).toEqual({
+        name: 'Test Skill',
+        description: 'A test skill for testing purposes',
+        source_registry: 'github',
+        source_url: undefined,
+        execution_layer: 'mcp-remote',
+      });
+    });
+
+    it('should include source_url when available', () => {
+      const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.skill_context.source_url).toBe('https://github.com/owner/repo');
+    });
   });
 
-  it('should fall back to description when no skillMd', () => {
-    const skill = makeSkill({ skillMd: null });
-    const req = buildCircleIRRequest(skill);
-    expect(req.code).toBe('A test skill for testing');
+  describe('options', () => {
+    it('should enable all analysis phases by default', () => {
+      const skill = makeSkill();
+      const req = buildCircleIRRequest(skill);
+      expect(req.options).toEqual({
+        enable_sast: true,
+        enable_instruction_analysis: true,
+        enable_capability_mismatch: true,
+        enable_llm_verification: true,
+      });
+    });
   });
 
-  it('should set filename from slug', () => {
-    const skill = makeSkill({ slug: 'my-cool-skill', version: '2.1.0' });
-    const req = buildCircleIRRequest(skill);
-    expect(req.filename).toBe('my-cool-skill');
+  describe('Mode A — GitHub repo URL', () => {
+    it('should use repo_url for GitHub skills', () => {
+      const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBe('https://github.com/owner/repo');
+      expect(req.files).toBeUndefined();
+    });
+
+    it('should not use repo_url for non-GitHub URLs', () => {
+      const skill = makeSkill({ sourceUrl: 'https://clawhub.ai/skills/my-skill' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBeUndefined();
+      expect(req.files).toBeDefined();
+    });
+
+    it('should not use repo_url for invalid URLs', () => {
+      const skill = makeSkill({ sourceUrl: 'not-a-url' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBeUndefined();
+      expect(req.files).toBeDefined();
+    });
+
+    it('should reject GitHub URLs without owner/repo path', () => {
+      const skill = makeSkill({ sourceUrl: 'https://github.com/' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBeUndefined();
+      expect(req.files).toBeDefined();
+    });
   });
 
-  it('should infer typescript language for mcp-remote', () => {
-    const skill = makeSkill({ executionLayer: 'mcp-remote' });
-    const req = buildCircleIRRequest(skill);
-    expect(req.language).toBe('typescript');
-  });
+  describe('Mode B — inline files', () => {
+    it('should include SKILL.md when skillMd is available', () => {
+      const skill = makeSkill({ skillMd: '# Skill\nSome markdown content', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['SKILL.md']).toBe('# Skill\nSome markdown content');
+    });
 
-  it('should infer python language for worker execution layer', () => {
-    const skill = makeSkill({ executionLayer: 'worker', slug: 'data-processor' });
-    const req = buildCircleIRRequest(skill);
-    // Default for worker is typescript unless slug contains python hints
-    expect(req.language).toBeDefined();
-  });
+    it('should include DESCRIPTION.md for descriptions longer than 20 chars', () => {
+      const skill = makeSkill({ skillMd: null, sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['DESCRIPTION.md']).toBe('A test skill for testing purposes');
+    });
 
-  it('should produce valid CircleIRAnalyzeRequest shape', () => {
-    const skill = makeSkill();
-    const req = buildCircleIRRequest(skill);
-    expect(req).toHaveProperty('code');
-    expect(req).toHaveProperty('filename');
-    expect(typeof req.code).toBe('string');
-    expect(typeof req.filename).toBe('string');
+    it('should not include DESCRIPTION.md for short descriptions', () => {
+      const skill = makeSkill({ description: 'Short desc', skillMd: '# Skill', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['DESCRIPTION.md']).toBeUndefined();
+    });
+
+    it('should include schema.json when schemaJson is available', () => {
+      const schema = { type: 'object', properties: { url: { type: 'string' } } };
+      const skill = makeSkill({ schemaJson: schema, sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['schema.json']).toBe(JSON.stringify(schema, null, 2));
+    });
+
+    it('should fall back to description as SKILL.md when no other files', () => {
+      const skill = makeSkill({ skillMd: null, description: 'tiny', sourceUrl: null, schemaJson: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['SKILL.md']).toBe('tiny');
+    });
   });
 });

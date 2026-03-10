@@ -101,6 +101,34 @@ describe('computeTrustScore', () => {
     const score = computeTrustScore(skill, findings);
     expect(score).toBe(0.55);
   });
+
+  it('should apply CRITICAL_INSTRUCTION impact for instruction_safety phase', () => {
+    const skill = makeSkill({ source: 'clawhub' }); // base: 0.65
+    const findings = [makeFinding({ severity: 'CRITICAL', phase: 'instruction_safety' })]; // -0.30
+    const score = computeTrustScore(skill, findings);
+    expect(score).toBe(0.35);
+  });
+
+  it('should apply HIGH_INSTRUCTION impact for instruction_safety phase', () => {
+    const skill = makeSkill({ source: 'clawhub' }); // base: 0.65
+    const findings = [makeFinding({ severity: 'HIGH', phase: 'instruction_safety' })]; // -0.20
+    const score = computeTrustScore(skill, findings);
+    expect(score).toBe(0.45);
+  });
+
+  it('should apply CRITICAL_CAPABILITY_MISMATCH impact', () => {
+    const skill = makeSkill({ source: 'clawhub' }); // base: 0.65
+    const findings = [makeFinding({ severity: 'CRITICAL', phase: 'capability_mismatch' })]; // -0.25
+    const score = computeTrustScore(skill, findings);
+    expect(score).toBe(0.40);
+  });
+
+  it('should apply HIGH_CAPABILITY_MISMATCH impact', () => {
+    const skill = makeSkill({ source: 'clawhub' }); // base: 0.65
+    const findings = [makeFinding({ severity: 'HIGH', phase: 'capability_mismatch' })]; // -0.15
+    const score = computeTrustScore(skill, findings);
+    expect(score).toBe(0.50);
+  });
 });
 
 describe('deriveStatus', () => {
@@ -167,5 +195,24 @@ describe('buildRemediationMessage', () => {
     const skill = makeSkill();
     const msg = buildRemediationMessage(finding, skill);
     expect(msg).toContain('Insecure config');
+  });
+
+  it('should include phase in remediation message when present', () => {
+    const finding = makeFinding({ severity: 'CRITICAL', cweId: 'CWE-78', phase: 'instruction_safety' });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    expect(msg).toContain('Phase: instruction_safety');
+  });
+
+  it('should include mismatch indicator in remediation message when present', () => {
+    const finding = makeFinding({
+      severity: 'HIGH',
+      phase: 'capability_mismatch',
+      capabilityMismatch: true,
+      remediationHint: 'Capability mismatch: capability_mismatch',
+    });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    expect(msg).toContain('Mismatch: capability mismatch detected');
   });
 });

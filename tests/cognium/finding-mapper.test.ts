@@ -10,6 +10,7 @@ function makeRawFinding(overrides?: Partial<CircleIRFinding>): CircleIRFinding {
     confidence: 0.85,
     verdict: 'VULNERABLE',
     verification_status: 'verified',
+    phase: 'sast',
     file: 'src/index.ts',
     line_start: 10,
     line_end: 15,
@@ -48,6 +49,24 @@ describe('normalizeFindings', () => {
     expect(findings[0].tool).toBe('circle-ir');
   });
 
+  it('should carry phase through to ScanFinding', () => {
+    const raw = [makeRawFinding({ phase: 'instruction_safety' })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].phase).toBe('instruction_safety');
+  });
+
+  it('should set capabilityMismatch for capability_mismatch phase', () => {
+    const raw = [makeRawFinding({ phase: 'capability_mismatch' })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].capabilityMismatch).toBe(true);
+  });
+
+  it('should not set capabilityMismatch for sast phase', () => {
+    const raw = [makeRawFinding({ phase: 'sast' })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].capabilityMismatch).toBe(false);
+  });
+
   it('should set llmVerified correctly', () => {
     const raw = [makeRawFinding({
       verification_status: 'verified',
@@ -79,6 +98,30 @@ describe('normalizeFindings', () => {
     const raw = [makeRawFinding({ cwe_id: 'CWE-89' })];
     const findings = normalizeFindings(raw);
     expect(findings[0].remediationUrl).toBe('https://cwe.mitre.org/data/definitions/89.html');
+  });
+
+  it('should generate remediation hint for capability mismatch', () => {
+    const raw = [makeRawFinding({
+      phase: 'capability_mismatch',
+      sink: { type: 'capability_mismatch', method: null, cwe: 'CWE-74' },
+    })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].remediationHint).toBe('Capability mismatch: capability_mismatch');
+  });
+
+  it('should generate remediation hint for capability mismatch without sink', () => {
+    const raw = [makeRawFinding({
+      phase: 'capability_mismatch',
+      sink: undefined,
+    })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].remediationHint).toBe('Capability mismatch: undeclared behavior');
+  });
+
+  it('should handle null line_start and line_end', () => {
+    const raw = [makeRawFinding({ line_start: null, line_end: null })];
+    const findings = normalizeFindings(raw);
+    expect(findings).toHaveLength(1);
   });
 
   it('should handle empty findings array', () => {
@@ -161,5 +204,33 @@ describe('isContentUnsafe', () => {
       { severity: 'CRITICAL', cweId: 'CWE-94', tool: 'test', title: 't', description: 'd', confidence: 0.95, verdict: 'VULNERABLE', llmVerified: true },
     ];
     expect(isContentUnsafe(findings)).toBe(true);
+  });
+
+  it('should return true for CRITICAL instruction_safety finding with LLM verification', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', tool: 'test', phase: 'instruction_safety', title: 'Prompt injection', description: 'd', confidence: 0.95, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
+  });
+
+  it('should return false for HIGH instruction_safety finding', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'HIGH', tool: 'test', phase: 'instruction_safety', title: 'Prompt injection', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(false);
+  });
+
+  it('should return true for CRITICAL capability mismatch with LLM verification', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', tool: 'test', phase: 'capability_mismatch', capabilityMismatch: true, title: 'Undisclosed behavior', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
+  });
+
+  it('should return false for HIGH capability mismatch even with LLM verification', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'HIGH', tool: 'test', phase: 'capability_mismatch', capabilityMismatch: true, title: 'Mismatch', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(false);
   });
 });

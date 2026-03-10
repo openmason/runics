@@ -3,7 +3,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // Queue handler for COGNIUM_QUEUE. Fetches skill metadata from DB,
-// submits to Circle-IR POST /api/analyze, stores job state in KV,
+// submits to Circle-IR POST /api/analyze/skill, stores job state in KV,
 // and enqueues first poll message.
 //
 // ══════════════════════════════════════════════════════════════════════════════
@@ -29,7 +29,7 @@ export async function handleCogniumSubmitQueue(
       }
 
       const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
-      const response = await fetch(`${cogniumUrl}/api/analyze`, {
+      const response = await fetch(`${cogniumUrl}/api/analyze/skill`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -82,7 +82,9 @@ async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | n
             source_url AS "sourceUrl",
             root_source AS "rootSource",
             skill_type AS "skillType",
-            composition_skill_ids AS "compositionSkillIds"
+            composition_skill_ids AS "compositionSkillIds",
+            schema_json AS "schemaJson",
+            capabilities_required AS "capabilitiesRequired"
      FROM skills WHERE id = $1`,
     [skillId]
   );

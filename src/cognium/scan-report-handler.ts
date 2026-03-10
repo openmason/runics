@@ -9,7 +9,7 @@
 
 import { Pool } from '@neondatabase/serverless';
 import type { Env } from '../types';
-import type { ScanFinding, SkillRow, CircleIRJobStatus } from './types';
+import type { ScanFinding, SkillRow, CircleIRJobStatus, CircleIRSkillResult } from './types';
 import { deriveWorstSeverity, isContentUnsafe } from './finding-mapper';
 import { computeTrustScore, deriveStatus, deriveTier, buildRemediationMessage } from './scoring-policy';
 import { cascadeStatusToComposites, repairCompositeStatus } from './composite-cascade';
@@ -21,6 +21,7 @@ export async function applyScanReport(
   skill: SkillRow,
   findings: ScanFinding[],
   job: CircleIRJobStatus,
+  skillResult?: CircleIRSkillResult | null,
 ): Promise<void> {
   const worstSeverity = deriveWorstSeverity(findings);
   const contentUnsafe = isContentUnsafe(findings);
@@ -40,11 +41,13 @@ export async function applyScanReport(
         cognium_scanned_at = NOW(),
         cognium_scanned = true,
         scan_coverage = $2,
+        analyzer_summary = $3,
         updated_at = NOW()
-      WHERE id = $3`,
+      WHERE id = $4`,
       [
         JSON.stringify(findings),
         (job.metrics?.files_failed ?? 0) > 0 ? 'partial' : 'full',
+        skillResult ? JSON.stringify(skillResult) : null,
         skill.id,
       ]
     );
@@ -74,8 +77,9 @@ export async function applyScanReport(
       cognium_findings = $8,
       cognium_scanned_at = NOW(),
       cognium_scanned = true,
+      analyzer_summary = $9,
       updated_at = NOW()
-    WHERE id = $9`,
+    WHERE id = $10`,
     [
       trustScore,
       tier,
@@ -85,6 +89,7 @@ export async function applyScanReport(
       remediationMessage,
       worstFinding?.remediationUrl ?? null,
       JSON.stringify(findings),
+      skillResult ? JSON.stringify(skillResult) : null,
       skill.id,
     ]
   );
