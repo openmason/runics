@@ -302,9 +302,43 @@ export class ConfidenceGate {
     ctx: ExecutionContext,
     reranked: boolean = false
   ): Promise<FindSkillResponse> {
-    const skillResults = await this.buildSkillResults(result.results);
+    // Synchronous LLM expansion: generate alternate queries, re-search, merge
+    // This adds ~200-500ms latency but significantly improves recall for
+    // business/colloquial queries that need terminology translation
+    if (this.deepSearchEnabled) {
+      try {
+        const enrichedResult = await this.deepSearch.expandAndReSearch(
+          query,
+          result,
+          filters
+        );
 
-    const response: FindSkillResponse = {
+        // If enrichment produced different/better results, use them
+        if (enrichedResult.results.length > 0) {
+          const skillResults = await this.buildSkillResults(enrichedResult.results);
+          return {
+            results: skillResults,
+            confidence: 'medium',
+            enriched: true,
+            meta: {
+              matchSources: enrichedResult.results.slice(0, 3).map((r) => r.matchSource),
+              latencyMs: Date.now() - startTime,
+              tier: 2,
+              cacheHit: false,
+              llmInvoked: true,
+              ...(reranked ? { reranked: true } : {}),
+            },
+          };
+        }
+      } catch (error) {
+        console.error('Tier 2 enrichment error:', error);
+        // Fall through to return unenriched results
+      }
+    }
+
+    // Fallback: return unenriched results
+    const skillResults = await this.buildSkillResults(result.results);
+    return {
       results: skillResults,
       confidence: 'medium',
       enriched: false,
@@ -317,17 +351,6 @@ export class ConfidenceGate {
         ...(reranked ? { reranked: true } : {}),
       },
     };
-
-    // Fire async enrichment via waitUntil
-    if (this.deepSearchEnabled) {
-      ctx.waitUntil(
-        this.asyncEnrich(query, result, filters).catch((error) =>
-          console.error('Async enrichment error:', error)
-        )
-      );
-    }
-
-    return response;
   }
 
   private async handleTier3(
