@@ -110,7 +110,21 @@ async function discoverSkills(endpoint: string): Promise<DiscoveredSkills> {
   const skills: DiscoveredSkills = {};
 
   // Strategy 1: Direct DB query (most reliable — works even without Workers AI)
-  const dbUrl = process.env.DATABASE_URL ?? process.env.NEON_CONNECTION_STRING;
+  let dbUrl = process.env.DATABASE_URL ?? process.env.NEON_CONNECTION_STRING;
+
+  // Auto-read from wrangler.toml if not set in env
+  if (!dbUrl) {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const toml = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'wrangler.toml'), 'utf-8');
+      const match = toml.match(/NEON_CONNECTION_STRING\s*=\s*"([^"]+)"/);
+      if (match) dbUrl = match[1];
+    } catch {
+      // Ignore — fall through to search-based discovery
+    }
+  }
+
   if (dbUrl) {
     try {
       const { Pool } = await import('@neondatabase/serverless');
