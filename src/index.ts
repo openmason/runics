@@ -1424,7 +1424,9 @@ export default {
       );
     }
 
-    // Every 5 minutes: direct Cognium scan backfill (bypasses queues)
+    // Every 5 minutes: two-phase Cognium scan backfill (bypasses queues)
+    // Phase 1: Poll pending jobs (submitted in previous cycles)
+    // Phase 2: Submit new skills for scanning
     ctx.waitUntil(
       (async () => {
         const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
@@ -1436,10 +1438,93 @@ export default {
         try {
           const { buildCircleIRRequest } = await import('./cognium/request-builder');
           const { normalizeFindings } = await import('./cognium/finding-mapper');
-          const { applyScanReport } = await import('./cognium/scan-report-handler');
+          const { applyScanReport, markScanFailed } = await import('./cognium/scan-report-handler');
 
-          // Pick up to 3 unscanned skills (prefer non-GitHub for speed)
-          const result = await pool.query(
+          // ── Phase 1: Poll pending jobs ────────────────────────────────────
+          // Check skills with cognium_job_id set (submitted in prior cron cycles)
+          const pendingJobs = await pool.query(
+            `SELECT id, slug, version, name, description, source, status,
+                    execution_layer AS "executionLayer",
+                    skill_md AS "skillMd",
+                    root_source AS "rootSource", skill_type AS "skillType",
+                    source_url AS "sourceUrl",
+                    schema_json AS "schemaJson",
+                    capabilities_required AS "capabilitiesRequired",
+                    cognium_job_id AS "cogniumJobId",
+                    cognium_job_submitted_at AS "cogniumJobSubmittedAt"
+             FROM skills
+             WHERE cognium_job_id IS NOT NULL
+             ORDER BY cognium_job_submitted_at ASC
+             LIMIT 5`
+          );
+
+          let polled = 0;
+          for (const skill of pendingJobs.rows) {
+            try {
+              const statusRes = await fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/status`, {
+                headers: authHeaders,
+              });
+              if (!statusRes.ok) {
+                console.error(`[CRON-POLL] Status check failed for ${skill.slug}: ${statusRes.status}`);
+                // Stale job (>1h) — clear and let it be re-submitted
+                const ageMs = Date.now() - new Date(skill.cogniumJobSubmittedAt).getTime();
+                if (ageMs > 3600_000) {
+                  await pool.query(
+                    `UPDATE skills SET cognium_job_id = NULL, cognium_job_submitted_at = NULL WHERE id = $1`,
+                    [skill.id]
+                  );
+                }
+                continue;
+              }
+              const jobStatus = await statusRes.json() as any;
+
+              if (jobStatus.status === 'completed') {
+                const [findingsRes, skillResultRes] = await Promise.all([
+                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/findings`, { headers: authHeaders }),
+                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/skill-result`, { headers: authHeaders }),
+                ]);
+                const { findings: raw } = await findingsRes.json() as { findings: any[] };
+                const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
+
+                await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
+                // Clear job tracking columns
+                await pool.query(
+                  `UPDATE skills SET cognium_job_id = NULL, cognium_job_submitted_at = NULL WHERE id = $1`,
+                  [skill.id]
+                );
+                polled++;
+                console.log(`[CRON-POLL] Applied results for ${skill.slug} (${raw.length} findings)`);
+              } else if (jobStatus.status === 'failed' || jobStatus.status === 'cancelled') {
+                await markScanFailed(pool, skill.id, `Circle-IR job ${jobStatus.status}`);
+                await pool.query(
+                  `UPDATE skills SET cognium_job_id = NULL, cognium_job_submitted_at = NULL WHERE id = $1`,
+                  [skill.id]
+                );
+                console.warn(`[CRON-POLL] Job ${jobStatus.status} for ${skill.slug}`);
+              } else {
+                // Still running — check if stale (>30 min)
+                const ageMs = Date.now() - new Date(skill.cogniumJobSubmittedAt).getTime();
+                if (ageMs > 1800_000) {
+                  await markScanFailed(pool, skill.id, `Poll timeout after ${Math.round(ageMs / 60000)}min`);
+                  await pool.query(
+                    `UPDATE skills SET cognium_job_id = NULL, cognium_job_submitted_at = NULL WHERE id = $1`,
+                    [skill.id]
+                  );
+                  console.warn(`[CRON-POLL] Timeout for ${skill.slug} after ${Math.round(ageMs / 60000)}min`);
+                }
+                // Otherwise, leave it — will be polled again next cycle
+              }
+            } catch (e: any) {
+              console.error(`[CRON-POLL] Error polling ${skill.slug}:`, e.message);
+            }
+          }
+          if (polled > 0) {
+            console.log(`[CRON] Poll phase: applied ${polled} scan results`);
+          }
+
+          // ── Phase 2: Submit new skills ────────────────────────────────────
+          // Pick unscanned skills that don't have a pending job
+          const newSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
                     skill_md AS "skillMd",
@@ -1449,14 +1534,15 @@ export default {
                     capabilities_required AS "capabilitiesRequired"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
+               AND cognium_job_id IS NULL
              ORDER BY
                CASE WHEN source = 'github' THEN 1 ELSE 0 END ASC,
                created_at ASC
              LIMIT 3`
           );
 
-          let scanned = 0;
-          for (const skill of result.rows) {
+          let submitted = 0;
+          for (const skill of newSkills.rows) {
             try {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
@@ -1464,42 +1550,51 @@ export default {
                 body: JSON.stringify(buildCircleIRRequest(skill)),
               });
               if (!submitRes.ok) {
-                console.error(`[CRON-SCAN] Submit failed for ${skill.slug}: ${submitRes.status}`);
+                console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
                 continue;
               }
               const { job_id } = await submitRes.json() as { job_id: string };
 
-              // Poll — up to 15 × 4s = 60s per skill
-              let jobStatus: any;
-              for (let i = 0; i < 15; i++) {
-                await new Promise(r => setTimeout(r, 4000));
-                const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-                  headers: authHeaders,
-                });
-                jobStatus = await statusRes.json();
-                if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
+              // For non-GitHub skills, try to poll inline (they finish in <5s)
+              if (skill.source !== 'github') {
+                let jobStatus: any;
+                for (let i = 0; i < 5; i++) {
+                  await new Promise(r => setTimeout(r, 2000));
+                  const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
+                    headers: authHeaders,
+                  });
+                  jobStatus = await statusRes.json();
+                  if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
+                }
+
+                if (jobStatus.status === 'completed') {
+                  const [findingsRes, skillResultRes] = await Promise.all([
+                    fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
+                    fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
+                  ]);
+                  const { findings: raw } = await findingsRes.json() as { findings: any[] };
+                  const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
+
+                  await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
+                  submitted++;
+                  continue;
+                }
+                // Didn't complete inline — fall through to store job_id
               }
 
-              if (jobStatus.status !== 'completed') {
-                console.warn(`[CRON-SCAN] ${skill.slug} still ${jobStatus.status} after timeout`);
-                continue;
-              }
-
-              const [findingsRes, skillResultRes] = await Promise.all([
-                fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
-                fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
-              ]);
-              const { findings: raw } = await findingsRes.json() as { findings: any[] };
-              const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
-
-              await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
-              scanned++;
+              // Store job_id for polling in next cron cycle (GitHub + slow skills)
+              await pool.query(
+                `UPDATE skills SET cognium_job_id = $1, cognium_job_submitted_at = NOW() WHERE id = $2`,
+                [job_id, skill.id]
+              );
+              submitted++;
+              console.log(`[CRON-SUBMIT] Submitted ${skill.slug} → job ${job_id} (deferred poll)`);
             } catch (e: any) {
-              console.error(`[CRON-SCAN] Error scanning ${skill.slug}:`, e.message);
+              console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
             }
           }
-          if (scanned > 0) {
-            console.log(`[CRON] Scan backfill: scanned ${scanned} skills directly`);
+          if (submitted > 0) {
+            console.log(`[CRON] Submit phase: submitted ${submitted} skills`);
           }
         } catch (e: any) {
           console.error('[CRON] Scan backfill failed:', e.message);

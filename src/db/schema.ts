@@ -62,6 +62,8 @@ export const skills = pgTable(
     r2BundleKey: text('r2_bundle_key'),
     tenantId: text('tenant_id'),
     cogniumScannedAt: timestamp('cognium_scanned_at'),
+    cogniumJobId: text('cognium_job_id'),
+    cogniumJobSubmittedAt: timestamp('cognium_job_submitted_at'),
     // Composition & Social layer (v4)
     // Author attribution
     authorId: uuid('author_id'),
