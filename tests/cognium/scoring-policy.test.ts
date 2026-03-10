@@ -102,6 +102,62 @@ describe('computeTrustScore', () => {
     expect(score).toBe(0.55);
   });
 
+  it('should apply CRITICAL_INJECTION for CWE-77 (command injection)', () => {
+    const skill = makeSkill({ source: 'github' }); // base: 0.55
+    const findings = [makeFinding({ severity: 'CRITICAL', cweId: 'CWE-77' })];
+    expect(computeTrustScore(skill, findings)).toBe(0.30);
+  });
+
+  it('should apply HIGH_INJECTION for CWE-79 at HIGH severity', () => {
+    const skill = makeSkill({ source: 'mcp-registry' }); // base: 0.80
+    const findings = [makeFinding({ severity: 'HIGH', cweId: 'CWE-79' })];
+    expect(computeTrustScore(skill, findings)).toBe(0.60);
+  });
+
+  it('should apply SECRET_EXPOSURE for CWE-312', () => {
+    const skill = makeSkill({ source: 'github' }); // base: 0.55
+    const findings = [makeFinding({ severity: 'HIGH', cweId: 'CWE-312' })];
+    expect(computeTrustScore(skill, findings)).toBe(0.25);
+  });
+
+  it('should apply SECRET_EXPOSURE for CWE-321 and CWE-522', () => {
+    const skill = makeSkill({ source: 'mcp-registry' }); // base: 0.80
+    expect(computeTrustScore(skill, [makeFinding({ severity: 'MEDIUM', cweId: 'CWE-321' })])).toBe(0.50);
+    expect(computeTrustScore(skill, [makeFinding({ severity: 'LOW', cweId: 'CWE-522' })])).toBe(0.50);
+  });
+
+  it('should accumulate impacts across SAST + instruction + capability', () => {
+    const skill = makeSkill({ source: 'mcp-registry' }); // base: 0.80
+    const findings = [
+      makeFinding({ severity: 'HIGH', cweId: 'CWE-79' }),                // HIGH_INJECTION: -0.20
+      makeFinding({ severity: 'HIGH', phase: 'instruction_safety' }),     // HIGH_INSTRUCTION: -0.20
+      makeFinding({ severity: 'HIGH', phase: 'capability_mismatch' }),    // HIGH_CAPABILITY_MISMATCH: -0.15
+    ];
+    expect(computeTrustScore(skill, findings)).toBe(0.25);
+  });
+
+  it('should apply -0.05 for MEDIUM finding with no phase-specific classification', () => {
+    const skill = makeSkill({ source: 'mcp-registry' }); // base: 0.80
+    const findings = [makeFinding({ severity: 'MEDIUM', cweId: 'CWE-200', phase: undefined })];
+    expect(computeTrustScore(skill, findings)).toBe(0.75);
+  });
+
+  it('should apply 0 impact for LOW finding with no matching classification', () => {
+    const skill = makeSkill({ source: 'github' }); // base: 0.55
+    const findings = [makeFinding({ severity: 'LOW', cweId: 'CWE-200', phase: undefined })];
+    expect(computeTrustScore(skill, findings)).toBe(0.55);
+  });
+
+  it('should return correct base trust for all known sources', () => {
+    const cases: [string, number][] = [
+      ['mcp-registry', 0.80], ['clawhub', 0.65], ['github', 0.55],
+      ['manual', 0.60], ['forge', 0.40], ['human-distilled', 0.50],
+    ];
+    for (const [source, expected] of cases) {
+      expect(computeTrustScore(makeSkill({ source }), [])).toBe(expected);
+    }
+  });
+
   it('should apply CRITICAL_INSTRUCTION impact for instruction_safety phase', () => {
     const skill = makeSkill({ source: 'clawhub' }); // base: 0.65
     const findings = [makeFinding({ severity: 'CRITICAL', phase: 'instruction_safety' })]; // -0.30
@@ -158,9 +214,9 @@ describe('deriveTier', () => {
     expect(deriveTier('CRITICAL', 0.9)).toBe('scanned');
   });
 
-  it('should return verified for high trust and non-HIGH severity', () => {
-    expect(deriveTier('LOW', 0.75)).toBe('verified');
-    expect(deriveTier(null, 0.80)).toBe('verified');
+  it('should return verified for code-full + high trust and non-HIGH severity', () => {
+    expect(deriveTier('LOW', 0.75, 'code-full')).toBe('verified');
+    expect(deriveTier(null, 0.80, 'code-full')).toBe('verified');
   });
 
   it('should return scanned for high trust but HIGH severity', () => {
@@ -170,6 +226,92 @@ describe('deriveTier', () => {
   it('should return scanned for low trust', () => {
     expect(deriveTier('LOW', 0.50)).toBe('scanned');
     expect(deriveTier(null, 0.60)).toBe('scanned');
+  });
+
+  it('should return verified for code-full + high trust + no findings', () => {
+    expect(deriveTier(null, 0.80, 'code-full')).toBe('verified');
+  });
+
+  it('should return scanned for instructions-only even with high trust', () => {
+    expect(deriveTier(null, 0.90, 'instructions-only')).toBe('scanned');
+    expect(deriveTier('LOW', 0.85, 'instructions-only')).toBe('scanned');
+  });
+
+  it('should return scanned for metadata-only even with high trust', () => {
+    expect(deriveTier(null, 0.90, 'metadata-only')).toBe('scanned');
+  });
+
+  it('should return scanned for code-partial even with high trust', () => {
+    expect(deriveTier(null, 0.90, 'code-partial')).toBe('scanned');
+    expect(deriveTier('LOW', 0.80, 'code-partial')).toBe('scanned');
+  });
+
+  it('should return verified at exactly 0.70 trust boundary with code-full', () => {
+    expect(deriveTier('LOW', 0.70, 'code-full')).toBe('verified');
+    expect(deriveTier(null, 0.70, 'code-full')).toBe('verified');
+  });
+
+  it('should return scanned at 0.69 trust with code-full', () => {
+    expect(deriveTier('LOW', 0.69, 'code-full')).toBe('scanned');
+    expect(deriveTier(null, 0.69, 'code-full')).toBe('scanned');
+  });
+
+  it('should return scanned for HIGH severity even with code-full and high trust', () => {
+    expect(deriveTier('HIGH', 0.80, 'code-full')).toBe('scanned');
+  });
+
+  it('should return verified for MEDIUM severity with code-full and high trust', () => {
+    expect(deriveTier('MEDIUM', 0.75, 'code-full')).toBe('verified');
+  });
+});
+
+describe('end-to-end scoring scenarios', () => {
+  it('clean GitHub skill: trust=0.55, published, scanned (0.55 < 0.70)', () => {
+    const skill = makeSkill({ source: 'github' });
+    const trust = computeTrustScore(skill, []);
+    const status = deriveStatus(null);
+    const tier = deriveTier(null, trust, 'code-full');
+    expect(trust).toBe(0.55);
+    expect(status).toBe('published');
+    expect(tier).toBe('scanned');
+  });
+
+  it('clean mcp-registry metadata-only: trust=0.80, published, scanned', () => {
+    const skill = makeSkill({ source: 'mcp-registry' });
+    const trust = computeTrustScore(skill, []);
+    const tier = deriveTier(null, trust, 'metadata-only');
+    expect(trust).toBe(0.80);
+    expect(tier).toBe('scanned');
+  });
+
+  it('mcp-registry with repo (code-full): trust=0.80, published, verified', () => {
+    const skill = makeSkill({ source: 'mcp-registry' });
+    const trust = computeTrustScore(skill, []);
+    const tier = deriveTier(null, trust, 'code-full');
+    expect(trust).toBe(0.80);
+    expect(tier).toBe('verified');
+  });
+
+  it('CRITICAL CWE-78 on forge: trust=0.15, revoked, scanned', () => {
+    const skill = makeSkill({ source: 'forge' }); // base: 0.40
+    const findings = [makeFinding({ severity: 'CRITICAL', cweId: 'CWE-78' })]; // -0.25
+    const trust = computeTrustScore(skill, findings);
+    const status = deriveStatus('CRITICAL');
+    const tier = deriveTier('CRITICAL', trust, 'code-full');
+    expect(trust).toBe(0.15);
+    expect(status).toBe('revoked');
+    expect(tier).toBe('scanned');
+  });
+
+  it('multiple severe findings: trust floors at 0.0', () => {
+    const skill = makeSkill({ source: 'forge' }); // base: 0.40
+    const findings = [
+      makeFinding({ severity: 'CRITICAL', cweId: 'CWE-78' }),            // -0.25
+      makeFinding({ severity: 'HIGH', cweId: 'CWE-798' }),               // -0.30
+      makeFinding({ severity: 'HIGH', phase: 'instruction_safety' }),     // -0.20
+    ];
+    const trust = computeTrustScore(skill, findings);
+    expect(trust).toBe(0.0);
   });
 });
 

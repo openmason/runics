@@ -111,5 +111,61 @@ describe('buildCircleIRRequest', () => {
       const req = buildCircleIRRequest(skill);
       expect(req.files?.['SKILL.md']).toBe('tiny');
     });
+
+    it('should include _metadata.json when r2BundleKey is present', () => {
+      const skill = makeSkill({ r2BundleKey: 'bundles/abc123.zip', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['_metadata.json']).toBeDefined();
+      const meta = JSON.parse(req.files!['_metadata.json']);
+      expect(meta.r2_bundle_key).toBe('bundles/abc123.zip');
+    });
+
+    it('should fall back to name when description is empty', () => {
+      const skill = makeSkill({ description: '', skillMd: null, sourceUrl: null, schemaJson: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['SKILL.md']).toBe('Test Skill');
+    });
+
+    it('should produce valid request with all optional fields null', () => {
+      const skill = makeSkill({
+        skillMd: null, sourceUrl: null, repositoryUrl: null,
+        schemaJson: null, r2BundleKey: null, description: '',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.skill_context.name).toBe('Test Skill');
+      expect(req.files).toBeDefined();
+      expect(Object.keys(req.files!).length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Mode A — repositoryUrl fallback', () => {
+    it('should fall back to repositoryUrl when sourceUrl is not GitHub', () => {
+      const skill = makeSkill({
+        sourceUrl: 'https://clawhub.ai/skills/my-skill',
+        repositoryUrl: 'https://github.com/owner/repo',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBe('https://github.com/owner/repo');
+      expect(req.files).toBeUndefined();
+    });
+
+    it('should prefer sourceUrl over repositoryUrl when both are GitHub', () => {
+      const skill = makeSkill({
+        sourceUrl: 'https://github.com/primary/repo',
+        repositoryUrl: 'https://github.com/secondary/repo',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBe('https://github.com/primary/repo');
+    });
+
+    it('should use Mode B when neither sourceUrl nor repositoryUrl is GitHub', () => {
+      const skill = makeSkill({
+        sourceUrl: 'https://clawhub.ai/skills/my-skill',
+        repositoryUrl: 'https://gitlab.com/owner/repo',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBeUndefined();
+      expect(req.files).toBeDefined();
+    });
   });
 });

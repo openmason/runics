@@ -16,9 +16,9 @@ import { cascadeStatusToComposites, repairCompositeStatus } from './composite-ca
 import { triggerNotification } from './notification-trigger';
 import { isGitHubRepoUrl } from '../sync/utils';
 
-type ScanCoverageV2 = 'code-full' | 'code-partial' | 'instructions-only' | 'metadata-only';
+export type ScanCoverageV2 = 'code-full' | 'code-partial' | 'instructions-only' | 'metadata-only';
 
-function determineScanCoverage(
+export function determineScanCoverage(
   skill: SkillRow,
   job: CircleIRJobStatus,
 ): ScanCoverageV2 {

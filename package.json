@@ -11,6 +11,7 @@
     "db:test": "tsx scripts/test-db.ts",
     "seed": "tsx scripts/seed-eval-skills.ts",
     "eval": "tsx scripts/run-eval.ts",
+    "verify:cognium": "tsx scripts/run-cognium-verify.ts",
     "analyze-baseline": "tsx scripts/analyze-baseline.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest",

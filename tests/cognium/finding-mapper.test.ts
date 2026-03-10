@@ -127,6 +127,44 @@ describe('normalizeFindings', () => {
   it('should handle empty findings array', () => {
     expect(normalizeFindings([])).toEqual([]);
   });
+
+  it('should preserve all non-SAFE findings with mixed severity', () => {
+    const raw = [
+      makeRawFinding({ id: '1', severity: 'low', verdict: 'NEEDS_REVIEW' }),
+      makeRawFinding({ id: '2', severity: 'critical', verdict: 'VULNERABLE' }),
+      makeRawFinding({ id: '3', severity: 'medium', verdict: 'VULNERABLE' }),
+      makeRawFinding({ id: '4', severity: 'high', verdict: 'SAFE' }),
+    ];
+    const findings = normalizeFindings(raw);
+    expect(findings).toHaveLength(3);
+    expect(findings.map(f => f.severity)).toEqual(['LOW', 'CRITICAL', 'MEDIUM']);
+  });
+
+  it('should carry through NEEDS_REVIEW verdict with correct fields', () => {
+    const raw = [makeRawFinding({ verdict: 'NEEDS_REVIEW', severity: 'medium' })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].verdict).toBe('NEEDS_REVIEW');
+    expect(findings[0].severity).toBe('MEDIUM');
+    expect(findings[0].tool).toBe('circle-ir');
+  });
+
+  it('should generate remediation hint for SAST finding with sink and method', () => {
+    const raw = [makeRawFinding({
+      phase: 'sast',
+      sink: { type: 'sql_query', method: 'execute', cwe: 'CWE-89', location: { line: 42, code_snippet: 'db.execute(input)' } },
+      line_end: 42,
+    })];
+    const findings = normalizeFindings(raw);
+    expect(findings[0].remediationHint).toBe('sql_query via execute at line 42');
+  });
+
+  it('should handle large finding arrays (25 items) without error', () => {
+    const raw = Array.from({ length: 25 }, (_, i) =>
+      makeRawFinding({ id: `finding-${i}`, severity: i % 2 === 0 ? 'high' : 'medium' })
+    );
+    const findings = normalizeFindings(raw);
+    expect(findings).toHaveLength(25);
+  });
 });
 
 describe('deriveWorstSeverity', () => {
@@ -232,5 +270,51 @@ describe('isContentUnsafe', () => {
       { severity: 'HIGH', tool: 'test', phase: 'capability_mismatch', capabilityMismatch: true, title: 'Mismatch', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
     ];
     expect(isContentUnsafe(findings)).toBe(false);
+  });
+
+  it('should detect CWE-77 (command injection) as content unsafe', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', cweId: 'CWE-77', tool: 'test', title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
+  });
+
+  it('should detect CWE-79 (XSS) as content unsafe', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', cweId: 'CWE-79', tool: 'test', title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
+  });
+
+  it('should NOT flag secret exposure CWEs as content unsafe', () => {
+    for (const cwe of ['CWE-312', 'CWE-321', 'CWE-522']) {
+      const findings: ScanFinding[] = [
+        { severity: 'CRITICAL', cweId: cwe, tool: 'test', title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: true },
+      ];
+      expect(isContentUnsafe(findings)).toBe(false);
+    }
+  });
+
+  it('should return false for CRITICAL instruction_safety without LLM verification', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', tool: 'test', phase: 'instruction_safety', title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: false },
+    ];
+    expect(isContentUnsafe(findings)).toBe(false);
+  });
+
+  it('should return false for CRITICAL capability_mismatch without LLM verification', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'CRITICAL', tool: 'test', phase: 'capability_mismatch', capabilityMismatch: true, title: 't', description: 'd', confidence: 0.9, verdict: 'VULNERABLE', llmVerified: false },
+    ];
+    expect(isContentUnsafe(findings)).toBe(false);
+  });
+
+  it('should detect content unsafe even among many safe findings', () => {
+    const findings: ScanFinding[] = [
+      { severity: 'LOW', cweId: 'CWE-200', tool: 'test', title: 't', description: 'd', confidence: 0.5, verdict: 'VULNERABLE', llmVerified: false },
+      { severity: 'MEDIUM', cweId: 'CWE-400', tool: 'test', title: 't', description: 'd', confidence: 0.6, verdict: 'VULNERABLE', llmVerified: false },
+      { severity: 'CRITICAL', cweId: 'CWE-94', tool: 'test', title: 't', description: 'd', confidence: 0.95, verdict: 'VULNERABLE', llmVerified: true },
+    ];
+    expect(isContentUnsafe(findings)).toBe(true);
   });
 });
