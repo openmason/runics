@@ -10,7 +10,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import { BaseSyncWorker } from './base-sync';
-import { slugify } from './utils';
+import { slugify, isGitHubRepoUrl } from './utils';
 import type { SkillUpsert } from '../types';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -100,6 +100,10 @@ export class McpRegistrySync extends BaseSyncWorker {
     // Use the first remote URL as the MCP endpoint
     const mcpUrl = server.remotes?.[0]?.url ?? undefined;
 
+    // Extract GitHub repo URL from registry metadata (enables Mode A code scanning)
+    const repoUrl = server.repository?.url;
+    const repositoryUrl = repoUrl && isGitHubRepoUrl(repoUrl) ? repoUrl : undefined;
+
     return {
       name: server.title ?? server.name,
       slug: slugify(server.name),
@@ -107,6 +111,7 @@ export class McpRegistrySync extends BaseSyncWorker {
       version: server.version ?? '1.0.0',
       executionLayer: 'mcp-remote',
       mcpUrl,
+      repositoryUrl,
       capabilitiesRequired: [],
       source: 'mcp-registry',
       sourceUrl: `https://registry.modelcontextprotocol.io/v0/servers/${encodeURIComponent(server.name)}`,

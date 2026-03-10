@@ -145,6 +145,7 @@ async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | n
             skill_md AS "skillMd",
             r2_bundle_key AS "r2BundleKey",
             source_url AS "sourceUrl",
+            repository_url AS "repositoryUrl",
             root_source AS "rootSource",
             skill_type AS "skillType",
             composition_skill_ids AS "compositionSkillIds",

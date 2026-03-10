@@ -138,8 +138,9 @@ export abstract class BaseSyncWorker {
       `INSERT INTO skills (
         name, slug, version, source, description, schema_json,
         execution_layer, mcp_url, skill_md, capabilities_required,
-        source_url, source_hash, trust_score, tenant_id, content_safety_passed, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,true,NOW())
+        source_url, source_hash, trust_score, tenant_id, repository_url,
+        content_safety_passed, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,true,NOW())
       ON CONFLICT (source, source_url) WHERE source_url IS NOT NULL
       DO UPDATE SET
         name = EXCLUDED.name,
@@ -150,6 +151,7 @@ export abstract class BaseSyncWorker {
         skill_md = EXCLUDED.skill_md,
         capabilities_required = EXCLUDED.capabilities_required,
         source_hash = EXCLUDED.source_hash,
+        repository_url = COALESCE(EXCLUDED.repository_url, skills.repository_url),
         content_safety_passed = EXCLUDED.content_safety_passed,
         updated_at = NOW()
       RETURNING id`,
@@ -168,6 +170,7 @@ export abstract class BaseSyncWorker {
         skill.sourceHash,
         skill.trustScore ?? 0.5,
         skill.tenantId ?? null,
+        skill.repositoryUrl ?? null,
       ]
     );
     return result.rows[0].id;

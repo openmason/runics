@@ -91,9 +91,13 @@ export function deriveStatus(worstSeverity: ScanFinding['severity'] | null): Ski
 export function deriveTier(
   worstSeverity: ScanFinding['severity'] | null,
   trustScore: number,
+  scanCoverage?: string,
 ): VerificationTier {
   if (worstSeverity === 'CRITICAL') return 'scanned';
-  if (trustScore >= 0.70 && worstSeverity !== 'HIGH') return 'verified';
+  // Only code-level scans can produce 'verified' tier
+  if (scanCoverage === 'code-full' && trustScore >= 0.70 && worstSeverity !== 'HIGH') {
+    return 'verified';
+  }
   return 'scanned';
 }
 

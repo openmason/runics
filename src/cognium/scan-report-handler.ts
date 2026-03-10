@@ -14,6 +14,23 @@ import { deriveWorstSeverity, isContentUnsafe } from './finding-mapper';
 import { computeTrustScore, deriveStatus, deriveTier, buildRemediationMessage } from './scoring-policy';
 import { cascadeStatusToComposites, repairCompositeStatus } from './composite-cascade';
 import { triggerNotification } from './notification-trigger';
+import { isGitHubRepoUrl } from '../sync/utils';
+
+type ScanCoverageV2 = 'code-full' | 'code-partial' | 'instructions-only' | 'metadata-only';
+
+function determineScanCoverage(
+  skill: SkillRow,
+  job: CircleIRJobStatus,
+): ScanCoverageV2 {
+  const usedRepoUrl = isGitHubRepoUrl(skill.sourceUrl) || isGitHubRepoUrl(skill.repositoryUrl);
+  if (usedRepoUrl) {
+    return (job.metrics?.files_failed ?? 0) > 0 ? 'code-partial' : 'code-full';
+  }
+  if (skill.skillMd || skill.schemaJson || skill.r2BundleKey) {
+    return 'instructions-only';
+  }
+  return 'metadata-only';
+}
 
 export async function applyScanReport(
   env: Env,
@@ -25,6 +42,8 @@ export async function applyScanReport(
 ): Promise<void> {
   const worstSeverity = deriveWorstSeverity(findings);
   const contentUnsafe = isContentUnsafe(findings);
+
+  const coverage = determineScanCoverage(skill, job);
 
   // Content safety failure: absolute override
   if (contentUnsafe) {
@@ -46,7 +65,7 @@ export async function applyScanReport(
       WHERE id = $4`,
       [
         JSON.stringify(findings),
-        (job.metrics?.files_failed ?? 0) > 0 ? 'partial' : 'full',
+        coverage,
         skillResult ? JSON.stringify(skillResult) : null,
         skill.id,
       ]
@@ -59,7 +78,7 @@ export async function applyScanReport(
 
   const trustScore = computeTrustScore(skill, findings);
   const newStatus = deriveStatus(worstSeverity);
-  const tier = deriveTier(worstSeverity, trustScore);
+  const tier = deriveTier(worstSeverity, trustScore, coverage);
   const worstFinding = findings.find(f => f.severity === worstSeverity);
   const remediationMessage = worstFinding ? buildRemediationMessage(worstFinding, skill) : null;
 
@@ -83,7 +102,7 @@ export async function applyScanReport(
     [
       trustScore,
       tier,
-      (job.metrics?.files_failed ?? 0) > 0 ? 'partial' : 'full',
+      coverage,
       newStatus,
       worstFinding?.cweId ?? worstFinding?.title ?? null,
       remediationMessage,

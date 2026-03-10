@@ -57,6 +57,7 @@ export const skills = pgTable(
     // Phase 5: Sync pipeline columns
     sourceUrl: text('source_url'),
     sourceHash: text('source_hash'),
+    repositoryUrl: text('repository_url'),
     mcpUrl: text('mcp_url'),
     skillMd: text('skill_md'),
     r2BundleKey: text('r2_bundle_key'),

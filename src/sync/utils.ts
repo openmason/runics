@@ -14,6 +14,20 @@ export function slugify(name: string): string {
 }
 
 /**
+ * Check if a URL points to a GitHub repository (github.com with at least owner/repo path).
+ */
+export function isGitHubRepoUrl(url?: string | null): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'github.com'
+      && parsed.pathname.split('/').filter(Boolean).length >= 2;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Compute SHA-256 hash of a string using Web Crypto API.
  */
 export async function sha256(data: string): Promise<string> {

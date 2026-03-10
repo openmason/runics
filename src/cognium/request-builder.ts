@@ -9,6 +9,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { CircleIRSkillAnalyzeRequest, SkillRow } from './types';
+import { isGitHubRepoUrl } from '../sync/utils';
 
 export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeRequest {
   const skillContext: CircleIRSkillAnalyzeRequest['skill_context'] = {
@@ -26,10 +27,17 @@ export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeReque
     enable_llm_verification: true,
   };
 
-  // Mode A: GitHub skills with a valid repo URL
-  if (isGitHubRepoUrl(skill.sourceUrl)) {
+  // Mode A: Use repo URL for full code analysis
+  // Priority: sourceUrl (if GitHub) > repositoryUrl (discovered from upstream metadata)
+  const repoUrl = isGitHubRepoUrl(skill.sourceUrl)
+    ? skill.sourceUrl!
+    : isGitHubRepoUrl(skill.repositoryUrl)
+      ? skill.repositoryUrl!
+      : null;
+
+  if (repoUrl) {
     return {
-      repo_url: skill.sourceUrl!,
+      repo_url: repoUrl,
       skill_context: skillContext,
       options,
     };
@@ -42,16 +50,6 @@ export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeReque
     skill_context: skillContext,
     options,
   };
-}
-
-function isGitHubRepoUrl(url?: string | null): boolean {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname === 'github.com' && parsed.pathname.split('/').filter(Boolean).length >= 2;
-  } catch {
-    return false;
-  }
 }
 
 function buildInlineFiles(skill: SkillRow): Record<string, string> {

@@ -986,9 +986,11 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
               skill_md AS "skillMd",
+              r2_bundle_key AS "r2BundleKey",
               root_source AS "rootSource",
               skill_type AS "skillType",
               source_url AS "sourceUrl",
+              repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
               capabilities_required AS "capabilitiesRequired"
        FROM skills WHERE id = $1`, [skillId]
@@ -1079,8 +1081,10 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
               skill_md AS "skillMd",
+              r2_bundle_key AS "r2BundleKey",
               root_source AS "rootSource", skill_type AS "skillType",
               source_url AS "sourceUrl",
+              repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
               capabilities_required AS "capabilitiesRequired"
        FROM skills WHERE id = $1`, [skillId]
@@ -1193,8 +1197,10 @@ app.post('/v1/admin/backfill', async (c) => {
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
               skill_md AS "skillMd",
+              r2_bundle_key AS "r2BundleKey",
               root_source AS "rootSource", skill_type AS "skillType",
               source_url AS "sourceUrl",
+              repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
               capabilities_required AS "capabilitiesRequired"
        FROM skills
@@ -1446,8 +1452,10 @@ export default {
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
                     skill_md AS "skillMd",
+                    r2_bundle_key AS "r2BundleKey",
                     root_source AS "rootSource", skill_type AS "skillType",
                     source_url AS "sourceUrl",
+                    repository_url AS "repositoryUrl",
                     schema_json AS "schemaJson",
                     capabilities_required AS "capabilitiesRequired",
                     cognium_job_id AS "cogniumJobId",
@@ -1523,34 +1531,40 @@ export default {
           }
 
           // ── Phase 2: Submit new skills ────────────────────────────────────
-          // Non-GitHub: fetch up to 10, poll inline (they finish in <2s)
-          // GitHub: fetch up to 3, submit and defer poll to next cycle
+          // Fast path: skills without repo URL (Mode B inline, ~2s each)
+          // Repo path: GitHub source OR has repository_url (Mode A, deferred)
           const fastSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
                     skill_md AS "skillMd",
+                    r2_bundle_key AS "r2BundleKey",
                     root_source AS "rootSource", skill_type AS "skillType",
                     source_url AS "sourceUrl",
+                    repository_url AS "repositoryUrl",
                     schema_json AS "schemaJson",
                     capabilities_required AS "capabilitiesRequired"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
-               AND cognium_job_id IS NULL AND source != 'github'
+               AND cognium_job_id IS NULL
+               AND source != 'github' AND repository_url IS NULL
              ORDER BY created_at ASC
              LIMIT 10`
           );
 
-          const githubSkills = await pool.query(
+          const repoSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
                     skill_md AS "skillMd",
+                    r2_bundle_key AS "r2BundleKey",
                     root_source AS "rootSource", skill_type AS "skillType",
                     source_url AS "sourceUrl",
+                    repository_url AS "repositoryUrl",
                     schema_json AS "schemaJson",
                     capabilities_required AS "capabilitiesRequired"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
-               AND cognium_job_id IS NULL AND source = 'github'
+               AND cognium_job_id IS NULL
+               AND (source = 'github' OR repository_url IS NOT NULL)
              ORDER BY created_at ASC
              LIMIT 3`
           );
@@ -1605,8 +1619,8 @@ export default {
             }
           }
 
-          // Slow path: GitHub skills (submit + defer poll to next cycle)
-          for (const skill of githubSkills.rows) {
+          // Repo path: skills with GitHub source or repository_url (submit + defer poll)
+          for (const skill of repoSkills.rows) {
             try {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
@@ -1624,14 +1638,14 @@ export default {
                 [job_id, skill.id]
               );
               submitted++;
-              console.log(`[CRON-SUBMIT] GitHub ${skill.slug} → job ${job_id} (deferred poll)`);
+              console.log(`[CRON-SUBMIT] Repo ${skill.slug} → job ${job_id} (deferred poll)`);
             } catch (e: any) {
               console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
             }
           }
 
           if (submitted > 0) {
-            console.log(`[CRON] Submit phase: submitted ${submitted} skills (${fastSkills.rows.length} fast + ${githubSkills.rows.length} github)`);
+            console.log(`[CRON] Submit phase: submitted ${submitted} skills (${fastSkills.rows.length} fast + ${repoSkills.rows.length} repo)`);
           }
         } catch (e: any) {
           console.error('[CRON] Scan backfill failed:', e.message);

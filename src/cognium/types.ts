@@ -166,6 +166,7 @@ export interface SkillRow {
   skillMd?: string | null;
   r2BundleKey?: string | null;
   sourceUrl?: string | null;
+  repositoryUrl?: string | null;
   rootSource?: string | null;
   skillType?: string | null;
   compositionSkillIds?: string[] | null;
