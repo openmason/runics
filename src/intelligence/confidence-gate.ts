@@ -494,9 +494,16 @@ export class ConfidenceGate {
         rs.slug AS replacement_slug,
         s.tags,
         s.avg_execution_time_ms,
-        s.error_rate
+        s.error_rate,
+        s.human_star_count,
+        s.human_fork_count,
+        s.agent_invocation_count,
+        s.composition_inclusion_count,
+        a.handle AS author_handle,
+        a.author_type AS author_type
       FROM skills s
       LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
+      LEFT JOIN authors a ON a.id = s.author_id
       WHERE s.id = ANY($1::uuid[])
     `;
 
@@ -530,6 +537,12 @@ export class ConfidenceGate {
           tags: row.tags ?? undefined,
           avgExecutionTimeMs: row.avg_execution_time_ms ?? undefined,
           errorRate: row.error_rate ?? undefined,
+          humanStarCount: parseInt(row.human_star_count) || 0,
+          humanForkCount: parseInt(row.human_fork_count) || 0,
+          agentInvocationCount: parseInt(row.agent_invocation_count) || 0,
+          compositionInclusionCount: parseInt(row.composition_inclusion_count) || 0,
+          authorHandle: row.author_handle ?? undefined,
+          authorType: row.author_type ?? undefined,
         },
       ])
     );

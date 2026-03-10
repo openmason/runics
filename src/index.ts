@@ -1523,8 +1523,9 @@ export default {
           }
 
           // ── Phase 2: Submit new skills ────────────────────────────────────
-          // Pick unscanned skills that don't have a pending job
-          const newSkills = await pool.query(
+          // Non-GitHub: fetch up to 10, poll inline (they finish in <2s)
+          // GitHub: fetch up to 3, submit and defer poll to next cycle
+          const fastSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
                     skill_md AS "skillMd",
@@ -1534,15 +1535,30 @@ export default {
                     capabilities_required AS "capabilitiesRequired"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
-               AND cognium_job_id IS NULL
-             ORDER BY
-               CASE WHEN source = 'github' THEN 1 ELSE 0 END ASC,
-               created_at ASC
+               AND cognium_job_id IS NULL AND source != 'github'
+             ORDER BY created_at ASC
+             LIMIT 10`
+          );
+
+          const githubSkills = await pool.query(
+            `SELECT id, slug, version, name, description, source, status,
+                    execution_layer AS "executionLayer",
+                    skill_md AS "skillMd",
+                    root_source AS "rootSource", skill_type AS "skillType",
+                    source_url AS "sourceUrl",
+                    schema_json AS "schemaJson",
+                    capabilities_required AS "capabilitiesRequired"
+             FROM skills
+             WHERE cognium_scanned = false AND status = 'published'
+               AND cognium_job_id IS NULL AND source = 'github'
+             ORDER BY created_at ASC
              LIMIT 3`
           );
 
           let submitted = 0;
-          for (const skill of newSkills.rows) {
+
+          // Fast path: non-GitHub skills (inline poll, ~2s each)
+          for (const skill of fastSkills.rows) {
             try {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
@@ -1555,46 +1571,67 @@ export default {
               }
               const { job_id } = await submitRes.json() as { job_id: string };
 
-              // For non-GitHub skills, try to poll inline (they finish in <5s)
-              if (skill.source !== 'github') {
-                let jobStatus: any;
-                for (let i = 0; i < 5; i++) {
-                  await new Promise(r => setTimeout(r, 2000));
-                  const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-                    headers: authHeaders,
-                  });
-                  jobStatus = await statusRes.json();
-                  if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
-                }
-
-                if (jobStatus.status === 'completed') {
-                  const [findingsRes, skillResultRes] = await Promise.all([
-                    fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
-                    fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
-                  ]);
-                  const { findings: raw } = await findingsRes.json() as { findings: any[] };
-                  const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
-
-                  await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
-                  submitted++;
-                  continue;
-                }
-                // Didn't complete inline — fall through to store job_id
+              let jobStatus: any;
+              for (let i = 0; i < 5; i++) {
+                await new Promise(r => setTimeout(r, 2000));
+                const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
+                  headers: authHeaders,
+                });
+                jobStatus = await statusRes.json();
+                if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
               }
 
-              // Store job_id for polling in next cron cycle (GitHub + slow skills)
+              if (jobStatus.status === 'completed') {
+                const [findingsRes, skillResultRes] = await Promise.all([
+                  fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
+                  fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
+                ]);
+                const { findings: raw } = await findingsRes.json() as { findings: any[] };
+                const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
+
+                await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
+                submitted++;
+              } else {
+                // Slow non-GitHub skill — store for deferred poll
+                await pool.query(
+                  `UPDATE skills SET cognium_job_id = $1, cognium_job_submitted_at = NOW() WHERE id = $2`,
+                  [job_id, skill.id]
+                );
+                submitted++;
+                console.log(`[CRON-SUBMIT] ${skill.slug} slow, deferred → job ${job_id}`);
+              }
+            } catch (e: any) {
+              console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
+            }
+          }
+
+          // Slow path: GitHub skills (submit + defer poll to next cycle)
+          for (const skill of githubSkills.rows) {
+            try {
+              const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify(buildCircleIRRequest(skill)),
+              });
+              if (!submitRes.ok) {
+                console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
+                continue;
+              }
+              const { job_id } = await submitRes.json() as { job_id: string };
+
               await pool.query(
                 `UPDATE skills SET cognium_job_id = $1, cognium_job_submitted_at = NOW() WHERE id = $2`,
                 [job_id, skill.id]
               );
               submitted++;
-              console.log(`[CRON-SUBMIT] Submitted ${skill.slug} → job ${job_id} (deferred poll)`);
+              console.log(`[CRON-SUBMIT] GitHub ${skill.slug} → job ${job_id} (deferred poll)`);
             } catch (e: any) {
               console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
             }
           }
+
           if (submitted > 0) {
-            console.log(`[CRON] Submit phase: submitted ${submitted} skills`);
+            console.log(`[CRON] Submit phase: submitted ${submitted} skills (${fastSkills.rows.length} fast + ${githubSkills.rows.length} github)`);
           }
         } catch (e: any) {
           console.error('[CRON] Scan backfill failed:', e.message);
