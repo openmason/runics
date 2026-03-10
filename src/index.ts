@@ -977,11 +977,9 @@ app.route('/v1/authors', authorRoutes);
 
 app.post('/v1/admin/scan/:skillId', async (c) => {
   const skillId = c.req.param('skillId');
+  const mode = c.req.query('mode') ?? 'inline'; // 'inline' (direct) or 'queue' (async)
   try {
-    // Direct scan: submit to Circle-IR, poll inline, apply report
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
-    const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-    const apiKey = c.env.COGNIUM_API_KEY ?? '';
 
     // Fetch skill
     const skillRes = await pool.query(
@@ -989,28 +987,49 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
               execution_layer AS "executionLayer",
               skill_md AS "skillMd",
               root_source AS "rootSource",
-              skill_type AS "skillType"
+              skill_type AS "skillType",
+              source_url AS "sourceUrl",
+              schema_json AS "schemaJson",
+              capabilities_required AS "capabilitiesRequired"
        FROM skills WHERE id = $1`, [skillId]
     );
     if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
     const skill = skillRes.rows[0];
 
-    // Submit to Circle-IR
+    // Queue mode: just enqueue and return immediately (better for GitHub/slow repos)
+    if (mode === 'queue') {
+      try {
+        await c.env.COGNIUM_QUEUE.send({
+          skillId: skill.id,
+          priority: 'high' as const,
+          timestamp: Date.now(),
+        });
+      } catch (qErr) {
+        return c.json({ error: `Queue send failed: ${(qErr as Error).message}`, skillId, queueError: true }, 503);
+      }
+      return c.json({ success: true, skillId, mode: 'queue', message: 'Enqueued for async scanning' });
+    }
+
+    // Inline mode: submit to Circle-IR Skills API, poll, apply report
+    const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
+    const apiKey = c.env.COGNIUM_API_KEY ?? '';
+    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
+
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
-    const submitRes = await fetch(`${cogniumUrl}/api/analyze`, {
+    const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify(buildCircleIRRequest(skill)),
     });
     if (!submitRes.ok) return c.json({ error: `Circle-IR submit failed: ${submitRes.status}` }, 502);
     const { job_id } = await submitRes.json() as { job_id: string };
 
-    // Poll until done (max 30s)
+    // Poll until done (max 60s = 15 × 4s)
     let jobStatus: any;
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 3000));
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 4000));
       const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
+        headers: authHeaders,
       });
       jobStatus = await statusRes.json();
       if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
@@ -1020,19 +1039,81 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
       return c.json({ error: `Job ${job_id} ended with status: ${jobStatus.status}`, jobStatus }, 502);
     }
 
-    // Fetch findings
-    const findingsRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` },
-    });
+    // Fetch findings + skill-result in parallel
+    const [findingsRes, skillResultRes] = await Promise.all([
+      fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
+      fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
+    ]);
     const { findings: raw } = await findingsRes.json() as { findings: any[] };
+    const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
 
-    // Normalize and apply
     const { normalizeFindings } = await import('./cognium/finding-mapper');
     const { applyScanReport } = await import('./cognium/scan-report-handler');
     const findings = normalizeFindings(raw);
-    await applyScanReport(c.env, pool, skill, findings, jobStatus);
+    await applyScanReport(c.env, pool, skill, findings, jobStatus, skillResult);
 
-    return c.json({ success: true, skillId, jobId: job_id, findingsCount: findings.length, status: jobStatus.status });
+    return c.json({
+      success: true, skillId, jobId: job_id,
+      findingsCount: findings.length,
+      trustScore: skillResult?.trust_score,
+      verdict: skillResult?.verdict,
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message, skillId }, 500);
+  }
+});
+
+// Admin: apply results from an existing Circle-IR job to a skill
+app.post('/v1/admin/apply-job/:skillId', async (c) => {
+  const skillId = c.req.param('skillId');
+  const jobId = c.req.query('job_id');
+  if (!jobId) return c.json({ error: 'Missing job_id query parameter' }, 400);
+
+  try {
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
+    const apiKey = c.env.COGNIUM_API_KEY ?? '';
+    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
+
+    const skillRes = await pool.query(
+      `SELECT id, slug, version, name, description, source, status,
+              execution_layer AS "executionLayer",
+              skill_md AS "skillMd",
+              root_source AS "rootSource", skill_type AS "skillType",
+              source_url AS "sourceUrl",
+              schema_json AS "schemaJson",
+              capabilities_required AS "capabilitiesRequired"
+       FROM skills WHERE id = $1`, [skillId]
+    );
+    if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
+    const skill = skillRes.rows[0];
+
+    // Fetch status, findings, and skill-result from Circle-IR
+    const [statusRes, findingsRes, skillResultRes] = await Promise.all([
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/status`, { headers: authHeaders }),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, { headers: authHeaders }),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`, { headers: authHeaders }),
+    ]);
+
+    const jobStatus = await statusRes.json() as any;
+    if (jobStatus.status !== 'completed') {
+      return c.json({ error: `Job not completed: ${jobStatus.status}` }, 400);
+    }
+
+    const { findings: raw } = await findingsRes.json() as { findings: any[] };
+    const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
+
+    const { normalizeFindings } = await import('./cognium/finding-mapper');
+    const { applyScanReport } = await import('./cognium/scan-report-handler');
+    const findings = normalizeFindings(raw);
+    await applyScanReport(c.env, pool, skill, findings, jobStatus, skillResult);
+
+    return c.json({
+      success: true, skillId, jobId,
+      findingsCount: findings.length,
+      trustScore: skillResult?.trust_score,
+      verdict: skillResult?.verdict,
+    });
   } catch (err) {
     return c.json({ error: (err as Error).message, skillId }, 500);
   }
@@ -1093,23 +1174,33 @@ app.post('/v1/admin/scan-test/:skillId', async (c) => {
   }
 });
 
-// Admin: backfill — direct inline scan of unverified skills
+// Admin: backfill — direct inline scan of unverified skills via Skills API
 app.post('/v1/admin/backfill', async (c) => {
   try {
-    const limit = Math.min(parseInt(c.req.query('limit') ?? '15', 10), 50);
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '3', 10), 10);
+    const source = c.req.query('source'); // optional: filter by source
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
     const apiKey = c.env.COGNIUM_API_KEY ?? '';
+    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
+
+    const whereClause = source
+      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND source = $2`
+      : `WHERE verification_tier = 'unverified' AND status = 'published'`;
+    const params = source ? [limit, source] : [limit];
 
     const result = await pool.query(
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
               skill_md AS "skillMd",
-              root_source AS "rootSource", skill_type AS "skillType"
+              root_source AS "rootSource", skill_type AS "skillType",
+              source_url AS "sourceUrl",
+              schema_json AS "schemaJson",
+              capabilities_required AS "capabilitiesRequired"
        FROM skills
-       WHERE verification_tier = 'unverified' AND status = 'published'
+       ${whereClause}
        ORDER BY created_at ASC LIMIT $1`,
-      [limit]
+      params
     );
 
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
@@ -1119,37 +1210,50 @@ app.post('/v1/admin/backfill', async (c) => {
     let scanned = 0;
     let failed = 0;
     const errors: string[] = [];
+    const details: { slug: string; findings: number; trustScore?: number; verdict?: string }[] = [];
 
     for (const skill of result.rows) {
       try {
-        // Submit
-        const submitRes = await fetch(`${cogniumUrl}/api/analyze`, {
+        // Submit to Skills API
+        const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
           body: JSON.stringify(buildCircleIRRequest(skill)),
         });
         if (!submitRes.ok) { failed++; errors.push(`${skill.slug}: submit ${submitRes.status}`); continue; }
         const { job_id } = await submitRes.json() as { job_id: string };
 
-        // Poll (most complete in <500ms)
+        // Poll — Mode B completes in <2s, Mode A (GitHub) can take ~60s
+        // Cap at 15 iterations × 4s = 60s max to stay within CF subrequest limits
         let jobStatus: any;
-        for (let i = 0; i < 4; i++) {
-          await new Promise(r => setTimeout(r, 500));
+        for (let i = 0; i < 15; i++) {
+          await new Promise(r => setTimeout(r, 4000));
           const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
+            headers: authHeaders,
           });
           jobStatus = await statusRes.json();
           if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
         }
         if (jobStatus.status !== 'completed') { failed++; errors.push(`${skill.slug}: ${jobStatus.status}`); continue; }
 
-        // Findings + apply
-        const findingsRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` },
-        });
+        // Fetch findings + skill-result in parallel
+        const [findingsRes, skillResultRes] = await Promise.all([
+          fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
+          fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
+        ]);
         const { findings: raw } = await findingsRes.json() as { findings: any[] };
-        await applyScanReport(c.env, pool, skill, normalizeFindings(raw), jobStatus);
+        const skillResult = skillResultRes.ok
+          ? await skillResultRes.json() as any
+          : null;
+
+        await applyScanReport(c.env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
         scanned++;
+        details.push({
+          slug: skill.slug,
+          findings: raw.length,
+          trustScore: skillResult?.trust_score,
+          verdict: skillResult?.verdict,
+        });
       } catch (err) {
         failed++;
         errors.push(`${skill.slug}: ${(err as Error).message}`);
@@ -1160,7 +1264,7 @@ app.post('/v1/admin/backfill', async (c) => {
       `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published'`
     );
 
-    return c.json({ scanned, failed, remaining: remaining.rows[0].cnt, errors: errors.slice(0, 10) });
+    return c.json({ scanned, failed, remaining: remaining.rows[0].cnt, details, errors: errors.slice(0, 10) });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
@@ -1320,6 +1424,89 @@ export default {
       );
     }
 
+    // Every 5 minutes: direct Cognium scan backfill (bypasses queues)
+    ctx.waitUntil(
+      (async () => {
+        const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+        const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
+        const apiKey = env.COGNIUM_API_KEY ?? '';
+        if (!apiKey) return;
+        const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
+
+        try {
+          const { buildCircleIRRequest } = await import('./cognium/request-builder');
+          const { normalizeFindings } = await import('./cognium/finding-mapper');
+          const { applyScanReport } = await import('./cognium/scan-report-handler');
+
+          // Pick up to 3 unscanned skills (prefer non-GitHub for speed)
+          const result = await pool.query(
+            `SELECT id, slug, version, name, description, source, status,
+                    execution_layer AS "executionLayer",
+                    skill_md AS "skillMd",
+                    root_source AS "rootSource", skill_type AS "skillType",
+                    source_url AS "sourceUrl",
+                    schema_json AS "schemaJson",
+                    capabilities_required AS "capabilitiesRequired"
+             FROM skills
+             WHERE cognium_scanned = false AND status = 'published'
+             ORDER BY
+               CASE WHEN source = 'github' THEN 1 ELSE 0 END ASC,
+               created_at ASC
+             LIMIT 3`
+          );
+
+          let scanned = 0;
+          for (const skill of result.rows) {
+            try {
+              const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                body: JSON.stringify(buildCircleIRRequest(skill)),
+              });
+              if (!submitRes.ok) {
+                console.error(`[CRON-SCAN] Submit failed for ${skill.slug}: ${submitRes.status}`);
+                continue;
+              }
+              const { job_id } = await submitRes.json() as { job_id: string };
+
+              // Poll — up to 15 × 4s = 60s per skill
+              let jobStatus: any;
+              for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 4000));
+                const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
+                  headers: authHeaders,
+                });
+                jobStatus = await statusRes.json();
+                if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
+              }
+
+              if (jobStatus.status !== 'completed') {
+                console.warn(`[CRON-SCAN] ${skill.slug} still ${jobStatus.status} after timeout`);
+                continue;
+              }
+
+              const [findingsRes, skillResultRes] = await Promise.all([
+                fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
+                fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
+              ]);
+              const { findings: raw } = await findingsRes.json() as { findings: any[] };
+              const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
+
+              await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
+              scanned++;
+            } catch (e: any) {
+              console.error(`[CRON-SCAN] Error scanning ${skill.slug}:`, e.message);
+            }
+          }
+          if (scanned > 0) {
+            console.log(`[CRON] Scan backfill: scanned ${scanned} skills directly`);
+          }
+        } catch (e: any) {
+          console.error('[CRON] Scan backfill failed:', e.message);
+        }
+      })()
+    );
+
     // Every 15 minutes: GitHub sync
     if (minute % 15 === 0 && env.SYNC_GITHUB_ENABLED !== 'false') {
       ctx.waitUntil(
@@ -1350,14 +1537,14 @@ export default {
         );
         break;
       case 'runics-cognium':
-        // v5.0: Route to new submit consumer (handles both old and new message formats)
+      case 'runics-cognium-v2':
         await handleCogniumSubmitQueue(
           batch as MessageBatch<CogniumSubmitMessage>,
           env
         );
         break;
       case 'runics-cognium-poll':
-        // v5.0: Poll consumer for async Circle-IR job status
+      case 'runics-cognium-poll-v2':
         await handleCogniumPollQueue(
           batch as MessageBatch<CogniumPollMessage>,
           env

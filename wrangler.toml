@@ -105,11 +105,11 @@ queue = "runics-embed"
 
 [[queues.producers]]
 binding = "COGNIUM_QUEUE"
-queue = "runics-cognium"
+queue = "runics-cognium-v2"
 
 [[queues.producers]]
 binding = "COGNIUM_POLL_QUEUE"
-queue = "runics-cognium-poll"
+queue = "runics-cognium-poll-v2"
 
 # Queue consumers
 [[queues.consumers]]
@@ -118,14 +118,14 @@ max_batch_size = 20
 max_batch_timeout = 30
 
 [[queues.consumers]]
-queue = "runics-cognium"
+queue = "runics-cognium-v2"
 max_batch_size = 5
 max_batch_timeout = 60
 max_retries = 2
 dead_letter_queue = "cognium-dlq"
 
 [[queues.consumers]]
-queue = "runics-cognium-poll"
+queue = "runics-cognium-poll-v2"
 max_batch_size = 5
 max_batch_timeout = 60
 max_retries = 0

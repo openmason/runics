@@ -69,19 +69,22 @@ export abstract class BaseSyncWorker {
             // Upsert skill row
             const skillId = await this.upsertSkill(skill);
 
-            // Enqueue for embedding generation (async)
-            await this.env.EMBED_QUEUE.send({
-              skillId,
-              action: 'embed',
-              source: this.sourceName,
-            } satisfies EmbedQueueMessage);
+            // Enqueue for embedding generation and scanning (best-effort)
+            try {
+              await this.env.EMBED_QUEUE.send({
+                skillId,
+                action: 'embed',
+                source: this.sourceName,
+              } satisfies EmbedQueueMessage);
+            } catch { /* queue quota exceeded — embedding backfill in cron will catch it */ }
 
-            // Enqueue for Cognium trust scanning (async, v5.0 format)
-            await this.env.COGNIUM_QUEUE.send({
-              skillId,
-              priority: 'normal',
-              timestamp: Date.now(),
-            } satisfies CogniumSubmitMessage);
+            try {
+              await this.env.COGNIUM_QUEUE.send({
+                skillId,
+                priority: 'normal',
+                timestamp: Date.now(),
+              } satisfies CogniumSubmitMessage);
+            } catch { /* queue quota exceeded — scan backfill in cron will catch it */ }
 
             synced++;
           } catch (error) {
