@@ -1,0 +1,345 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { handleCogniumPollQueue } from '../../src/cognium/poll-consumer';
+
+// ── Mock helpers ────────────────────────────────────────────────────────────
+
+function makeSkillRow(overrides?: Record<string, unknown>) {
+  return {
+    id: 'skill-1',
+    slug: 'test-skill',
+    version: '1.0.0',
+    name: 'Test Skill',
+    description: 'A test skill',
+    source: 'github',
+    status: 'published',
+    executionLayer: 'mcp-remote',
+    sourceUrl: 'https://github.com/owner/repo',
+    ...overrides,
+  };
+}
+
+function mockPool(queryResults: { rows: any[] }[]) {
+  let callCount = 0;
+  return {
+    query: vi.fn(async () => {
+      const result = queryResults[callCount] ?? { rows: [] };
+      callCount++;
+      return result;
+    }),
+    connect: vi.fn(async () => ({
+      query: vi.fn(),
+      release: vi.fn(),
+    })),
+  } as any;
+}
+
+function mockMsg(body: any) {
+  return {
+    body,
+    ack: vi.fn(),
+    retry: vi.fn(),
+  };
+}
+
+function mockEnv(overrides?: Record<string, any>) {
+  return {
+    NEON_CONNECTION_STRING: 'postgresql://test',
+    COGNIUM_URL: 'https://test-cognium.example.com',
+    COGNIUM_API_KEY: 'test-key',
+    COGNIUM_MAX_POLL_ATTEMPTS: '12',
+    COGNIUM_JOBS: {
+      put: vi.fn(),
+      get: vi.fn(),
+      delete: vi.fn(),
+    },
+    COGNIUM_POLL_QUEUE: {
+      send: vi.fn(),
+    },
+    ...overrides,
+  } as any;
+}
+
+vi.mock('@neondatabase/serverless', () => ({
+  Pool: vi.fn(),
+}));
+
+// Mock scan-report-handler
+vi.mock('../../src/cognium/scan-report-handler', () => ({
+  applyScanReport: vi.fn(),
+  markScanFailed: vi.fn(),
+}));
+
+// Mock finding-mapper
+vi.mock('../../src/cognium/finding-mapper', () => ({
+  normalizeFindings: vi.fn((raw: any) => Array.isArray(raw) ? raw : []),
+}));
+
+// ── Tests ───────────────────────────────────────────────────────────────────
+
+describe('handleCogniumPollQueue', () => {
+  let fetchMock: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchMock = vi.fn();
+    global.fetch = fetchMock;
+  });
+
+  it('should retry on 5xx status check response', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, mockEnv());
+    expect(msg.retry).toHaveBeenCalled();
+    expect(msg.ack).not.toHaveBeenCalled();
+  });
+
+  it('should mark failed and ack on 4xx status check (unrecoverable)', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('404'));
+    expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should handle completed job: fetch findings, apply report, delete KV, ack', async () => {
+    const skill = makeSkillRow();
+    const pool = mockPool([
+      { rows: [skill] }, // fetchSkillById in handleCompleted
+    ]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    // Status check → completed
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'completed', progress: 100 }),
+    });
+    // Findings fetch
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ findings: [] }),
+    });
+    // Skill-result fetch
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ trust_score: 0.85, verdict: 'SAFE' }),
+    });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 3 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { applyScanReport } = await import('../../src/cognium/scan-report-handler');
+    expect(applyScanReport).toHaveBeenCalled();
+    expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should handle failed job: mark failed, delete KV, ack', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'failed', progress: 0 }),
+    });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('failed'));
+    expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should handle cancelled job same as failed', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'cancelled', progress: 50 }),
+    });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalled();
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should re-enqueue with backoff when still running', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'running', progress: 40 }),
+    });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 2 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    // Attempt 2 → POLL_DELAYS_MS[2] = 60_000 → delaySeconds = 60
+    expect(env.COGNIUM_POLL_QUEUE.send).toHaveBeenCalledWith(
+      { skillId: 'skill-1', jobId: 'job-1', attempt: 3 },
+      { delaySeconds: 60 },
+    );
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should give up after max attempts', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'running', progress: 80 }),
+    });
+
+    const env = mockEnv({ COGNIUM_MAX_POLL_ATTEMPTS: '5' });
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 5 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('timeout'));
+    expect(env.COGNIUM_POLL_QUEUE.send).not.toHaveBeenCalled();
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should mark failed when findings fetch returns non-OK', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    // Status → completed
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'completed', progress: 100 }),
+    });
+    // Findings → 500
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Skill-result (still fetched in parallel)
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('Findings'));
+  });
+
+  it('should still apply report when skill-result fetch fails (non-fatal)', async () => {
+    const pool = mockPool([
+      { rows: [makeSkillRow()] },
+    ]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'completed', progress: 100 }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ findings: [{ severity: 'high', description: 'test', verdict: 'VULNERABLE' }] }),
+    });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 }); // skill-result fails
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { applyScanReport } = await import('../../src/cognium/scan-report-handler');
+    // Should still call applyScanReport with null skillResult
+    expect(applyScanReport).toHaveBeenCalledWith(
+      env, expect.anything(), expect.anything(), expect.anything(), expect.anything(), null,
+    );
+  });
+
+  it('should skip report when skill is deleted between submit and poll', async () => {
+    const pool = mockPool([
+      { rows: [] }, // fetchSkillById → not found
+    ]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ job_id: 'job-1', status: 'completed', progress: 100 }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ findings: [] }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ trust_score: 0.85 }),
+    });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { applyScanReport } = await import('../../src/cognium/scan-report-handler');
+    expect(applyScanReport).not.toHaveBeenCalled();
+  });
+
+  it('should retry on unexpected errors', async () => {
+    const pool = mockPool([]);
+    const { Pool } = await import('@neondatabase/serverless');
+    (Pool as any).mockReturnValue(pool);
+
+    fetchMock.mockRejectedValueOnce(new Error('Network failure'));
+
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, mockEnv());
+    expect(msg.retry).toHaveBeenCalled();
+  });
+});

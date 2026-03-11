@@ -168,4 +168,30 @@ describe('buildCircleIRRequest', () => {
       expect(req.files).toBeDefined();
     });
   });
+
+  describe('size limits', () => {
+    it('should truncate oversized skillMd', () => {
+      const bigMd = 'x'.repeat(300_000); // 300 KB > 256 KB limit
+      const skill = makeSkill({ sourceUrl: null, skillMd: bigMd });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files!['SKILL.md'].length).toBeLessThan(bigMd.length);
+      expect(req.files!['SKILL.md']).toContain('[truncated]');
+    });
+
+    it('should truncate oversized schemaJson', () => {
+      // Build a schema larger than 64 KB
+      const bigSchema: Record<string, string> = {};
+      for (let i = 0; i < 2000; i++) bigSchema[`field_${i}`] = 'x'.repeat(50);
+      const skill = makeSkill({ sourceUrl: null, schemaJson: bigSchema });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files!['schema.json'].length).toBeLessThanOrEqual(64 * 1024 + 20);
+      expect(req.files!['schema.json']).toContain('[truncated]');
+    });
+
+    it('should NOT truncate normal-sized content', () => {
+      const skill = makeSkill({ sourceUrl: null, skillMd: '# Normal doc\n\nSome instructions.' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files!['SKILL.md']).not.toContain('[truncated]');
+    });
+  });
 });

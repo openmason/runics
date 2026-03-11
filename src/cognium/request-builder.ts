@@ -52,22 +52,32 @@ export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeReque
   };
 }
 
+// Max sizes per inline file to prevent request bloat (512 KB total budget)
+const MAX_FILE_SIZE = 256 * 1024; // 256 KB per file
+const MAX_SCHEMA_SIZE = 64 * 1024; // 64 KB for schema JSON
+
+function truncate(content: string, maxBytes: number): string {
+  if (content.length <= maxBytes) return content;
+  return content.slice(0, maxBytes) + '\n... [truncated]';
+}
+
 function buildInlineFiles(skill: SkillRow): Record<string, string> {
   const files: Record<string, string> = {};
 
   // SKILL.md — the primary LLM instructions document
   if (skill.skillMd) {
-    files['SKILL.md'] = skill.skillMd;
+    files['SKILL.md'] = truncate(skill.skillMd, MAX_FILE_SIZE);
   }
 
   // Description as fallback context (always include if non-trivial)
   if (skill.description && skill.description.length > 20) {
-    files['DESCRIPTION.md'] = skill.description;
+    files['DESCRIPTION.md'] = truncate(skill.description, MAX_FILE_SIZE);
   }
 
   // Schema JSON — declares capabilities/inputs the skill advertises
   if (skill.schemaJson) {
-    files['schema.json'] = JSON.stringify(skill.schemaJson, null, 2);
+    const raw = JSON.stringify(skill.schemaJson, null, 2);
+    files['schema.json'] = truncate(raw, MAX_SCHEMA_SIZE);
   }
 
   // If we have an R2 bundle key, note it for context (actual code is fetched separately)
@@ -80,7 +90,7 @@ function buildInlineFiles(skill: SkillRow): Record<string, string> {
 
   // If there are no files at all, send description as SKILL.md fallback
   if (Object.keys(files).length === 0) {
-    files['SKILL.md'] = skill.description || skill.name;
+    files['SKILL.md'] = truncate(skill.description || skill.name, MAX_FILE_SIZE);
   }
 
   return files;

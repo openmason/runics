@@ -1659,6 +1659,20 @@ export default {
           if (submitted > 0) {
             console.log(`[CRON] Submit phase: submitted ${submitted} skills (${fastSkills.rows.length} fast + ${repoSkills.rows.length} repo)`);
           }
+
+          // ── Phase 3: Garbage collect orphaned job state ──────────────────
+          // Clean up skills stuck with cognium_job_id for >2h (KV TTL is 1h,
+          // so these are already expired in KV but orphaned in DB)
+          const orphaned = await pool.query(
+            `UPDATE skills
+             SET cognium_job_id = NULL, cognium_job_submitted_at = NULL
+             WHERE cognium_job_id IS NOT NULL
+               AND cognium_job_submitted_at < NOW() - INTERVAL '2 hours'
+             RETURNING id, slug`
+          );
+          if (orphaned.rows.length > 0) {
+            console.log(`[CRON] GC: cleared ${orphaned.rows.length} orphaned job(s): ${orphaned.rows.map((r: any) => r.slug).join(', ')}`);
+          }
         } catch (e: any) {
           console.error('[CRON] Scan backfill failed:', e.message);
         }
