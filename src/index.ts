@@ -13,6 +13,7 @@ import { QualityTracker } from './monitoring/quality-tracker';
 import { PerfMonitor } from './monitoring/perf-monitor';
 import { ConfidenceGate } from './intelligence/confidence-gate';
 import { rateLimiter } from './middleware/rate-limiter';
+import { adminAuth } from './middleware/admin-auth';
 import { publishRoutes } from './publish/handler';
 import { McpRegistrySync } from './sync/mcp-registry';
 import { ClawHubSync } from './sync/clawhub';
@@ -161,6 +162,10 @@ app.get('/health', async (c) => {
 
 // Rate limiting on search endpoint
 app.use('/v1/search', rateLimiter());
+
+// Admin endpoints: authentication + rate limiting
+app.use('/v1/admin/*', adminAuth());
+app.use('/v1/admin/*', rateLimiter());
 
 /**
  * POST /v1/search

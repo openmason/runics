@@ -431,6 +431,9 @@ export interface Env {
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"
   COGNIUM_MAX_POLL_ATTEMPTS?: string; // default "12"
 
+  // v5.0: Admin API authentication
+  ADMIN_API_KEY?: string; // Set via: wrangler secret put ADMIN_API_KEY
+
   // v5.0: Notifications
   ACTIVEPIECES_WEBHOOK_URL?: string;
 

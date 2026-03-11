@@ -49,6 +49,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const options = {
     endpoint: process.env.RUNICS_ENDPOINT ?? 'http://localhost:8787',
+    adminKey: process.env.ADMIN_API_KEY ?? '',
     skipLive: false,
     verbose: false,
   };
@@ -66,6 +67,10 @@ function parseArgs() {
       case '-v':
         options.verbose = true;
         break;
+      case '--admin-key':
+      case '-k':
+        options.adminKey = args[++i];
+        break;
       case '--help':
       case '-h':
         console.log(`
@@ -75,7 +80,8 @@ Usage:
   npm run verify:cognium [options]
 
 Options:
-  --endpoint, -e <url>   Target endpoint (default: https://runics.workers.dev)
+  --endpoint, -e <url>   Target endpoint (default: http://localhost:8787)
+  --admin-key, -k <key>  Admin API key (or set ADMIN_API_KEY env var)
   --skip-live            Skip live Circle-IR scans (synthetic only)
   --verbose, -v          Show detailed output
   --help, -h             Show this help
@@ -91,11 +97,13 @@ Options:
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────────
 
-async function adminPost(endpoint: string, path: string, body?: any): Promise<any> {
+async function adminPost(endpoint: string, path: string, body?: any, adminKey?: string): Promise<any> {
   const url = `${endpoint}${path}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (adminKey) headers['Authorization'] = `Bearer ${adminKey}`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
@@ -228,6 +236,7 @@ async function runSyntheticTests(
   endpoint: string,
   skills: DiscoveredSkills,
   verbose: boolean,
+  adminKey?: string,
 ): Promise<TestResult[]> {
   const testCases = buildTestCases();
   const results: TestResult[] = [];
@@ -248,6 +257,7 @@ async function runSyntheticTests(
         endpoint,
         `/v1/admin/scan-test/${skill.id}`,
         { findings: tc.findings },
+        adminKey,
       );
 
       const failures: string[] = [];
@@ -297,6 +307,7 @@ async function runLiveScans(
   endpoint: string,
   skills: DiscoveredSkills,
   verbose: boolean,
+  adminKey?: string,
 ): Promise<TestResult[]> {
   const results: TestResult[] = [];
 
@@ -305,7 +316,7 @@ async function runLiveScans(
   if (githubSkill) {
     if (verbose) console.log(`  Scanning GitHub skill ${githubSkill.slug} (mode=inline)...`);
     try {
-      const res = await adminPost(endpoint, `/v1/admin/scan/${githubSkill.id}?mode=inline`);
+      const res = await adminPost(endpoint, `/v1/admin/scan/${githubSkill.id}?mode=inline`, undefined, adminKey);
       const passed = res.success === true && res.jobId;
       results.push({
         name: `Live scan GitHub skill (${githubSkill.slug})`,
@@ -335,7 +346,7 @@ async function runLiveScans(
   if (nonGithubSkill) {
     if (verbose) console.log(`  Scanning non-GitHub skill ${nonGithubSkill.slug} (mode=inline)...`);
     try {
-      const res = await adminPost(endpoint, `/v1/admin/scan/${nonGithubSkill.id}?mode=inline`);
+      const res = await adminPost(endpoint, `/v1/admin/scan/${nonGithubSkill.id}?mode=inline`, undefined, adminKey);
       const passed = res.success === true && res.jobId;
       results.push({
         name: `Live scan non-GitHub skill (${nonGithubSkill.slug})`,
@@ -368,13 +379,14 @@ async function restoreSkills(
   endpoint: string,
   skills: DiscoveredSkills,
   verbose: boolean,
+  adminKey?: string,
 ): Promise<void> {
   const skillIds = Object.values(skills).map(s => s.id);
   let restored = 0;
 
   for (const skillId of skillIds) {
     try {
-      await adminPost(endpoint, `/v1/admin/scan-test/${skillId}`, { findings: [] });
+      await adminPost(endpoint, `/v1/admin/scan-test/${skillId}`, { findings: [] }, adminKey);
       restored++;
     } catch {
       // Best-effort restore
@@ -398,6 +410,7 @@ async function main() {
 `);
   console.log(`Configuration:`);
   console.log(`  Endpoint:   ${opts.endpoint}`);
+  console.log(`  Admin key:  ${opts.adminKey ? '***' + opts.adminKey.slice(-4) : '(none)'}`);
   console.log(`  Skip live:  ${opts.skipLive}`);
   console.log(`  Verbose:    ${opts.verbose}`);
   console.log();
@@ -419,7 +432,7 @@ async function main() {
 
   // Step 2: Synthetic scoring tests
   console.log('Running synthetic scoring tests...');
-  const syntheticResults = await runSyntheticTests(opts.endpoint, skills, opts.verbose);
+  const syntheticResults = await runSyntheticTests(opts.endpoint, skills, opts.verbose, opts.adminKey);
   if (!opts.verbose) {
     for (const r of syntheticResults) {
       console.log(`  [${r.passed ? 'PASS' : 'FAIL'}] ${r.name}${r.passed ? '' : ` — ${r.details}`}`);
@@ -431,7 +444,7 @@ async function main() {
   let liveResults: TestResult[] = [];
   if (!opts.skipLive) {
     console.log('Running live Circle-IR scans...');
-    liveResults = await runLiveScans(opts.endpoint, skills, opts.verbose);
+    liveResults = await runLiveScans(opts.endpoint, skills, opts.verbose, opts.adminKey);
     if (!opts.verbose) {
       for (const r of liveResults) {
         console.log(`  [${r.passed ? 'PASS' : 'FAIL'}] ${r.name}${r.passed ? '' : ` — ${r.details}`}`);
@@ -442,7 +455,7 @@ async function main() {
 
   // Step 4: Restore skills
   console.log('Restoring skills to clean state...');
-  await restoreSkills(opts.endpoint, skills, opts.verbose);
+  await restoreSkills(opts.endpoint, skills, opts.verbose, opts.adminKey);
   console.log();
 
   // Summary
