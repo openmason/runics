@@ -39,6 +39,8 @@ export async function handleCogniumSubmitQueue(
         continue;
       }
 
+      // buildCircleIRRequest now includes bundle_url for clawhub skills —
+      // Circle-IR downloads + extracts the zip bundle directly
       const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
       const response = await fetch(`${cogniumUrl}/api/analyze/skill`, {
         method: 'POST',
@@ -96,7 +98,9 @@ async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | n
             skill_type AS "skillType",
             composition_skill_ids AS "compositionSkillIds",
             schema_json AS "schemaJson",
-            capabilities_required AS "capabilitiesRequired"
+            capabilities_required AS "capabilitiesRequired",
+            agent_summary AS "agentSummary",
+            changelog::text AS "changelog"
      FROM skills WHERE id = $1`,
     [skillId]
   );

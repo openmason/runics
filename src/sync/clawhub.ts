@@ -31,9 +31,23 @@ interface ClawHubSkill {
   slug: string;
   displayName?: string;
   summary?: string;
+  tags?: { latest?: string };
+  stats?: { downloads?: number; stars?: number; comments?: number };
+  createdAt?: number;
+  updatedAt?: number;
+  latestVersion?: {
+    version?: string;
+    createdAt?: number;
+    changelog?: string;
+    license?: string | null;
+  };
+  metadata?: {
+    os?: string[] | null;
+    systems?: string[] | null;
+  };
+  // Legacy fields (no longer in API but kept for backwards compat)
   description?: string;
   version?: string;
-  updatedAt?: string;
   virusTotalFlagged?: boolean;
   hasCode?: boolean;
   hasBins?: boolean;
@@ -78,15 +92,18 @@ export class ClawHubSync extends BaseSyncWorker {
   normalize(raw: unknown): SkillUpsert {
     const skill = raw as ClawHubSkill;
     const hasVtFlags = skill.virusTotalFlagged === true;
+    const version = skill.latestVersion?.version ?? skill.version ?? '1.0.0';
+    const changelog = skill.latestVersion?.changelog ?? undefined;
 
     return {
       name: skill.displayName ?? skill.slug,
       slug: slugify(skill.slug),
       description: skill.summary ?? skill.description ?? skill.skillMdExcerpt ?? '',
-      version: skill.version ?? '1.0.0',
+      version,
       schemaJson: skill.schema,
       executionLayer: this.inferExecutionLayer(skill),
       skillMd: skill.skillMd,
+      changelog,
       capabilitiesRequired: this.extractCapabilities(skill),
       source: 'clawhub',
       sourceUrl: `https://clawhub.ai/skills/${skill.slug}`,

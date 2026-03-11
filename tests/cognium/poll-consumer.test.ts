@@ -140,7 +140,12 @@ describe('handleCogniumPollQueue', () => {
     // Skill-result fetch
     fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ trust_score: 0.85, verdict: 'SAFE' }),
+      json: async () => ({ trust_score: 0.85, verdict: 'TRUSTED' }),
+    });
+    // Results fetch (files_detail + bundle_metadata)
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ files_detail: [], bundle_metadata: { bundle_download: 'skipped' } }),
     });
 
     const env = mockEnv();
@@ -258,6 +263,8 @@ describe('handleCogniumPollQueue', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
     // Skill-result (still fetched in parallel)
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Results (still fetched in parallel)
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
 
     const env = mockEnv();
     const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
@@ -285,6 +292,7 @@ describe('handleCogniumPollQueue', () => {
       json: async () => ({ findings: [{ severity: 'high', description: 'test', verdict: 'VULNERABLE' }] }),
     });
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 }); // skill-result fails
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 }); // results fails
 
     const env = mockEnv();
     const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
@@ -317,6 +325,10 @@ describe('handleCogniumPollQueue', () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({ trust_score: 0.85 }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ files_detail: [] }),
     });
 
     const env = mockEnv();

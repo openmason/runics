@@ -103,10 +103,11 @@ async function handleCompleted(
 ): Promise<void> {
   const authHeaders = { 'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}` };
 
-  // Fetch findings and skill-result in parallel
-  const [findingsRes, skillResultRes] = await Promise.all([
+  // Fetch findings, skill-result, and full results (for files_detail/bundle_metadata) in parallel
+  const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
     fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, { headers: authHeaders }),
     fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`, { headers: authHeaders }),
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/results`, { headers: authHeaders }),
   ]);
 
   if (!findingsRes.ok) {
@@ -126,6 +127,20 @@ async function handleCompleted(
     console.warn(`[COGNIUM-POLL] Skill-result fetch failed for job ${jobId}: ${skillResultRes.status} (non-fatal)`);
   }
 
+  // Enrich job status with files_detail and bundle_metadata from /results
+  if (resultsRes.ok) {
+    const resultsBody = await resultsRes.json() as {
+      files_detail?: CircleIRJobStatus['files_detail'];
+      bundle_metadata?: CircleIRJobStatus['bundle_metadata'];
+      metrics?: CircleIRJobStatus['metrics'];
+    };
+    if (resultsBody.files_detail) job.files_detail = resultsBody.files_detail;
+    if (resultsBody.bundle_metadata) job.bundle_metadata = resultsBody.bundle_metadata;
+    if (resultsBody.metrics) job.metrics = resultsBody.metrics;
+  } else {
+    console.warn(`[COGNIUM-POLL] Results fetch failed for job ${jobId}: ${resultsRes.status} (non-fatal)`);
+  }
+
   // Fetch skill row
   const skill = await fetchSkillById(pool, skillId);
   if (!skill) {
@@ -135,7 +150,8 @@ async function handleCompleted(
 
   await applyScanReport(env, pool, skill, findings, job, skillResult);
   const verdict = skillResult?.verdict ?? job.summary?.verdict ?? 'unknown';
-  console.log(`[COGNIUM-POLL] Scan report applied for skill ${skill.slug} (${findings.length} findings, verdict=${verdict})`);
+  const bundleInfo = job.bundle_metadata ? `, bundle=${job.bundle_metadata.bundle_download}` : '';
+  console.log(`[COGNIUM-POLL] Scan report applied for skill ${skill.slug} (${findings.length} findings, verdict=${verdict}${bundleInfo})`);
 }
 
 async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | null> {
@@ -150,7 +166,9 @@ async function fetchSkillById(pool: Pool, skillId: string): Promise<SkillRow | n
             skill_type AS "skillType",
             composition_skill_ids AS "compositionSkillIds",
             schema_json AS "schemaJson",
-            capabilities_required AS "capabilitiesRequired"
+            capabilities_required AS "capabilitiesRequired",
+            agent_summary AS "agentSummary",
+            changelog::text AS "changelog"
      FROM skills WHERE id = $1`,
     [skillId]
   );

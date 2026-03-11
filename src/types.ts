@@ -463,6 +463,7 @@ export interface SkillUpsert {
   executionLayer: 'mcp-remote' | 'instructions' | 'worker' | 'container';
   mcpUrl?: string;
   skillMd?: string;
+  changelog?: string;
   repositoryUrl?: string;
   capabilitiesRequired?: string[];
   source: string;

@@ -998,7 +998,9 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
               repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
               capabilities_required AS "capabilitiesRequired",
-              cognium_job_id AS "cogniumJobId"
+              cognium_job_id AS "cogniumJobId",
+              agent_summary AS "agentSummary",
+              changelog::text AS "changelog"
        FROM skills WHERE id = $1`, [skillId]
     );
     if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
@@ -1030,6 +1032,8 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
     const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
+    // buildCircleIRRequest includes bundle_url for clawhub skills —
+    // Circle-IR downloads + extracts the zip bundle directly
     const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -1098,7 +1102,9 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
               source_url AS "sourceUrl",
               repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
-              capabilities_required AS "capabilitiesRequired"
+              capabilities_required AS "capabilitiesRequired",
+              agent_summary AS "agentSummary",
+              changelog::text AS "changelog"
        FROM skills WHERE id = $1`, [skillId]
     );
     if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
@@ -1214,7 +1220,9 @@ app.post('/v1/admin/backfill', async (c) => {
               source_url AS "sourceUrl",
               repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
-              capabilities_required AS "capabilitiesRequired"
+              capabilities_required AS "capabilitiesRequired",
+              agent_summary AS "agentSummary",
+              changelog::text AS "changelog"
        FROM skills
        ${whereClause}
        ORDER BY created_at ASC LIMIT $1`,
@@ -1232,7 +1240,7 @@ app.post('/v1/admin/backfill', async (c) => {
 
     for (const skill of result.rows) {
       try {
-        // Submit to Skills API
+        // Submit to Skills API — buildCircleIRRequest includes bundle_url for clawhub skills
         const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -1471,7 +1479,9 @@ export default {
                     schema_json AS "schemaJson",
                     capabilities_required AS "capabilitiesRequired",
                     cognium_job_id AS "cogniumJobId",
-                    cognium_job_submitted_at AS "cogniumJobSubmittedAt"
+                    cognium_job_submitted_at AS "cogniumJobSubmittedAt",
+                    agent_summary AS "agentSummary",
+                    changelog::text AS "changelog"
              FROM skills
              WHERE cognium_job_id IS NOT NULL
              ORDER BY cognium_job_submitted_at ASC
@@ -1554,7 +1564,9 @@ export default {
                     source_url AS "sourceUrl",
                     repository_url AS "repositoryUrl",
                     schema_json AS "schemaJson",
-                    capabilities_required AS "capabilitiesRequired"
+                    capabilities_required AS "capabilitiesRequired",
+                    agent_summary AS "agentSummary",
+                    changelog::text AS "changelog"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
                AND cognium_job_id IS NULL
@@ -1572,7 +1584,9 @@ export default {
                     source_url AS "sourceUrl",
                     repository_url AS "repositoryUrl",
                     schema_json AS "schemaJson",
-                    capabilities_required AS "capabilitiesRequired"
+                    capabilities_required AS "capabilitiesRequired",
+                    agent_summary AS "agentSummary",
+                    changelog::text AS "changelog"
              FROM skills
              WHERE cognium_scanned = false AND status = 'published'
                AND cognium_job_id IS NULL
@@ -1586,6 +1600,7 @@ export default {
           // Fast path: non-GitHub skills (inline poll, ~2s each)
           for (const skill of fastSkills.rows) {
             try {
+              // buildCircleIRRequest includes bundle_url for clawhub skills
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders },

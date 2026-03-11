@@ -25,10 +25,24 @@ export function determineScanCoverage(
   skill: SkillRow,
   job: CircleIRJobStatus,
 ): ScanCoverageV2 {
+  // Mode A: GitHub repo cloned by Circle-IR
   const usedRepoUrl = isGitHubRepoUrl(skill.sourceUrl) || isGitHubRepoUrl(skill.repositoryUrl);
   if (usedRepoUrl) {
     return (job.metrics?.files_failed ?? 0) > 0 ? 'code-partial' : 'code-full';
   }
+
+  // Mode B: Bundle downloaded by Circle-IR — check if code files were analyzed
+  if (job.bundle_metadata?.bundle_download === 'success') {
+    const codeAnalyzed = (job.files_detail ?? []).some(
+      f => f.status === 'analyzed' && f.phases_run?.includes('sast'),
+    );
+    if (codeAnalyzed) {
+      return (job.metrics?.files_failed ?? 0) > 0 ? 'code-partial' : 'code-full';
+    }
+    return 'instructions-only';
+  }
+
+  // Mode C: Inline files only
   if (skill.skillMd || skill.schemaJson || skill.r2BundleKey) {
     return 'instructions-only';
   }

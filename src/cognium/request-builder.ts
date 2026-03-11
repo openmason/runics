@@ -4,14 +4,20 @@
 //
 // Maps a Runics Skill → CircleIRSkillAnalyzeRequest.
 // Mode A: repo_url for GitHub-sourced skills with a source URL.
-// Mode B: inline files for ClawHub / registry skills (SKILL.md, description).
+// Mode B: bundle_url for ClawHub skills (Circle-IR downloads + extracts zip).
+// Mode C: inline files for registry skills or fallback when no bundle available.
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { CircleIRSkillAnalyzeRequest, SkillRow } from './types';
 import { isGitHubRepoUrl } from '../sync/utils';
 
-export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeRequest {
+const CLAWHUB_DOWNLOAD_BASE = 'https://wry-manatee-359.convex.site/api/v1/download';
+
+export function buildCircleIRRequest(
+  skill: SkillRow,
+  bundleFiles?: Record<string, string> | null,
+): CircleIRSkillAnalyzeRequest {
   const skillContext: CircleIRSkillAnalyzeRequest['skill_context'] = {
     name: skill.name,
     description: skill.description,
@@ -22,8 +28,10 @@ export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeReque
 
   const options: CircleIRSkillAnalyzeRequest['options'] = {
     enable_sast: true,
-    enable_instruction_analysis: true,
+    enable_instruction_safety: true,
+    enable_instruction_analysis: true, // deprecated alias — remove once Circle-IR confirms new name is live
     enable_capability_mismatch: true,
+    enable_enrichment: true,
     enable_llm_verification: true,
   };
 
@@ -43,8 +51,30 @@ export function buildCircleIRRequest(skill: SkillRow): CircleIRSkillAnalyzeReque
     };
   }
 
-  // Mode B: Inline files for ClawHub / registry / manual skills
+  // Build inline files as fallback content (always sent alongside bundle_url)
   const files = buildInlineFiles(skill);
+
+  // Merge extracted bundle files (bundle content takes priority over metadata-derived files)
+  // These serve as fallback if Circle-IR's own bundle download fails
+  if (bundleFiles) {
+    for (const [name, content] of Object.entries(bundleFiles)) {
+      files[name] = truncate(content, MAX_FILE_SIZE);
+    }
+  }
+
+  // Mode B: ClawHub skills — send bundle_url for Circle-IR to download + extract,
+  // with inline files as fallback if the bundle download fails
+  if (skill.source === 'clawhub') {
+    const bundleUrl = `${CLAWHUB_DOWNLOAD_BASE}?slug=${encodeURIComponent(skill.slug)}`;
+    return {
+      bundle_url: bundleUrl,
+      files,
+      skill_context: skillContext,
+      options,
+    };
+  }
+
+  // Mode C: Inline files only (non-ClawHub, non-GitHub skills)
   return {
     files,
     skill_context: skillContext,
@@ -67,6 +97,16 @@ function buildInlineFiles(skill: SkillRow): Record<string, string> {
   // SKILL.md — the primary LLM instructions document
   if (skill.skillMd) {
     files['SKILL.md'] = truncate(skill.skillMd, MAX_FILE_SIZE);
+  }
+
+  // Agent summary — LLM-generated usage instructions (richer than description)
+  if (skill.agentSummary && skill.agentSummary.length > 20) {
+    files['AGENT_INSTRUCTIONS.md'] = truncate(skill.agentSummary, MAX_FILE_SIZE);
+  }
+
+  // Changelog — release notes describing features, capabilities, and setup
+  if (skill.changelog && skill.changelog.length > 10) {
+    files['CHANGELOG.md'] = truncate(skill.changelog, MAX_FILE_SIZE);
   }
 
   // Description as fallback context (always include if non-trivial)

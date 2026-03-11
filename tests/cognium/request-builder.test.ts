@@ -43,8 +43,10 @@ describe('buildCircleIRRequest', () => {
       const req = buildCircleIRRequest(skill);
       expect(req.options).toEqual({
         enable_sast: true,
+        enable_instruction_safety: true,
         enable_instruction_analysis: true,
         enable_capability_mismatch: true,
+        enable_enrichment: true,
         enable_llm_verification: true,
       });
     });
@@ -55,6 +57,7 @@ describe('buildCircleIRRequest', () => {
       const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
       const req = buildCircleIRRequest(skill);
       expect(req.repo_url).toBe('https://github.com/owner/repo');
+      expect(req.bundle_url).toBeUndefined();
       expect(req.files).toBeUndefined();
     });
 
@@ -85,6 +88,52 @@ describe('buildCircleIRRequest', () => {
       const skill = makeSkill({ skillMd: '# Skill\nSome markdown content', sourceUrl: null });
       const req = buildCircleIRRequest(skill);
       expect(req.files?.['SKILL.md']).toBe('# Skill\nSome markdown content');
+    });
+
+    it('should include AGENT_INSTRUCTIONS.md when agentSummary is available', () => {
+      const skill = makeSkill({
+        sourceUrl: null,
+        agentSummary: 'Use this tool when you need to process data from external APIs and return structured results.',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['AGENT_INSTRUCTIONS.md']).toBe(
+        'Use this tool when you need to process data from external APIs and return structured results.',
+      );
+    });
+
+    it('should not include AGENT_INSTRUCTIONS.md for short agentSummary', () => {
+      const skill = makeSkill({ sourceUrl: null, agentSummary: 'Short' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['AGENT_INSTRUCTIONS.md']).toBeUndefined();
+    });
+
+    it('should not include AGENT_INSTRUCTIONS.md when null', () => {
+      const skill = makeSkill({ sourceUrl: null, agentSummary: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['AGENT_INSTRUCTIONS.md']).toBeUndefined();
+    });
+
+    it('should include CHANGELOG.md when changelog is available and > 10 chars', () => {
+      const skill = makeSkill({
+        sourceUrl: null,
+        changelog: 'Initial release: AI-native configuration guides for OpenClaw',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['CHANGELOG.md']).toBe(
+        'Initial release: AI-native configuration guides for OpenClaw',
+      );
+    });
+
+    it('should not include CHANGELOG.md for short changelog', () => {
+      const skill = makeSkill({ sourceUrl: null, changelog: 'v1' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['CHANGELOG.md']).toBeUndefined();
+    });
+
+    it('should not include CHANGELOG.md when null', () => {
+      const skill = makeSkill({ sourceUrl: null, changelog: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.files?.['CHANGELOG.md']).toBeUndefined();
     });
 
     it('should include DESCRIPTION.md for descriptions longer than 20 chars', () => {
@@ -192,6 +241,88 @@ describe('buildCircleIRRequest', () => {
       const skill = makeSkill({ sourceUrl: null, skillMd: '# Normal doc\n\nSome instructions.' });
       const req = buildCircleIRRequest(skill);
       expect(req.files!['SKILL.md']).not.toContain('[truncated]');
+    });
+  });
+
+  describe('bundle files merge', () => {
+    it('should merge extracted bundle files into inline files', () => {
+      const skill = makeSkill({ sourceUrl: null });
+      const bundleFiles = {
+        'SKILL.md': '# Full Skill Doc\n\nDetailed instructions...',
+        'guides/setup.md': '## Setup Guide\nStep 1...',
+      };
+      const req = buildCircleIRRequest(skill, bundleFiles);
+      expect(req.files!['SKILL.md']).toBe('# Full Skill Doc\n\nDetailed instructions...');
+      expect(req.files!['guides/setup.md']).toBe('## Setup Guide\nStep 1...');
+      // Metadata-derived files should still be present
+      expect(req.files!['DESCRIPTION.md']).toBe('A test skill for testing purposes');
+    });
+
+    it('should let bundle SKILL.md override metadata-derived SKILL.md', () => {
+      const skill = makeSkill({ sourceUrl: null, skillMd: 'old content from DB' });
+      const bundleFiles = {
+        'SKILL.md': '# New content from zip bundle',
+      };
+      const req = buildCircleIRRequest(skill, bundleFiles);
+      expect(req.files!['SKILL.md']).toBe('# New content from zip bundle');
+    });
+
+    it('should behave normally when bundleFiles is null', () => {
+      const skill = makeSkill({ sourceUrl: null });
+      const req = buildCircleIRRequest(skill, null);
+      // Same as no bundleFiles
+      expect(req.files!['DESCRIPTION.md']).toBe('A test skill for testing purposes');
+      expect(req.files!['guides/setup.md']).toBeUndefined();
+    });
+
+    it('should not use bundle files for Mode A (GitHub repo URL)', () => {
+      const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+      const bundleFiles = { 'SKILL.md': 'should be ignored' };
+      const req = buildCircleIRRequest(skill, bundleFiles);
+      expect(req.repo_url).toBe('https://github.com/owner/repo');
+      expect(req.files).toBeUndefined();
+    });
+  });
+
+  describe('bundle_url for ClawHub skills', () => {
+    it('should include bundle_url for clawhub skills', () => {
+      const skill = makeSkill({ source: 'clawhub', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.bundle_url).toBe('https://wry-manatee-359.convex.site/api/v1/download?slug=test-skill');
+      expect(req.files).toBeDefined(); // inline files sent as fallback
+      expect(req.repo_url).toBeUndefined();
+    });
+
+    it('should URL-encode the slug in bundle_url', () => {
+      const skill = makeSkill({ source: 'clawhub', slug: 'my skill/special', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.bundle_url).toBe('https://wry-manatee-359.convex.site/api/v1/download?slug=my%20skill%2Fspecial');
+    });
+
+    it('should not include bundle_url for non-clawhub skills', () => {
+      const skill = makeSkill({ source: 'mcp-registry', sourceUrl: null });
+      const req = buildCircleIRRequest(skill);
+      expect(req.bundle_url).toBeUndefined();
+      expect(req.files).toBeDefined();
+    });
+
+    it('should not include bundle_url for GitHub skills (Mode A takes priority)', () => {
+      const skill = makeSkill({ source: 'clawhub', sourceUrl: 'https://github.com/owner/repo' });
+      const req = buildCircleIRRequest(skill);
+      expect(req.repo_url).toBe('https://github.com/owner/repo');
+      expect(req.bundle_url).toBeUndefined();
+    });
+
+    it('should send both bundle_url and files for clawhub skills', () => {
+      const skill = makeSkill({
+        source: 'clawhub',
+        sourceUrl: null,
+        skillMd: '# My Skill',
+      });
+      const req = buildCircleIRRequest(skill);
+      expect(req.bundle_url).toBeDefined();
+      expect(req.files).toBeDefined();
+      expect(req.files!['SKILL.md']).toBe('# My Skill');
     });
   });
 });

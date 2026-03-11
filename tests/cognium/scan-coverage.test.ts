@@ -86,4 +86,63 @@ describe('determineScanCoverage', () => {
     });
     expect(determineScanCoverage(skill, job)).toBe('code-full');
   });
+
+  // Bundle metadata-based coverage
+  it('should return code-full when bundle downloaded and code files analyzed via SAST', () => {
+    const skill = makeSkill({ source: 'clawhub', sourceUrl: null, repositoryUrl: null });
+    const job = makeJob({
+      bundle_metadata: { bundle_download: 'success' },
+      files_detail: [
+        { file: 'scripts/main.py', size_bytes: 5000, language: 'python', status: 'analyzed', phases_run: ['sast'] },
+        { file: 'SKILL.md', size_bytes: 3000, language: 'markdown', status: 'analyzed', phases_run: ['instruction_safety'] },
+      ],
+      metrics: { files_total: 2, files_analyzed: 2, files_failed: 0, files_skipped: 0 },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('code-full');
+  });
+
+  it('should return code-partial when bundle downloaded with code but some files failed', () => {
+    const skill = makeSkill({ source: 'clawhub', sourceUrl: null, repositoryUrl: null });
+    const job = makeJob({
+      bundle_metadata: { bundle_download: 'success' },
+      files_detail: [
+        { file: 'scripts/main.py', size_bytes: 5000, language: 'python', status: 'analyzed', phases_run: ['sast'] },
+        { file: 'scripts/broken.py', size_bytes: 1200, language: 'python', status: 'failed', error: 'parse error' },
+      ],
+      metrics: { files_total: 2, files_analyzed: 1, files_failed: 1, files_skipped: 0 },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('code-partial');
+  });
+
+  it('should return instructions-only when bundle downloaded but only .md files present', () => {
+    const skill = makeSkill({ source: 'clawhub', sourceUrl: null, repositoryUrl: null });
+    const job = makeJob({
+      bundle_metadata: { bundle_download: 'success' },
+      files_detail: [
+        { file: 'SKILL.md', size_bytes: 3000, language: 'markdown', status: 'analyzed', phases_run: ['instruction_safety'] },
+        { file: '_meta.json', size_bytes: 131, language: 'json', status: 'analyzed', phases_run: ['capability_mismatch'] },
+      ],
+      metrics: { files_total: 2, files_analyzed: 2, files_failed: 0, files_skipped: 0 },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('instructions-only');
+  });
+
+  it('should return instructions-only when bundle download failed and skill has skillMd', () => {
+    const skill = makeSkill({ source: 'clawhub', sourceUrl: null, repositoryUrl: null, skillMd: '# Skill' });
+    const job = makeJob({
+      bundle_metadata: { bundle_download: 'failed', bundle_download_status: 404, fallback_used: 'inline_files' },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('instructions-only');
+  });
+
+  it('should return metadata-only when bundle download failed and no skillMd/schema', () => {
+    const skill = makeSkill({
+      source: 'clawhub', sourceUrl: null, repositoryUrl: null,
+      skillMd: null, schemaJson: null, r2BundleKey: null,
+    });
+    const job = makeJob({
+      bundle_metadata: { bundle_download: 'failed', fallback_used: 'inline_files' },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('metadata-only');
+  });
 });
