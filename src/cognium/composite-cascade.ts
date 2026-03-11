@@ -55,14 +55,16 @@ export async function repairCompositeStatus(
     if (skillIds.length === 0) continue;
 
     // Check if ALL constituents are now clean
+    // Must match row count to skillIds count — missing/deleted skills block repair
     const constituents = await pool.query(
       `SELECT status FROM skills WHERE id = ANY($1::uuid[])`,
       [skillIds]
     );
 
-    const allClean = constituents.rows.every((c: { status: string }) =>
-      ['published', 'deprecated'].includes(c.status)
-    );
+    const allClean = constituents.rows.length === skillIds.length &&
+      constituents.rows.every((c: { status: string }) =>
+        ['published', 'deprecated'].includes(c.status)
+      );
 
     if (allClean) {
       await pool.query(

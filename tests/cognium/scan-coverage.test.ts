@@ -66,4 +66,24 @@ describe('determineScanCoverage', () => {
     });
     expect(determineScanCoverage(skill, makeJob())).toBe('metadata-only');
   });
+
+  it('should return code-full when job.metrics is undefined (GitHub repo)', () => {
+    const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+    const job = makeJob({ metrics: undefined });
+    expect(determineScanCoverage(skill, job)).toBe('code-full');
+  });
+
+  it('should return code-full when job has no metrics property at all', () => {
+    const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+    const { metrics, ...jobWithoutMetrics } = makeJob();
+    expect(determineScanCoverage(skill, jobWithoutMetrics as CircleIRJobStatus)).toBe('code-full');
+  });
+
+  it('should return code-full when files_failed is 0', () => {
+    const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+    const job = makeJob({
+      metrics: { files_total: 5, files_analyzed: 5, files_failed: 0, files_skipped: 0 },
+    });
+    expect(determineScanCoverage(skill, job)).toBe('code-full');
+  });
 });

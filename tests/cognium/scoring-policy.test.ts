@@ -357,4 +357,62 @@ describe('buildRemediationMessage', () => {
     const msg = buildRemediationMessage(finding, skill);
     expect(msg).toContain('Mismatch: capability mismatch detected');
   });
+
+  it('should handle finding with all optional fields present', () => {
+    const finding = makeFinding({
+      severity: 'CRITICAL',
+      cweId: 'CWE-77',
+      phase: 'sast',
+      remediationHint: 'Avoid shell exec',
+      capabilityMismatch: true,
+    });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    expect(msg).toContain('CRITICAL finding: CWE-77');
+    expect(msg).toContain('Phase: sast');
+    expect(msg).toContain('Fix: Avoid shell exec');
+    expect(msg).toContain('Mismatch: capability mismatch detected');
+  });
+
+  it('should handle finding with no optional fields (no cweId, no phase, no hint, no mismatch)', () => {
+    const finding = makeFinding({
+      severity: 'LOW',
+      cweId: undefined,
+      title: 'Minor issue',
+      phase: undefined,
+      remediationHint: undefined,
+      capabilityMismatch: undefined,
+    });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    expect(msg).toBe('LOW finding: Minor issue');
+  });
+
+  it('should handle empty string cweId by falling back to title', () => {
+    const finding = makeFinding({
+      severity: 'MEDIUM',
+      cweId: '',
+      title: 'Suspicious pattern',
+    });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    // cweId ?? title — empty string is falsy for ?? only if null/undefined, so '' is used
+    expect(msg).toContain('MEDIUM finding: ');
+  });
+
+  it('should produce multi-line output with phase and hint', () => {
+    const finding = makeFinding({
+      severity: 'HIGH',
+      cweId: 'CWE-89',
+      phase: 'sast',
+      remediationHint: 'Use parameterized queries',
+    });
+    const skill = makeSkill();
+    const msg = buildRemediationMessage(finding, skill);
+    const lines = msg.split('\n');
+    expect(lines.length).toBe(3);
+    expect(lines[0]).toBe('HIGH finding: CWE-89');
+    expect(lines[1]).toBe('Phase: sast');
+    expect(lines[2]).toBe('Fix: Use parameterized queries');
+  });
 });

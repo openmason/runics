@@ -59,4 +59,26 @@ describe('repairCompositeStatus', () => {
     await repairCompositeStatus(pool, 'skill-a');
     expect(pool.query).toHaveBeenCalledTimes(2);
   });
+
+  it('should NOT repair composite when a constituent has been deleted (row count mismatch)', async () => {
+    const pool = mockPool([
+      // Composite references 3 skills, but only 2 exist in DB
+      { rows: [{ id: 'comp-1', composition_skill_ids: ['skill-a', 'skill-b', 'skill-deleted'] }] },
+      { rows: [{ status: 'published' }, { status: 'published' }] }, // only 2 rows returned
+    ]);
+    await repairCompositeStatus(pool, 'skill-a');
+    // Should NOT issue the UPDATE (only 2 queries: find composites + check constituents)
+    expect(pool.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('should repair composite when all constituents exist and are clean', async () => {
+    const pool = mockPool([
+      { rows: [{ id: 'comp-1', composition_skill_ids: ['skill-a', 'skill-b'] }] },
+      { rows: [{ status: 'published' }, { status: 'deprecated' }] }, // 2 rows = 2 skills
+      { rows: [] },
+    ]);
+    await repairCompositeStatus(pool, 'skill-a');
+    // Should issue UPDATE (3 queries: find + check + update)
+    expect(pool.query).toHaveBeenCalledTimes(3);
+  });
 });
