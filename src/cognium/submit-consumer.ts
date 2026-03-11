@@ -28,6 +28,17 @@ export async function handleCogniumSubmitQueue(
         continue;
       }
 
+      // Deduplication: skip if a job is already in flight for this skill
+      const existingJob = await pool.query(
+        `SELECT cognium_job_id FROM skills WHERE id = $1 AND cognium_job_id IS NOT NULL`,
+        [msg.body.skillId]
+      );
+      if (existingJob.rows.length > 0) {
+        console.log(`[COGNIUM-SUBMIT] Skill ${msg.body.skillId} already has job ${existingJob.rows[0].cognium_job_id}, skipping`);
+        msg.ack();
+        continue;
+      }
+
       const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
       const response = await fetch(`${cogniumUrl}/api/analyze/skill`, {
         method: 'POST',

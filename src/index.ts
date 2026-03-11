@@ -992,11 +992,18 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
               source_url AS "sourceUrl",
               repository_url AS "repositoryUrl",
               schema_json AS "schemaJson",
-              capabilities_required AS "capabilitiesRequired"
+              capabilities_required AS "capabilitiesRequired",
+              cognium_job_id AS "cogniumJobId"
        FROM skills WHERE id = $1`, [skillId]
     );
     if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
     const skill = skillRes.rows[0];
+
+    // Deduplication: reject if a scan job is already in flight (unless force=true)
+    const force = c.req.query('force') === 'true';
+    if (!force && skill.cogniumJobId) {
+      return c.json({ error: 'Scan already in progress', jobId: skill.cogniumJobId, hint: 'Use ?force=true to override' }, 409);
+    }
 
     // Queue mode: just enqueue and return immediately (better for GitHub/slow repos)
     if (mode === 'queue') {
@@ -1189,8 +1196,8 @@ app.post('/v1/admin/backfill', async (c) => {
     const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
     const whereClause = source
-      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND source = $2`
-      : `WHERE verification_tier = 'unverified' AND status = 'published'`;
+      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND source = $2`
+      : `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL`;
     const params = source ? [limit, source] : [limit];
 
     const result = await pool.query(

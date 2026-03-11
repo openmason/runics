@@ -9,11 +9,13 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
 import type { SkillStatus } from '../types';
 
+// Accept Pool or transactional Client — both have .query()
+type Queryable = { query: (text: string, params?: any[]) => Promise<{ rows: any[] }> };
+
 export async function cascadeStatusToComposites(
-  pool: Pool,
+  pool: Queryable,
   constituentSkillId: string,
   newStatus: 'revoked' | 'vulnerable',
 ): Promise<void> {
@@ -38,7 +40,7 @@ export async function cascadeStatusToComposites(
 }
 
 export async function repairCompositeStatus(
-  pool: Pool,
+  pool: Queryable,
   repairedSkillId: string,
 ): Promise<void> {
   // Find composites containing this skill that are currently 'contains-vulnerable' or 'degraded'

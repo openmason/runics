@@ -5,6 +5,9 @@
 // Orchestrates: normalize findings → score → status → DB write → cascade → notify
 // Called by poll-consumer.ts after fetching findings from Circle-IR.
 //
+// DB writes (skill UPDATE + composite cascade) are wrapped in a transaction
+// to prevent partial updates on failure.
+//
 // ══════════════════════════════════════════════════════════════════════════════
 
 import { Pool } from '@neondatabase/serverless';
@@ -47,31 +50,45 @@ export async function applyScanReport(
 
   // Content safety failure: absolute override
   if (contentUnsafe) {
-    await pool.query(
-      `UPDATE skills SET
-        trust_score = 0.0,
-        verification_tier = 'scanned',
-        content_safety_passed = false,
-        status = 'revoked',
-        revoked_at = NOW(),
-        revoked_reason = 'content_safety_failed',
-        remediation_message = 'Revoked: skill contains instruction injection or prompt hijacking risk.',
-        cognium_findings = $1,
-        cognium_scanned_at = NOW(),
-        cognium_scanned = true,
-        scan_coverage = $2,
-        analyzer_summary = $3,
-        updated_at = NOW()
-      WHERE id = $4`,
-      [
-        JSON.stringify(findings),
-        coverage,
-        skillResult ? JSON.stringify(skillResult) : null,
-        skill.id,
-      ]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    await cascadeStatusToComposites(pool, skill.id, 'revoked');
+      await client.query(
+        `UPDATE skills SET
+          trust_score = 0.0,
+          verification_tier = 'scanned',
+          content_safety_passed = false,
+          status = 'revoked',
+          revoked_at = NOW(),
+          revoked_reason = 'content_safety_failed',
+          remediation_message = 'Revoked: skill contains instruction injection or prompt hijacking risk.',
+          cognium_findings = $1,
+          cognium_scanned_at = NOW(),
+          cognium_scanned = true,
+          cognium_job_id = NULL,
+          scan_coverage = $2,
+          analyzer_summary = $3,
+          updated_at = NOW()
+        WHERE id = $4`,
+        [
+          JSON.stringify(findings),
+          coverage,
+          skillResult ? JSON.stringify(skillResult) : null,
+          skill.id,
+        ]
+      );
+
+      await cascadeStatusToComposites(client, skill.id, 'revoked');
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    // Notification is fire-and-forget — outside transaction (non-critical)
     await triggerNotification(env, skill.id, 'revoked', 'Content safety failure');
     return;
   }
@@ -82,46 +99,60 @@ export async function applyScanReport(
   const worstFinding = findings.find(f => f.severity === worstSeverity);
   const remediationMessage = worstFinding ? buildRemediationMessage(worstFinding, skill) : null;
 
-  await pool.query(
-    `UPDATE skills SET
-      trust_score = $1,
-      verification_tier = $2,
-      content_safety_passed = true,
-      scan_coverage = $3,
-      status = $4,
-      revoked_at = CASE WHEN $4 = 'revoked' THEN NOW() ELSE NULL END,
-      revoked_reason = CASE WHEN $4 = 'revoked' THEN $5 ELSE NULL END,
-      remediation_message = $6,
-      remediation_url = $7,
-      cognium_findings = $8,
-      cognium_scanned_at = NOW(),
-      cognium_scanned = true,
-      analyzer_summary = $9,
-      updated_at = NOW()
-    WHERE id = $10`,
-    [
-      trustScore,
-      tier,
-      coverage,
-      newStatus,
-      worstFinding?.cweId ?? worstFinding?.title ?? null,
-      remediationMessage,
-      worstFinding?.remediationUrl ?? null,
-      JSON.stringify(findings),
-      skillResult ? JSON.stringify(skillResult) : null,
-      skill.id,
-    ]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (newStatus === 'revoked' || newStatus === 'vulnerable') {
-    await cascadeStatusToComposites(pool, skill.id, newStatus as 'revoked' | 'vulnerable');
+    await client.query(
+      `UPDATE skills SET
+        trust_score = $1,
+        verification_tier = $2,
+        content_safety_passed = true,
+        scan_coverage = $3,
+        status = $4,
+        revoked_at = CASE WHEN $4 = 'revoked' THEN NOW() ELSE NULL END,
+        revoked_reason = CASE WHEN $4 = 'revoked' THEN $5 ELSE NULL END,
+        remediation_message = $6,
+        remediation_url = $7,
+        cognium_findings = $8,
+        cognium_scanned_at = NOW(),
+        cognium_scanned = true,
+        cognium_job_id = NULL,
+        analyzer_summary = $9,
+        updated_at = NOW()
+      WHERE id = $10`,
+      [
+        trustScore,
+        tier,
+        coverage,
+        newStatus,
+        worstFinding?.cweId ?? worstFinding?.title ?? null,
+        remediationMessage,
+        worstFinding?.remediationUrl ?? null,
+        JSON.stringify(findings),
+        skillResult ? JSON.stringify(skillResult) : null,
+        skill.id,
+      ]
+    );
+
+    if (newStatus === 'revoked' || newStatus === 'vulnerable') {
+      await cascadeStatusToComposites(client, skill.id, newStatus as 'revoked' | 'vulnerable');
+    }
+
+    // Repair composites if this skill was previously flagged and is now clean
+    if (newStatus === 'published' && ['vulnerable', 'revoked'].includes(skill.status)) {
+      await repairCompositeStatus(client, skill.id);
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 
-  // Repair composites if this skill was previously flagged and is now clean
-  if (newStatus === 'published' && ['vulnerable', 'revoked'].includes(skill.status)) {
-    await repairCompositeStatus(pool, skill.id);
-  }
-
+  // Notifications are fire-and-forget — outside transaction (non-critical)
   if (newStatus === 'revoked') {
     await triggerNotification(env, skill.id, 'revoked', worstFinding?.cweId ?? worstFinding?.title);
   } else if (newStatus === 'vulnerable' && worstSeverity === 'HIGH') {
@@ -135,6 +166,7 @@ export async function markScanFailed(pool: Pool, skillId: string, reason: string
       verification_tier = 'unverified',
       cognium_scanned_at = NOW(),
       cognium_scanned = true,
+      cognium_job_id = NULL,
       updated_at = NOW()
     WHERE id = $1`,
     [skillId]

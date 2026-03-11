@@ -165,6 +165,66 @@ describe('normalizeFindings', () => {
     const findings = normalizeFindings(raw);
     expect(findings).toHaveLength(25);
   });
+
+  // ── Input validation edge cases ──────────────────────────────────────────
+  it('should return empty array when raw is undefined', () => {
+    expect(normalizeFindings(undefined as any)).toEqual([]);
+  });
+
+  it('should return empty array when raw is null', () => {
+    expect(normalizeFindings(null as any)).toEqual([]);
+  });
+
+  it('should return empty array when raw is not an array', () => {
+    expect(normalizeFindings('not-an-array' as any)).toEqual([]);
+    expect(normalizeFindings(42 as any)).toEqual([]);
+    expect(normalizeFindings({} as any)).toEqual([]);
+  });
+
+  it('should skip findings with null severity', () => {
+    const raw = [makeRawFinding({ severity: null as any })];
+    const findings = normalizeFindings(raw);
+    expect(findings).toHaveLength(0);
+  });
+
+  it('should skip findings with undefined severity', () => {
+    const raw = [{ ...makeRawFinding(), severity: undefined }];
+    const findings = normalizeFindings(raw as any);
+    expect(findings).toHaveLength(0);
+  });
+
+  it('should skip findings with missing description', () => {
+    const raw = [{ ...makeRawFinding(), description: undefined }];
+    const findings = normalizeFindings(raw as any);
+    expect(findings).toHaveLength(0);
+  });
+
+  it('should skip findings with invalid severity value', () => {
+    const raw = [makeRawFinding({ severity: 'UNKNOWN' as any })];
+    const findings = normalizeFindings(raw);
+    expect(findings).toHaveLength(0);
+  });
+
+  it('should skip null/undefined entries in the array', () => {
+    const raw = [null, undefined, makeRawFinding({ severity: 'high' })];
+    const findings = normalizeFindings(raw as any);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe('HIGH');
+  });
+
+  it('should handle mixed valid and invalid findings', () => {
+    const raw = [
+      makeRawFinding({ severity: 'critical' }),
+      { severity: null, description: 'bad' },      // invalid: null severity
+      makeRawFinding({ severity: 'low' }),
+      { severity: 'high' },                          // invalid: no description
+      makeRawFinding({ verdict: 'SAFE' }),            // filtered: SAFE verdict
+    ];
+    const findings = normalizeFindings(raw as any);
+    expect(findings).toHaveLength(2);
+    expect(findings[0].severity).toBe('CRITICAL');
+    expect(findings[1].severity).toBe('LOW');
+  });
 });
 
 describe('deriveWorstSeverity', () => {
