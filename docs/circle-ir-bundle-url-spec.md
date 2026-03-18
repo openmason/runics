@@ -579,3 +579,29 @@ Base URL: `https://wry-manatee-359.convex.site/api/v1/download`
 | Zip with > 50 files | Extract first 50 files, skip the rest, `metadata.extraction_truncated: true` |
 | Zip containing a single 300KB file (exceeds 256KB per-file limit) | Skip the file with `skip_reason: "too_large"` in `files_detail` |
 | Redirect from allowed host to `https://evil.com/payload.zip` | Do not follow cross-host redirect, treat as download failure, fall back to `files` |
+
+---
+
+## Known Issue: SAST Timeouts on JavaScript Files
+
+**Observed:** 2026-03-11 during initial bundle_url testing.
+
+When analyzing the `pets-browser` skill bundle (7 files extracted), 3 of 3 JavaScript files failed SAST with timeouts:
+
+| File | Size | Language | Status | Error |
+|------|------|----------|--------|-------|
+| `src/index.js` | 96,296 bytes | javascript | failed | "SAST analysis timed out after 180 seconds" |
+| `src/petfinder-api.js` | 20,139 bytes | javascript | failed | "SAST analysis timed out after 148 seconds" |
+| `src/pet-browser.js` | 11,061 bytes | javascript | failed | "SAST analysis timed out after 155 seconds" |
+
+All `.md` and `_meta.json` files in the same job analyzed successfully. The timeout appears specific to the SAST phase on JavaScript files in the 11-96KB range.
+
+**Impact:** The skill received `scan_coverage: "code-partial"` instead of `"code-full"`, and 5 capability_mismatch findings were surfaced but no SAST findings from the JS code.
+
+**Other skills tested without SAST timeout issues:**
+- `command-creator` — markdown-only bundle, SAFE
+- `douyin-to-photos` — markdown-only bundle, SAFE
+- `anxiety` — markdown-only bundle, SAFE
+- `btc-risk-radar` — Python code files analyzed successfully (SAST + capability_mismatch ran on all `.py` files)
+
+**Suggested investigation:** The timeout seems to affect JavaScript specifically. Python files of similar size (in `btc-risk-radar`) completed SAST without issue. This may be a JS parser or taint analysis performance issue.

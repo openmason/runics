@@ -131,9 +131,9 @@ max_batch_timeout = 60
 max_retries = 0
 dead_letter_queue = "cognium-poll-dlq"
 
-# Cron triggers: sync dispatch (every 5 min) includes hourly mat view refresh
+# Cron triggers: every minute for scan poll drain, includes hourly mat view refresh
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]
 
 # Production environment overrides
 [env.production]

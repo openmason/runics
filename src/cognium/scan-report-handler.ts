@@ -107,7 +107,11 @@ export async function applyScanReport(
     return;
   }
 
-  const trustScore = computeTrustScore(skill, findings);
+  // Prefer Circle-IR's trust score when available (more accurate — considers full analysis context);
+  // fall back to local computation for backward compat
+  const trustScore = (skillResult?.trust_score != null)
+    ? Math.max(0.0, Math.min(1.0, Math.round(skillResult.trust_score * 100) / 100))
+    : computeTrustScore(skill, findings);
   const newStatus = deriveStatus(worstSeverity);
   const tier = deriveTier(worstSeverity, trustScore, coverage);
   const worstFinding = findings.find(f => f.severity === worstSeverity);

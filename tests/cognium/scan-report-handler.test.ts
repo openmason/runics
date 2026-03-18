@@ -268,6 +268,43 @@ describe('applyScanReport', () => {
     const { triggerNotification } = await import('../../src/cognium/notification-trigger');
     expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), 'skill-1', 'vulnerable', 'CWE-89');
   });
+
+  it('should use Circle-IR trust_score when skillResult is available', async () => {
+    const client = mockClient();
+    const pool = mockPool(client);
+    const skill = makeSkill({ source: 'github' });
+    const skillResult = { trust_score: 0.74, verdict: 'TRUSTED' as const } as any;
+
+    await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
+
+    const updateCall = client.query.mock.calls[1];
+    // Should use Circle-IR's 0.74, not local computation (0.55 github base)
+    expect(updateCall[1][0]).toBe(0.74);
+  });
+
+  it('should fall back to local trust score when skillResult is null', async () => {
+    const client = mockClient();
+    const pool = mockPool(client);
+    const skill = makeSkill({ source: 'github' });
+
+    await applyScanReport(mockEnv(), pool, skill, [], makeJob(), null);
+
+    const updateCall = client.query.mock.calls[1];
+    // Local computation: github base = 0.55
+    expect(updateCall[1][0]).toBe(0.55);
+  });
+
+  it('should clamp Circle-IR trust_score to [0.0, 1.0]', async () => {
+    const client = mockClient();
+    const pool = mockPool(client);
+    const skill = makeSkill();
+    const skillResult = { trust_score: 1.5, verdict: 'TRUSTED' as const } as any;
+
+    await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
+
+    const updateCall = client.query.mock.calls[1];
+    expect(updateCall[1][0]).toBe(1.0);
+  });
 });
 
 describe('markScanFailed', () => {

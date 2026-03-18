@@ -3,9 +3,11 @@
 > **Purpose:** Single source of truth for Runics: search, sync pipelines, publish API, lifecycle management, and implementation spec for Claude Code.
 > **Parent doc:** `cortex-specification.md`
 > **Stack:** TypeScript · Cloudflare Workers · Neon Postgres (pgvector) · Workers AI · KV · R2 · Queues · Hyperdrive
-> **Date:** March 2026 · v5.0
+> **Date:** March 2026 · v5.2
 > **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress.
 > **v5.0 changes:** Status lifecycle (vulnerable/revoked/degraded), version ranking by trust×usage, Circle-IR async scanning, composite trust formula, human-distilled source.
+> **v5.1 changes:** ControlCenter renamed to ControlDeck (controldeck.dev). Product appetite defaults documented inline. Cortex API session config drives all search filter parameters — Runics does not set product defaults independently. Company: Cognium Labs.
+> **v5.2 changes:** scan_coverage expanded to v2 taxonomy (`code-full`, `code-partial`, `instructions-only`, `metadata-only`). Queue bindings upgraded to v2. Cron consolidated to every-minute schedule. MCP Registry sync extracts `repository_url` from upstream `server.repository.url` for Mode A code scanning. Admin endpoints added: `scan-stats`, `scan-preview`, `skill-inventory`, `clear-stale`, `backfill`. Cognium scan pipeline: queue-free submit mode with cron-based poll drain. Confidence thresholds tuned from eval data (0.47/0.42).
 
 ---
 
@@ -269,7 +271,7 @@ WITH BOTH LAYERS (Layer A missed, Layer B rescues):
 | **Tier 3: Low** | Score below threshold | 500–1000ms | ~9% | Full LLM deep search. |
 | **No match** | Tier 3 still poor | 500–1000ms | ~3% | Return generation hints. |
 
-**Thresholds are configurable via env vars and derived from eval data in Phase 1.** The TDR assumed 0.85/0.70 — this may be wrong. Measure first.
+**Thresholds are configurable via env vars and derived from eval data.** The TDR assumed 0.85/0.70 — eval data showed optimal boundaries at **0.47/0.42** (set in `wrangler.toml`).
 
 ### Deep Search (Tier 3)
 
@@ -354,7 +356,6 @@ CREATE TABLE IF NOT EXISTS skills (
   root_source TEXT,             -- original registry source preserved across forks
                                 -- (set at first fork from parent.source; copied from parent.root_source on re-fork)
                                 -- used for trust floor lookup to prevent floor regression on fork-of-fork
-  fork_changes JSONB,           -- list of human-readable changes from parent
 
   -- v5.0: Composition
   composition_skill_ids UUID[], -- ordered constituent skill IDs (for composites)
@@ -367,6 +368,7 @@ CREATE TABLE IF NOT EXISTS skills (
   description TEXT,
   readme TEXT,
   agent_summary TEXT,           -- LLM-generated, search-optimized
+  repository_url TEXT,          -- v5.2: GitHub repo URL (from upstream metadata or manual)
   alternate_queries TEXT[],
   schema_json JSONB,
   auth_requirements JSONB,
@@ -407,12 +409,16 @@ CREATE TABLE IF NOT EXISTS skills (
   verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   scan_coverage TEXT
-    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+    CHECK (scan_coverage IN ('code-full', 'code-partial', 'instructions-only', 'metadata-only')),
+    -- v5.2: expanded from ('full','partial','text-only') to match Circle-IR analysis modes
   trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
+  cognium_scanned BOOLEAN DEFAULT FALSE,  -- v5.2: true after scan attempt (success or fail)
   cognium_scanned_at TIMESTAMPTZ,
+  cognium_job_id TEXT,           -- v5.2: in-flight Circle-IR job ID (cleared on completion)
+  cognium_job_submitted_at TIMESTAMPTZ,  -- v5.2: when job was submitted
   cognium_findings JSONB,       -- [{severity, cwe_id, tool, title, description, confidence, verdict}]
-  analyzer_summary JSONB,       -- per-analyzer result summary
+  analyzer_summary JSONB,       -- per-analyzer result summary from Circle-IR
   content_safety_passed BOOLEAN,
   adversarial_tested BOOLEAN DEFAULT FALSE,
   provenance_attested BOOLEAN DEFAULT FALSE,
@@ -532,6 +538,19 @@ export function appetiteToTrustThreshold(appetite: Appetite): number {
   }
 }
 ```
+
+### Product Defaults
+
+Runics does not set appetite defaults directly. The Cortex API session config (see `cortex-specification.md` §23) passes appetite and filter parameters per request. These are the canonical defaults per product:
+
+| Product | Domain | Appetite | Min Trust | Allow Vulnerable |
+|---|---|---|---|---|
+| **Bombastic** | bombastic.one | `balanced` | 0.50 | `true` |
+| **CoStaff** | costaff.app | `cautious` | 0.70 | `false` |
+| **ControlDeck** | controldeck.dev | `cautious` | 0.70 | `false` (configurable per partner tenant) |
+| **External SaaS** | customer domain | configurable | configurable | configurable |
+
+All four are passed into `SearchFilters` at query time — Runics applies them uniformly regardless of which product made the request.
 
 ---
 
@@ -819,7 +838,7 @@ ALTER TABLE skills
   ADD COLUMN IF NOT EXISTS verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   ADD COLUMN IF NOT EXISTS scan_coverage TEXT
-    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+    CHECK (scan_coverage IN ('code-full', 'code-partial', 'instructions-only', 'metadata-only')),
   ADD COLUMN IF NOT EXISTS trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
   ADD COLUMN IF NOT EXISTS cognium_findings JSONB,
@@ -1005,6 +1024,7 @@ interface SkillUpsert {
   executionLayer: string;
   mcpUrl?: string;
   skillMd?: string;
+  repositoryUrl?: string;           // v5.2: GitHub repo URL for Mode A code scanning
   capabilitiesRequired?: string[];
   source: string;
   sourceUrl: string;
@@ -1019,12 +1039,18 @@ export class McpRegistrySync extends BaseSyncWorker {
   protected get sourceName() { return 'mcp-registry'; }
 
   normalize(raw: McpRegistrySkill): SkillUpsert {
+    // v5.2: Extract GitHub repo URL from upstream registry metadata
+    // Enables Mode A code scanning for skills that have a repository field
+    const repoUrl = raw.repository?.url;
+    const repositoryUrl = repoUrl && isGitHubRepoUrl(repoUrl) ? repoUrl : undefined;
+
     return {
       name: raw.name,
       slug: slugify(raw.name),
       description: raw.description,
       executionLayer: 'mcp-remote',
       mcpUrl: raw.endpoint,
+      repositoryUrl,              // v5.2: stored for Cognium Mode A code scanning
       capabilitiesRequired: raw.requiredScopes ?? [],
       source: 'mcp-registry',
       sourceUrl: raw.registryUrl,
@@ -1034,6 +1060,8 @@ export class McpRegistrySync extends BaseSyncWorker {
   }
 }
 ```
+
+> **v5.2 note:** ~73 of 954 MCP Registry skills have `server.repository.url` pointing to GitHub. These get full SAST analysis via Mode A. The remaining ~881 only have inline description/agent_summary (100-500 chars) — insufficient for meaningful code analysis.
 
 ### 10.2 ClawHub Sync
 
@@ -1082,25 +1110,28 @@ export class GitHubSync extends BaseSyncWorker {
 ### Cron Configuration
 
 ```toml
-# wrangler.toml
+# wrangler.toml — v5.2: consolidated to single every-minute trigger
 [triggers]
-crons = [
-  "*/5 * * * *",    # sync-mcp-registry (every 5 min)
-  "*/10 * * * *",   # sync-clawhub (every 10 min)
-  "*/15 * * * *",   # sync-github (every 15 min)
-  "0 3 * * 0",      # weekly prune cron (Sunday 3am)
-]
+crons = ["* * * * *"]
 ```
+
+The single cron trigger runs every minute and multiplexes all scheduled tasks internally:
+
+- **Every minute (Phase 1):** Poll up to 10 in-flight Cognium scan jobs, fetch results, apply via `applyScanReport()`
+- **Every 5 minutes (Phase 2):** Submit new skills for Cognium scanning (guarded by `minute % 5 === 0`)
+- **Every 5 minutes:** Sync mcp-registry, clawhub, github (staggered by minute offset)
+- **Hourly:** Refresh materialized views (`search_quality_summary`, leaderboards, co-occurrence)
+- **Phase 3:** GC orphaned scan jobs older than 60 minutes
 
 ### Sync Summary
 
-| Source | Frequency | Trust Default | Notes |
-|---|---|---|---|
-| MCP Registry | 5 min | 0.5 (Cognium updates) | `mcp-remote` execution layer |
-| ClawHub | 10 min | 0.5 (Cognium updates) | ~3,000 skills |
-| GitHub | 15 min | 0.5 (Cognium updates) | `container` layer |
-| Direct publish | Immediate | 0.5 (Cognium updates) | Forge / manual |
-| Human-distilled | Immediate | min(sub-skills)×0.90 | Forge Mode 3 |
+| Source | Count | Trust Default | Cognium Mode | Notes |
+|---|---|---|---|---|
+| ClawHub | ~10,885 | 0.5 (Cognium updates) | Mode B (bundle_url) | `worker`/`instructions` layer. Bundle download works; code files may be skipped by Circle-IR |
+| GitHub | ~1,072 | 0.5 (Cognium updates) | Mode A (repo_url) | `container` layer. Full SAST analysis |
+| MCP Registry | ~954 | 0.5 (Cognium updates) | Mode A (73 with repo) / Mode C (881 inline) | `mcp-remote` layer. Inline-only skills get rubber-stamp scan |
+| Direct publish | — | 0.5 (Cognium updates) | Mode C (inline) | Forge / manual |
+| Human-distilled | — | min(sub-skills)×0.90 | Mode C (inline) | Forge Mode 3 |
 
 ---
 
@@ -1177,6 +1208,12 @@ app.post('/v1/skills', zValidator('json', publishSkillSchema), async (c) => {
 ### Trust Update — Internal (no HTTP callback)
 
 Trust scores, status, and findings are applied directly to the DB by the Cognium poll consumer via `applyScanReport()` in `src/cognium/scan-report-handler.ts`. There is no `PUT /v1/skills/:id/trust` HTTP endpoint — Cognium does not push to Runics; Runics pulls from Circle-IR.
+
+**v5.2 scan pipeline (queue-free):** Due to CF Queues rate limiting ("Too Many Requests" at scale), the scan pipeline now operates without queues:
+1. **Submit:** `POST /v1/admin/backfill?mode=submit` sends skills to Circle-IR and stores `cognium_job_id` in the DB
+2. **Poll:** Cron Phase 1 (every minute) queries `WHERE cognium_job_id IS NOT NULL`, checks status via Circle-IR API, fetches findings/results on completion
+3. **Apply:** `applyScanReport()` updates trust_score, verification_tier, status, scan_coverage, cognium_findings, analyzer_summary
+4. **Constraints:** 10 jobs polled per cron cycle (CF Workers subrequest budget), status checks batched 6 concurrent, result fetches batched 3 concurrent
 
 
 ### PATCH /v1/skills/:id/status — Owner-Initiated Status Changes
@@ -1578,6 +1615,16 @@ GET    /v1/analytics/vulnerable-usage   // v5.0
 POST   /v1/eval/run
 GET    /v1/eval/results/:runId
 
+// ── Admin (v5.2, requires Authorization: Bearer <ADMIN_API_KEY>) ──
+POST   /v1/admin/scan/:skillId              // inline scan a single skill (submit + poll + apply)
+POST   /v1/admin/apply-job/:skillId         // manually apply a completed Circle-IR job
+POST   /v1/admin/scan-test/:skillId         // dry-run scan (submit only, no apply)
+GET    /v1/admin/scan-stats                  // scan statistics: by status, source, coverage, findings
+GET    /v1/admin/scan-preview?slug=X         // preview what buildCircleIRRequest would send
+GET    /v1/admin/skill-inventory             // content type + scan status breakdown by source
+POST   /v1/admin/clear-stale                 // clear stale in-flight scan jobs
+POST   /v1/admin/backfill                    // bulk scan submission (mode=submit|inline, source, content filters)
+
 // ── Health ──
 GET    /health
 ```
@@ -1856,13 +1903,14 @@ runics/
 │   │   └── schema.ts                     # publishSkillSchema
 │   │
 │   ├── cognium/
-│   │   ├── queue-consumer.ts             # HTTP client → Cognium Server
-│   │   ├── request-builder.ts            # Skill → ScanRequest (no source/priority/composite)
+│   │   ├── submit-consumer.ts            # Queue consumer: submit skills to Circle-IR
+│   │   ├── poll-consumer.ts              # Queue consumer: poll Circle-IR for results
+│   │   ├── request-builder.ts            # Skill → CircleIRSkillAnalyzeRequest (Mode A/B/C)
 │   │   ├── scoring-policy.ts             # Runics trust formula, severity→status, tier, remediation
-│   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status (in src/cognium/)
+│   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status + coverage
 │   │   ├── composite-cascade.ts          # Cascade status to composites
 │   │   ├── notification-trigger.ts       # Webhook to Activepieces on revoke/flag
-│   │   └── types.ts                      # CogniumSubmitMessage, CogniumPollMessage, ScanFinding, CircleIRFinding
+│   │   └── types.ts                      # CircleIRSkillAnalyzeRequest, CircleIRJobStatus, etc.
 │   │
 │   ├── monitoring/
 │   │   ├── search-logger.ts
@@ -1962,11 +2010,11 @@ queue = "runics-embed"
 
 [[queues.producers]]
 binding = "COGNIUM_QUEUE"
-queue = "runics-cognium"
+queue = "runics-cognium-v2"
 
 [[queues.producers]]
 binding = "COGNIUM_POLL_QUEUE"
-queue = "runics-cognium-poll"
+queue = "runics-cognium-poll-v2"
 
 [[queues.consumers]]
 queue = "runics-embed"
@@ -1974,14 +2022,14 @@ max_batch_size = 10
 max_batch_timeout = 30
 
 [[queues.consumers]]
-queue = "runics-cognium"
+queue = "runics-cognium-v2"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 2
 dead_letter_queue = "cognium-dlq"
 
 [[queues.consumers]]
-queue = "runics-cognium-poll"
+queue = "runics-cognium-poll-v2"
 max_batch_size = 10
 max_batch_timeout = 30
 max_retries = 0                     # self-manages retries via delayed re-enqueue
@@ -1992,12 +2040,7 @@ binding = "COGNIUM_JOBS"
 id = "..."                          # stores job state: cognium:job:{skillId}
 
 [triggers]
-crons = [
-  "*/5 * * * *",
-  "*/10 * * * *",
-  "*/15 * * * *",
-  "0 3 * * 0",     # weekly prune (Forge auto-distilled cleanup)
-]
+crons = ["* * * * *"]   # v5.2: every minute — multiplexes scan poll, sync, mat view refresh
 
 [ai]
 binding = "AI"
@@ -2008,15 +2051,15 @@ EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
 RERANKER_MODEL = "@cf/baai/bge-reranker-base"
 LLM_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
-CONFIDENCE_TIER1_THRESHOLD = "0.85"
-CONFIDENCE_TIER2_THRESHOLD = "0.70"
+CONFIDENCE_TIER1_THRESHOLD = "0.47"   # v5.2: tuned from eval data (was 0.85)
+CONFIDENCE_TIER2_THRESHOLD = "0.42"   # v5.2: tuned from eval data (was 0.70)
 CACHE_TTL_SECONDS = "60"
 DEFAULT_APPETITE = "balanced"
 VECTOR_WEIGHT = "0.7"
 FULLTEXT_WEIGHT = "0.3"
 VERSION_TRUST_WEIGHT = "0.7"
 VERSION_USAGE_WEIGHT = "0.3"
-COGNIUM_URL = "https://circle.cognium.net"
+COGNIUM_URL = "https://circle.phantoms.workers.dev"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"
 ```
@@ -2164,10 +2207,6 @@ export async function forkSkill(
         FROM composition_steps WHERE composition_id = $1
       ) WHERE id = $1`,
       [fork.rows[0].id]
-    );
-  }
-      FROM composition_steps WHERE composition_id = $2`,
-      [fork.rows[0].id, sourceId]
     );
   }
 
@@ -2320,7 +2359,7 @@ When Cognium updates a skill's status, Runics cascades to composites. This is ha
 // repaired constituent → re-evaluate composite, restore if all clean
 ```
 
-The cascade is triggered within `scan-report-handler.ts` (`applyScanReport()`) after the primary skill's status is updated. See `src/cognium/composite-cascade.ts` for full implementation.
+The cascade is triggered within `scan-report-handler.ts` (`applyScanReport()`) after the primary skill's status is updated. See `cognium-client-specification.md` §9 for full implementation.
 
 ### 23.6 Deprecation & Auto-Migration
 
@@ -2369,4 +2408,4 @@ timon-security-review
 
 ---
 
-*End of document. This is the single source of truth for Runics search implementation.*
+*End of document. This is the single source of truth for Runics search implementation. — Cognium Labs*

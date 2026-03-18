@@ -3,8 +3,8 @@
 // ══════════════════════════════════════════════════════════════════════════════
 //
 // Shared infrastructure for all sync adapters:
-// - Cursor-based pagination loop
-// - Change detection via source_hash (SHA-256 of raw upstream data)
+// - Cursor-based pagination loop with optional page limit + persistent cursor
+// - Batch change detection via source_hash (1 query per page, not per skill)
 // - Upsert with ON CONFLICT (source, source_url)
 // - Queue dispatch to EMBED_QUEUE + COGNIUM_QUEUE
 // - Per-skill error isolation (one failure doesn't abort the batch)
@@ -14,6 +14,13 @@
 import { Pool } from '@neondatabase/serverless';
 import type { Env, SyncResult, SkillUpsert, EmbedQueueMessage, CogniumSubmitMessage } from '../types';
 import { sha256 } from './utils';
+
+export interface SyncRunOptions {
+  /** Max pages to process per invocation (default: unlimited) */
+  maxPages?: number;
+  /** Resume from a stored cursor (for paginated sync across invocations) */
+  startCursor?: string;
+}
 
 export abstract class BaseSyncWorker {
   protected pool: Pool;
@@ -39,26 +46,47 @@ export abstract class BaseSyncWorker {
   protected abstract get sourceName(): string;
 
   /**
-   * Run the full sync: paginate → normalize → change-detect → upsert → enqueue.
+   * Run the sync: paginate → normalize → batch-change-detect → upsert → enqueue.
+   * Supports optional page limit and start cursor for incremental sync.
+   * Returns the result plus the last cursor for continuation.
    */
-  async run(): Promise<SyncResult> {
+  async run(options?: SyncRunOptions): Promise<SyncResult & { lastCursor?: string }> {
     const startTime = Date.now();
-    let cursor: string | undefined;
+    let cursor: string | undefined = options?.startCursor;
     let synced = 0;
     let skipped = 0;
     let errors = 0;
+    let pages = 0;
+    const maxPages = options?.maxPages ?? Infinity;
 
     try {
       do {
         const batch = await this.fetchBatch(cursor);
+        pages++;
 
+        // Normalize all skills and compute hashes for the batch
+        const prepared: Array<{ raw: unknown; skill: SkillUpsert; hash: string }> = [];
         for (const raw of batch.skills) {
           try {
             const skill = this.normalize(raw);
             const hash = await sha256(JSON.stringify(raw));
+            prepared.push({ raw, skill, hash });
+          } catch (error) {
+            console.error(`[SYNC:${this.sourceName}] Error normalizing skill:`, error);
+            errors++;
+          }
+        }
 
-            // Change detection: skip if source_hash unchanged
-            const existing = await this.findBySourceUrl(skill.source, skill.sourceUrl);
+        // Batch change detection: one query for all source_urls in this page
+        const sourceUrls = prepared.map((p) => p.skill.sourceUrl);
+        const existingMap = await this.findBySourceUrls(
+          prepared[0]?.skill.source ?? this.sourceName,
+          sourceUrls
+        );
+
+        for (const { skill, hash } of prepared) {
+          try {
+            const existing = existingMap.get(skill.sourceUrl);
             if (existing?.source_hash === hash) {
               skipped++;
               continue;
@@ -94,40 +122,52 @@ export abstract class BaseSyncWorker {
         }
 
         cursor = batch.nextCursor;
-      } while (cursor);
+      } while (cursor && pages < maxPages);
     } catch (error) {
       console.error(`[SYNC:${this.sourceName}] Fatal error in sync run:`, error);
     }
 
-    const result: SyncResult = {
+    const result = {
       source: this.sourceName,
       synced,
       skipped,
       errors,
       durationMs: Date.now() - startTime,
+      lastCursor: cursor, // undefined if we reached the end
     };
 
     console.log(
       `[SYNC:${this.sourceName}] Complete: ` +
         `synced=${synced} skipped=${skipped} errors=${errors} ` +
-        `duration=${result.durationMs}ms`
+        `pages=${pages} duration=${result.durationMs}ms` +
+        (cursor ? ` (more pages available)` : ' (all pages processed)')
     );
 
     return result;
   }
 
   /**
-   * Look up an existing skill by source identity for change detection.
+   * Batch lookup of existing skills by source_urls for change detection.
+   * Returns a Map of sourceUrl → { id, source_hash }.
    */
-  private async findBySourceUrl(
+  private async findBySourceUrls(
     source: string,
-    sourceUrl: string
-  ): Promise<{ id: string; source_hash: string } | null> {
+    sourceUrls: string[]
+  ): Promise<Map<string, { id: string; source_hash: string }>> {
+    const map = new Map<string, { id: string; source_hash: string }>();
+    if (sourceUrls.length === 0) return map;
+
+    // Build parameterized query for batch lookup
+    const placeholders = sourceUrls.map((_, i) => `$${i + 2}`).join(',');
     const result = await this.pool.query(
-      'SELECT id, source_hash FROM skills WHERE source = $1 AND source_url = $2 LIMIT 1',
-      [source, sourceUrl]
+      `SELECT id, source_url, source_hash FROM skills WHERE source = $1 AND source_url IN (${placeholders})`,
+      [source, ...sourceUrls]
     );
-    return result.rows[0] ?? null;
+
+    for (const row of result.rows) {
+      map.set(row.source_url, { id: row.id, source_hash: row.source_hash });
+    }
+    return map;
   }
 
   /**
