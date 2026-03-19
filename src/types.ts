@@ -430,6 +430,9 @@ export interface Env {
   COGNIUM_API_KEY?: string;
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"
   COGNIUM_MAX_POLL_ATTEMPTS?: string; // default "12"
+  COGNIUM_FAST_BATCH_SIZE?: string; // default "10" — non-GitHub skills per cron cycle
+  COGNIUM_REPO_BATCH_SIZE?: string; // default "3"  — GitHub/repo skills per cron cycle
+  COGNIUM_MAX_INFLIGHT?: string;    // default "20" — skip submissions if too many jobs pending
 
   // v5.0: Admin API authentication
   ADMIN_API_KEY?: string; // Set via: wrangler secret put ADMIN_API_KEY

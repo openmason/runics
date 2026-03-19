@@ -1625,7 +1625,7 @@ app.post('/v1/admin/clear-stale', async (c) => {
 app.get('/v1/admin/skill-inventory', async (c) => {
   try {
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
-    const [total, bySource, byStatus, byContent, byScanStatus] = await Promise.all([
+    const [total, bySource, byStatus, byContent, byScanStatus, failureReasons] = await Promise.all([
       pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE status = 'published'`),
       pool.query(`SELECT source, count(*)::int AS cnt FROM skills WHERE status = 'published' GROUP BY source ORDER BY cnt DESC`),
       pool.query(`SELECT status, count(*)::int AS cnt FROM skills GROUP BY status ORDER BY cnt DESC`),
@@ -1646,6 +1646,14 @@ app.get('/v1/admin/skill-inventory', async (c) => {
         count(*) FILTER (WHERE cognium_scanned = false AND (source = 'github' OR repository_url IS NOT NULL))::int AS unscanned_with_repo,
         count(*) FILTER (WHERE cognium_scanned = true AND verification_tier = 'unverified' AND (skill_md IS NOT NULL AND length(skill_md) > 100))::int AS failed_with_instructions
       FROM skills WHERE status = 'published'`),
+      pool.query(`SELECT
+        COALESCE(scan_failure_reason, 'unknown (pre-tracking)') AS reason,
+        count(*)::int AS cnt
+      FROM skills
+      WHERE cognium_scanned = true AND verification_tier = 'unverified'
+      GROUP BY scan_failure_reason
+      ORDER BY cnt DESC
+      LIMIT 20`),
     ]);
     return c.json({
       totalPublished: total.rows[0].cnt,
@@ -1653,6 +1661,7 @@ app.get('/v1/admin/skill-inventory', async (c) => {
       bySource: Object.fromEntries(bySource.rows.map((r: any) => [r.source, r.cnt])),
       content: byContent.rows[0],
       scanStatus: byScanStatus.rows[0],
+      failureReasons: Object.fromEntries(failureReasons.rows.map((r: any) => [r.reason, r.cnt])),
     });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
@@ -2234,6 +2243,18 @@ export default {
             // Skip submit phase on non-5min cycles (only poll above)
           } else {
 
+          // ── Backpressure: skip submissions if too many jobs in-flight ──
+          const maxInflight = parseInt(env.COGNIUM_MAX_INFLIGHT ?? '20', 10);
+          const inflightCount = await pool.query(
+            `SELECT count(*)::int AS cnt FROM skills WHERE cognium_job_id IS NOT NULL`
+          );
+          if (inflightCount.rows[0].cnt >= maxInflight) {
+            console.log(`[CRON] Phase 2 skipped: ${inflightCount.rows[0].cnt} jobs in-flight (max ${maxInflight})`);
+          } else {
+
+          const fastBatchSize = parseInt(env.COGNIUM_FAST_BATCH_SIZE ?? '10', 10);
+          const repoBatchSize = parseInt(env.COGNIUM_REPO_BATCH_SIZE ?? '3', 10);
+
           const fastSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
                     execution_layer AS "executionLayer",
@@ -2251,7 +2272,8 @@ export default {
                AND cognium_job_id IS NULL
                AND source != 'github' AND repository_url IS NULL
              ORDER BY created_at ASC
-             LIMIT 10`
+             LIMIT $1`,
+            [fastBatchSize]
           );
 
           const repoSkills = await pool.query(
@@ -2271,13 +2293,20 @@ export default {
                AND cognium_job_id IS NULL
                AND (source = 'github' OR repository_url IS NOT NULL)
              ORDER BY created_at ASC
-             LIMIT 3`
+             LIMIT $1`,
+            [repoBatchSize]
           );
 
           let submitted = 0;
+          let consecutiveFailures = 0;
+          const MAX_CONSECUTIVE_FAILURES = 3;
 
           // Fast path: non-GitHub skills (inline poll, ~2s each)
           for (const skill of fastSkills.rows) {
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              console.warn(`[CRON-SUBMIT] Aborting fast path: ${consecutiveFailures} consecutive Circle-IR failures`);
+              break;
+            }
             try {
               // buildCircleIRRequest includes bundle_url for clawhub skills
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
@@ -2287,8 +2316,10 @@ export default {
               });
               if (!submitRes.ok) {
                 console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
+                if (submitRes.status >= 500 || submitRes.status === 429) consecutiveFailures++;
                 continue;
               }
+              consecutiveFailures = 0;
               const { job_id } = await submitRes.json() as { job_id: string };
 
               let jobStatus: any;
@@ -2336,6 +2367,10 @@ export default {
 
           // Repo path: skills with GitHub source or repository_url (submit + defer poll)
           for (const skill of repoSkills.rows) {
+            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              console.warn(`[CRON-SUBMIT] Aborting repo path: ${consecutiveFailures} consecutive Circle-IR failures`);
+              break;
+            }
             try {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
@@ -2344,8 +2379,10 @@ export default {
               });
               if (!submitRes.ok) {
                 console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
+                if (submitRes.status >= 500 || submitRes.status === 429) consecutiveFailures++;
                 continue;
               }
+              consecutiveFailures = 0;
               const { job_id } = await submitRes.json() as { job_id: string };
 
               await pool.query(
@@ -2363,6 +2400,7 @@ export default {
             console.log(`[CRON] Submit phase: submitted ${submitted} skills (${fastSkills.rows.length} fast + ${repoSkills.rows.length} repo)`);
           }
 
+          } // end backpressure check
           } // end Phase 2 (minute % 5 guard)
 
           // ── Phase 3: Garbage collect orphaned job state ──────────────────

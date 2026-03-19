@@ -305,6 +305,36 @@ describe('applyScanReport', () => {
     const updateCall = client.query.mock.calls[1];
     expect(updateCall[1][0]).toBe(1.0);
   });
+
+  it('should clear scan_failure_reason on successful scan (normal path)', async () => {
+    const client = mockClient();
+    const pool = mockPool(client);
+    const skill = makeSkill();
+
+    await applyScanReport(mockEnv(), pool, skill, [], makeJob());
+
+    const updateCall = client.query.mock.calls[1];
+    expect(updateCall[0]).toContain('scan_failure_reason = NULL');
+  });
+
+  it('should clear scan_failure_reason on content safety revocation path', async () => {
+    const client = mockClient();
+    const pool = mockPool(client);
+    const skill = makeSkill();
+    const findings: ScanFinding[] = [
+      makeFinding({
+        severity: 'CRITICAL',
+        cweId: 'CWE-78',
+        phase: 'sast',
+        llmVerified: true,
+      }),
+    ];
+
+    await applyScanReport(mockEnv(), pool, skill, findings, makeJob());
+
+    const updateCall = client.query.mock.calls[1];
+    expect(updateCall[0]).toContain('scan_failure_reason = NULL');
+  });
 });
 
 describe('markScanFailed', () => {
@@ -319,6 +349,35 @@ describe('markScanFailed', () => {
     const [sql, params] = pool.query.mock.calls[0];
     expect(sql).toContain("verification_tier = 'unverified'");
     expect(sql).toContain('cognium_job_id = NULL');
-    expect(params).toEqual(['skill-1']);
+    expect(sql).toContain('scan_failure_reason');
+    expect(params).toEqual(['skill-1', 'Test failure']);
+  });
+
+  it('should persist Circle-IR job failure reason', async () => {
+    const pool = { query: vi.fn() } as any;
+
+    await markScanFailed(pool, 'skill-2', 'Circle-IR job failed');
+
+    const [sql, params] = pool.query.mock.calls[0];
+    expect(params).toEqual(['skill-2', 'Circle-IR job failed']);
+    expect(sql).toContain('scan_failure_reason = $2');
+  });
+
+  it('should persist poll timeout reason', async () => {
+    const pool = { query: vi.fn() } as any;
+
+    await markScanFailed(pool, 'skill-3', 'Poll timeout after 12 attempts');
+
+    const [, params] = pool.query.mock.calls[0];
+    expect(params[1]).toBe('Poll timeout after 12 attempts');
+  });
+
+  it('should persist HTTP status failure reason', async () => {
+    const pool = { query: vi.fn() } as any;
+
+    await markScanFailed(pool, 'skill-4', 'Status check returned 404');
+
+    const [, params] = pool.query.mock.calls[0];
+    expect(params[1]).toBe('Status check returned 404');
   });
 });

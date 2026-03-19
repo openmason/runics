@@ -83,6 +83,7 @@ export async function applyScanReport(
           cognium_job_id = NULL,
           scan_coverage = $2,
           analyzer_summary = $3,
+          scan_failure_reason = NULL,
           updated_at = NOW()
         WHERE id = $4`,
         [
@@ -137,6 +138,7 @@ export async function applyScanReport(
         cognium_scanned = true,
         cognium_job_id = NULL,
         analyzer_summary = $9,
+        scan_failure_reason = NULL,
         updated_at = NOW()
       WHERE id = $10`,
       [
@@ -182,12 +184,13 @@ export async function markScanFailed(pool: Pool, skillId: string, reason: string
   await pool.query(
     `UPDATE skills SET
       verification_tier = 'unverified',
+      scan_failure_reason = $2,
       cognium_scanned_at = NOW(),
       cognium_scanned = true,
       cognium_job_id = NULL,
       updated_at = NOW()
     WHERE id = $1`,
-    [skillId]
+    [skillId, reason]
   );
   console.error(`[COGNIUM] Scan failed for ${skillId}: ${reason}`);
 }

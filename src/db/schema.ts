@@ -129,6 +129,7 @@ export const skills = pgTable(
     // v5.0: Cognium attestation
     verificationTier: text('verification_tier').default('unverified'),
     scanCoverage: text('scan_coverage'),
+    scanFailureReason: text('scan_failure_reason'),
     cogniumFindings: jsonb('cognium_findings'),
     analyzerSummary: jsonb('analyzer_summary'),
     // v5.0: composition
