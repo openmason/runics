@@ -22,7 +22,10 @@
     "test:watch": "vitest watch",
     "perf": "tsx scripts/perf-test.ts",
     "perf:staging": "tsx scripts/perf-test.ts --endpoint https://runics.phantoms.workers.dev",
-    "perf:production": "tsx scripts/perf-test.ts --endpoint https://api.runics.net"
+    "perf:production": "tsx scripts/perf-test.ts --endpoint https://api.runics.net",
+    "smoke": "tsx scripts/smoke-test.ts",
+    "smoke:production": "tsx scripts/smoke-test.ts --endpoint https://api.runics.net",
+    "smoke:staging": "tsx scripts/smoke-test.ts --endpoint https://runics.phantoms.workers.dev"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.1",

@@ -14,7 +14,7 @@ name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
 
-# Custom domain — requires api.runics.net DNS proxied through Cloudflare
+# Custom domain — api.runics.net DNS proxied through Cloudflare
 routes = [
   { pattern = "api.runics.net/*", zone_name = "runics.net" }
 ]
@@ -26,17 +26,17 @@ enabled = true
 
 [[kv_namespaces]]
 binding = "SEARCH_CACHE"
-id = "TODO"  # wrangler kv namespace create SEARCH_CACHE
+id = "a086237a2e774bf6bef964e85ac7c99d"
 
 [[kv_namespaces]]
 binding = "COGNIUM_JOBS"
-id = "TODO"  # wrangler kv namespace create COGNIUM_JOBS
+id = "6b83cc636bcd46e4a93d80791e30e058"
 
 # ── Hyperdrive (Postgres Connection Pooling) ─────────────────────────────────
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "TODO"  # wrangler hyperdrive create runics-production --connection-string "..."
+id = "88fe050882fc46839624062eac474d79"
 
 # ── Workers AI ───────────────────────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ ENVIRONMENT = "production"
 # ── Database ─────────────────────────────────────────────────────────────────
 # Production Neon project — separate from staging
 # Create via: https://console.neon.tech → New Project
-NEON_CONNECTION_STRING = "TODO"
+NEON_CONNECTION_STRING = "postgresql://admin:npg_0VU7WjgPETsL@ep-lingering-poetry-akqhhvzl-pooler.c-3.us-west-2.aws.neon.tech/runics?sslmode=require"
 
 # ── Model Configuration ──────────────────────────────────────────────────────
 EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
