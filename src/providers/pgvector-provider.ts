@@ -199,6 +199,20 @@ export class PgVectorProvider implements SearchProvider {
       params.push(filters.tags);
     }
 
+    // v5.2: visibility filter — public by default, tenant can see own private/unlisted
+    if (filters.visibility) {
+      conditions.push(`s.visibility = $${++paramCount.value}`);
+      params.push(filters.visibility);
+    } else {
+      conditions.push(`(s.visibility = 'public' OR (s.visibility IN ('private', 'unlisted') AND s.tenant_id = $1))`);
+    }
+
+    // v5.2: runtime environment filter
+    if (filters.runtimeEnv && filters.runtimeEnv.length > 0) {
+      conditions.push(`s.runtime_env = ANY($${++paramCount.value}::text[])`);
+      params.push(filters.runtimeEnv);
+    }
+
     const whereClause = conditions.join(' AND ');
 
     // v5.0: Version ranking — best version per slug using trust×weight + min(run_count/100, usage_weight)
@@ -271,6 +285,20 @@ export class PgVectorProvider implements SearchProvider {
     if (filters.tags && filters.tags.length > 0) {
       conditions.push(`s.tags && $${++paramCount.value}::text[]`);
       params.push(filters.tags);
+    }
+
+    // v5.2: visibility filter — public by default, tenant can see own private/unlisted
+    if (filters.visibility) {
+      conditions.push(`s.visibility = $${++paramCount.value}`);
+      params.push(filters.visibility);
+    } else {
+      conditions.push(`(s.visibility = 'public' OR (s.visibility IN ('private', 'unlisted') AND s.tenant_id = $1))`);
+    }
+
+    // v5.2: runtime environment filter
+    if (filters.runtimeEnv && filters.runtimeEnv.length > 0) {
+      conditions.push(`s.runtime_env = ANY($${++paramCount.value}::text[])`);
+      params.push(filters.runtimeEnv);
     }
 
     const whereClause = conditions.join(' AND ');

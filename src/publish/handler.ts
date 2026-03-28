@@ -42,9 +42,11 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         author_id, author_type, status, published_at,
         skill_type, composition_skill_ids, forked_from, forked_by,
         fork_changes, human_distilled_by, human_distilled_at,
-        trust_badge, verification_tier, run_count
+        trust_badge, verification_tier, run_count,
+        runtime_env, visibility, environment_variables
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-                'published',NOW(),$18,$19,$20,$21,$22,$23,$24,$25,'unverified',0)
+                'published',NOW(),$18,$19,$20,$21,$22,$23,$24,$25,'unverified',0,
+                $26,$27,$28)
       RETURNING id, slug, version`,
       [
         input.name,
@@ -73,6 +75,10 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         input.humanDistilledBy ?? null,
         input.humanDistilledBy ? new Date() : null,
         input.trustBadge ?? null,
+        // v5.2 fields
+        input.runtimeEnv ?? 'api',
+        input.visibility ?? 'public',
+        input.environmentVariables ?? null,
       ]
     );
 
@@ -132,6 +138,18 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
   const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
   try {
+    // v5.2: Only draft skills are editable — fork to modify published skills
+    const statusCheck = await pool.query(
+      `SELECT status FROM skills WHERE id = $1`,
+      [skillId]
+    );
+    if (statusCheck.rows.length === 0) {
+      return c.json({ error: 'Skill not found' }, 404);
+    }
+    if (statusCheck.rows[0].status !== 'draft') {
+      return c.json({ error: 'only draft skills are editable — fork to modify published skills' }, 400);
+    }
+
     // Build dynamic SET clause
     const setClauses: string[] = [];
     const values: unknown[] = [];
@@ -140,10 +158,8 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
     const fieldMap: Record<string, string> = {
       name: 'name',
       description: 'description',
-      executionLayer: 'execution_layer',
-      mcpUrl: 'mcp_url',
       skillMd: 'skill_md',
-      trustScore: 'trust_score',
+      mcpUrl: 'mcp_url',
       tags: 'tags',
       category: 'category',
     };
@@ -167,6 +183,26 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
       values.push(input.capabilitiesRequired);
       paramIdx++;
     }
+    if (input.categories !== undefined) {
+      setClauses.push(`categories = $${paramIdx}`);
+      values.push(input.categories);
+      paramIdx++;
+    }
+    if (input.runtimeEnv !== undefined) {
+      setClauses.push(`runtime_env = $${paramIdx}`);
+      values.push(input.runtimeEnv);
+      paramIdx++;
+    }
+    if (input.visibility !== undefined) {
+      setClauses.push(`visibility = $${paramIdx}`);
+      values.push(input.visibility);
+      paramIdx++;
+    }
+    if (input.environmentVariables !== undefined) {
+      setClauses.push(`environment_variables = $${paramIdx}`);
+      values.push(input.environmentVariables);
+      paramIdx++;
+    }
 
     if (setClauses.length === 0) {
       return c.json({ error: 'No fields to update' }, 400);
@@ -182,8 +218,8 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
       return c.json({ error: 'Skill not found' }, 404);
     }
 
-    // Re-enqueue for embedding if description changed (best-effort)
-    if (input.description !== undefined) {
+    // Re-enqueue for embedding if description or skill_md changed (best-effort)
+    if (input.description !== undefined || input.skillMd !== undefined) {
       try {
         await c.env.EMBED_QUEUE.send({
           skillId,
@@ -195,7 +231,7 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
       }
     }
 
-    return c.json({ id: skillId, status: 'updated' });
+    return c.json({ id: skillId, status: 'draft' });
   } catch (error) {
     console.error('[PUBLISH] Update error:', error);
     return c.json({ error: 'Failed to update skill', message: (error as Error).message }, 500);
@@ -247,7 +283,6 @@ publishRoutes.put('/:id/trust', zValidator('json', attestationUpdateSchema), asy
         cognium_findings = $8,
         analyzer_summary = $9,
         cognium_scanned_at = $10::timestamptz,
-        cognium_scanned = true,
         updated_at = NOW()
       WHERE id = $11`,
       [
@@ -344,3 +379,64 @@ publishRoutes.put('/:id/bundle', async (c) => {
     );
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /v1/skills/:id/publish — Publish a draft skill (v5.2)
+// ──────────────────────────────────────────────────────────────────────────────
+
+publishRoutes.post('/:id/publish', async (c) => {
+  const skillId = c.req.param('id');
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+  try {
+    // Fetch the skill
+    const skillResult = await pool.query(
+      `SELECT id, status, description, skill_md, mcp_url, r2_bundle_key FROM skills WHERE id = $1`,
+      [skillId]
+    );
+
+    if (skillResult.rows.length === 0) {
+      return c.json({ error: 'not found' }, 404);
+    }
+
+    const skill = skillResult.rows[0];
+
+    if (skill.status !== 'draft') {
+      return c.json({ error: 'only draft skills can be published' }, 400);
+    }
+
+    // Require description and at least one content artifact
+    if (!skill.description) {
+      return c.json({ error: 'description required' }, 400);
+    }
+    if (!skill.skill_md && !skill.mcp_url && !skill.r2_bundle_key) {
+      return c.json({ error: 'skill needs content: skill_md, mcp_url, or code bundle' }, 400);
+    }
+
+    await pool.query(
+      `UPDATE skills SET status = 'published', published_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [skillId]
+    );
+
+    // Enqueue for embedding + scanning (best-effort)
+    try {
+      await c.env.EMBED_QUEUE.send({ skillId, action: 'embed', source: 'publish' });
+      await c.env.COGNIUM_QUEUE.send({
+        skillId,
+        priority: 'normal',
+        timestamp: Date.now(),
+      } satisfies CogniumSubmitMessage);
+    } catch (queueErr) {
+      console.error(`[PUBLISH] Queue send failed for publish ${skillId}: ${(queueErr as Error).message}`);
+    }
+
+    return c.json({ id: skillId, status: 'published' });
+  } catch (error) {
+    console.error('[PUBLISH] Publish draft error:', error);
+    return c.json(
+      { error: 'Failed to publish skill', message: (error as Error).message },
+      500
+    );
+  }
+});
+

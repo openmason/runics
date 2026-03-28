@@ -46,6 +46,9 @@ interface FindSkillOptions {
   appetite?: Appetite;
   tags?: string[];
   category?: string;
+  // v5.2
+  runtimeEnv?: string[];
+  visibility?: 'public' | 'private' | 'unlisted';
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -129,6 +132,8 @@ export class ConfidenceGate {
       category: options.category,
       minTrustScore: appetiteToTrustThreshold(appetite),
       contentSafetyRequired: true,
+      runtimeEnv: options.runtimeEnv,
+      visibility: options.visibility,
     };
 
     // ── 4. Provider Search ──

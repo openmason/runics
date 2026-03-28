@@ -102,6 +102,7 @@ export class ClawHubSync extends BaseSyncWorker {
       version,
       schemaJson: skill.schema,
       executionLayer: this.inferExecutionLayer(skill),
+      runtimeEnv: this.inferRuntimeEnv(skill), // v5.2
       skillMd: skill.skillMd,
       changelog,
       capabilitiesRequired: this.extractCapabilities(skill),
@@ -123,6 +124,14 @@ export class ClawHubSync extends BaseSyncWorker {
     }
     // Default to worker (pure function)
     return 'worker';
+  }
+
+  private inferRuntimeEnv(skill: ClawHubSkill): string {
+    // instructions-only skills run in LLM context; code skills are API calls
+    if (skill.hasCode === false && (skill.skillMd || skill.skillMdExcerpt)) {
+      return 'llm';
+    }
+    return 'api';
   }
 
   private extractCapabilities(skill: ClawHubSkill): string[] {

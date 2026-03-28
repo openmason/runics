@@ -14,7 +14,7 @@ export async function extendComposition(
 ): Promise<ForkResult> {
   // Verify source is a composition/pipeline
   const source = await pool.query(
-    `SELECT type FROM skills WHERE id = $1 AND status = 'published'`,
+    `SELECT skill_type FROM skills WHERE id = $1 AND status = 'published'`,
     [compositionId]
   );
 
@@ -22,8 +22,8 @@ export async function extendComposition(
     throw new NotFoundError(`Composition ${compositionId} not found or not published`);
   }
 
-  if (!['composition', 'pipeline'].includes(source.rows[0].type)) {
-    throw new ValidationError(`Skill ${compositionId} is not a composition or pipeline`);
+  if (!['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(source.rows[0].skill_type)) {
+    throw new ValidationError(`Skill ${compositionId} is not a composition`);
   }
 
   // Validate new step skill IDs exist and are published

@@ -3,19 +3,19 @@ import { Pool } from '@neondatabase/serverless';
 export async function getAncestry(
   skillId: string,
   pool: Pool
-): Promise<{ id: string; slug: string; name: string; forkDepth: number }[]> {
+): Promise<{ id: string; slug: string; name: string; version: string; depth: number }[]> {
   const result = await pool.query(
     `WITH RECURSIVE ancestry AS (
-      SELECT id, slug, name, fork_depth, fork_of
+      SELECT id, slug, name, version, forked_from, 0 AS depth
       FROM skills WHERE id = $1
       UNION ALL
-      SELECT s.id, s.slug, s.name, s.fork_depth, s.fork_of
+      SELECT s.id, s.slug, s.name, s.version, s.forked_from, a.depth + 1
       FROM skills s
-      JOIN ancestry a ON s.id = a.fork_of
+      JOIN ancestry a ON s.slug || '@' || s.version = a.forked_from
     )
-    SELECT id, slug, name, fork_depth
+    SELECT id, slug, name, version, depth
     FROM ancestry
-    ORDER BY fork_depth ASC`,
+    ORDER BY depth ASC`,
     [skillId]
   );
 
@@ -23,7 +23,8 @@ export async function getAncestry(
     id: r.id,
     slug: r.slug,
     name: r.name,
-    forkDepth: r.fork_depth ?? 0,
+    version: r.version,
+    depth: r.depth ?? 0,
   }));
 }
 
@@ -33,12 +34,21 @@ export async function getForks(
 ): Promise<
   { id: string; slug: string; name: string; authorType: string; createdAt: string }[]
 > {
+  // Look up source skill's slug@version to find forks via forked_from
+  const source = await pool.query(
+    `SELECT slug, version FROM skills WHERE id = $1`,
+    [skillId]
+  );
+  if (source.rows.length === 0) return [];
+
+  const slugAtVersion = `${source.rows[0].slug}@${source.rows[0].version}`;
+
   const result = await pool.query(
     `SELECT id, slug, name, author_type, created_at
      FROM skills
-     WHERE fork_of = $1
+     WHERE forked_from = $1
      ORDER BY created_at DESC`,
-    [skillId]
+    [slugAtVersion]
   );
 
   return result.rows.map((r: any) => ({

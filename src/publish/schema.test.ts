@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { publishSkillSchema, updateSkillSchema, trustUpdateSchema } from './schema';
+import { publishSkillSchema, updateSkillSchema } from './schema';
 
 describe('publishSkillSchema', () => {
   it('should accept valid skill input', () => {
@@ -89,6 +89,87 @@ describe('publishSkillSchema', () => {
   });
 });
 
+describe('publishSkillSchema v5.2 fields', () => {
+  const validBase = {
+    name: 'Test',
+    slug: 'test',
+    description: 'Valid description text',
+    executionLayer: 'worker' as const,
+  };
+
+  it('should accept valid runtimeEnv values', () => {
+    for (const env of ['llm', 'api', 'browser', 'vm', 'local', 'device']) {
+      const result = publishSkillSchema.safeParse({ ...validBase, runtimeEnv: env });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('should reject invalid runtimeEnv', () => {
+    const result = publishSkillSchema.safeParse({ ...validBase, runtimeEnv: 'invalid' });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept valid visibility values', () => {
+    for (const vis of ['public', 'private', 'unlisted']) {
+      const result = publishSkillSchema.safeParse({ ...validBase, visibility: vis });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('should reject invalid visibility', () => {
+    const result = publishSkillSchema.safeParse({ ...validBase, visibility: 'hidden' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('publishSkillSchema environmentVariables', () => {
+  const validBase = {
+    name: 'Test',
+    slug: 'test',
+    description: 'Valid description text',
+    executionLayer: 'worker' as const,
+  };
+
+  it('should accept environmentVariables as string array', () => {
+    const result = publishSkillSchema.safeParse({
+      ...validBase,
+      environmentVariables: ['API_KEY', 'SECRET_TOKEN', 'DATABASE_URL'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should accept empty environmentVariables array', () => {
+    const result = publishSkillSchema.safeParse({
+      ...validBase,
+      environmentVariables: [],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject non-string items in environmentVariables', () => {
+    const result = publishSkillSchema.safeParse({
+      ...validBase,
+      environmentVariables: [123, true],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should accept all v5.2 fields together', () => {
+    const result = publishSkillSchema.safeParse({
+      ...validBase,
+      runtimeEnv: 'browser',
+      visibility: 'private',
+      environmentVariables: ['API_KEY'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.runtimeEnv).toBe('browser');
+      expect(result.data.visibility).toBe('private');
+      expect(result.data.environmentVariables).toEqual(['API_KEY']);
+    }
+  });
+});
+
 describe('updateSkillSchema', () => {
   it('should accept partial updates', () => {
     const result = updateSkillSchema.safeParse({ name: 'New Name' });
@@ -99,44 +180,39 @@ describe('updateSkillSchema', () => {
     const result = updateSkillSchema.safeParse({});
     expect(result.success).toBe(true);
   });
-});
 
-describe('trustUpdateSchema', () => {
-  it('should accept valid trust update', () => {
-    const input = {
-      trustScore: 0.85,
-      cogniumReport: {
-        contentSafe: true,
-        findings: [
-          {
-            tool: 'viruscheck',
-            severity: 'low' as const,
-            message: 'Minor issue found',
-          },
-        ],
-        scannedAt: '2026-03-01T00:00:00Z',
-      },
-    };
-
-    const result = trustUpdateSchema.safeParse(input);
+  it('should accept categories array', () => {
+    const result = updateSkillSchema.safeParse({ categories: ['devops', 'ai'] });
     expect(result.success).toBe(true);
   });
 
-  it('should reject missing cogniumReport', () => {
-    const result = trustUpdateSchema.safeParse({ trustScore: 0.5 });
+  it('should accept skillMd update', () => {
+    const result = updateSkillSchema.safeParse({ skillMd: '# Updated Instructions\nDo something' });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject invalid description (too short)', () => {
+    const result = updateSkillSchema.safeParse({ description: 'Short' });
     expect(result.success).toBe(false);
   });
 
-  it('should reject invalid severity', () => {
-    const input = {
-      trustScore: 0.5,
-      cogniumReport: {
-        contentSafe: true,
-        findings: [{ tool: 'test', severity: 'unknown', message: 'test' }],
-        scannedAt: '2026-03-01T00:00:00Z',
-      },
-    };
-    const result = trustUpdateSchema.safeParse(input);
+  it('should accept v5.2 fields in updates', () => {
+    const result = updateSkillSchema.safeParse({
+      runtimeEnv: 'vm',
+      visibility: 'unlisted',
+      environmentVariables: ['DB_URL'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('should reject invalid runtimeEnv in updates', () => {
+    const result = updateSkillSchema.safeParse({ runtimeEnv: 'invalid' });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject invalid visibility in updates', () => {
+    const result = updateSkillSchema.safeParse({ visibility: 'hidden' });
     expect(result.success).toBe(false);
   });
 });
+

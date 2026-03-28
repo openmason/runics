@@ -115,7 +115,6 @@ describe('forkSkill', () => {
             slug: 'comp',
             name: 'Comp',
             skill_type: 'auto-composite',
-            type: 'composition',
             description: 'd',
             readme: null,
             schema_json: null,
@@ -179,6 +178,59 @@ describe('forkSkill', () => {
     expect(insertParams[14]).toBe('forge'); // rootSource
     // trust score for 'forge' source = 0.40
     expect(insertParams[15]).toBe(0.40); // trustScore
+  });
+});
+
+describe('forkSkill v5.2 field handling', () => {
+  let mockPool: any;
+  let mockEnv: any;
+
+  beforeEach(() => {
+    mockPool = { query: vi.fn() };
+    mockEnv = {
+      EMBED_QUEUE: { send: vi.fn() },
+      COGNIUM_QUEUE: { send: vi.fn() },
+    };
+  });
+
+  it('should not inherit v5.2 fields (runtime_env, visibility, environment_variables) — uses DB defaults', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            slug: 'parent',
+            name: 'Parent',
+            skill_type: 'atomic',
+            description: 'desc',
+            readme: null,
+            schema_json: null,
+            execution_layer: 'worker',
+            tags: [],
+            categories: [],
+            ecosystem: null,
+            license: null,
+            root_source: null,
+            source: 'manual',
+            version: '1.0.0',
+            capabilities_required: [],
+            // v5.2 fields on source
+            runtime_env: 'browser',
+            visibility: 'private',
+            environment_variables: ['API_KEY', 'SECRET'],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: 'f', slug: 's', version: '1.0.0', status: 'draft' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await forkSkill('source-id', 'a', 'human', mockPool, mockEnv);
+
+    // The INSERT SQL should NOT contain runtime_env or visibility columns
+    // (fork relies on DB defaults: runtime_env='api', visibility='public')
+    const insertSql = mockPool.query.mock.calls[1][0];
+    expect(insertSql).not.toContain('runtime_env');
+    expect(insertSql).not.toContain('visibility');
+    expect(insertSql).not.toContain('environment_variables');
   });
 });
 

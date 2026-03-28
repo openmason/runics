@@ -1,0 +1,205 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Runics Search — Production (cognium account)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Deploy:  wrangler deploy -c wrangler.production.toml
+# URL:     runics.cognium.workers.dev  +  api.runics.net
+#
+# Before first deploy, provision all resources on the cognium account
+# (see "Setup Checklist" below) and fill in the IDs marked TODO.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+name = "runics"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+
+# Custom domain — requires api.runics.net DNS proxied through Cloudflare
+routes = [
+  { pattern = "api.runics.net/*", zone_name = "runics.net" }
+]
+
+[observability]
+enabled = true
+
+# ── KV Namespaces ────────────────────────────────────────────────────────────
+
+[[kv_namespaces]]
+binding = "SEARCH_CACHE"
+id = "TODO"  # wrangler kv namespace create SEARCH_CACHE
+
+[[kv_namespaces]]
+binding = "COGNIUM_JOBS"
+id = "TODO"  # wrangler kv namespace create COGNIUM_JOBS
+
+# ── Hyperdrive (Postgres Connection Pooling) ─────────────────────────────────
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "TODO"  # wrangler hyperdrive create runics-production --connection-string "..."
+
+# ── Workers AI ───────────────────────────────────────────────────────────────
+
+[ai]
+binding = "AI"
+
+# ── R2 Bucket ────────────────────────────────────────────────────────────────
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "runics-skills"  # wrangler r2 bucket create runics-skills
+
+# ── Queue Producers ──────────────────────────────────────────────────────────
+
+[[queues.producers]]
+binding = "EMBED_QUEUE"
+queue = "runics-embed"
+
+[[queues.producers]]
+binding = "COGNIUM_QUEUE"
+queue = "runics-cognium-v2"
+
+[[queues.producers]]
+binding = "COGNIUM_POLL_QUEUE"
+queue = "runics-cognium-poll-v2"
+
+# ── Queue Consumers ──────────────────────────────────────────────────────────
+
+[[queues.consumers]]
+queue = "runics-embed"
+max_batch_size = 20
+max_batch_timeout = 30
+
+[[queues.consumers]]
+queue = "runics-cognium-v2"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 2
+dead_letter_queue = "cognium-dlq"
+
+[[queues.consumers]]
+queue = "runics-cognium-poll-v2"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 0
+dead_letter_queue = "cognium-poll-dlq"
+
+# ── Cron ─────────────────────────────────────────────────────────────────────
+
+[triggers]
+crons = ["* * * * *"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Environment Variables
+# ══════════════════════════════════════════════════════════════════════════════
+
+[vars]
+ENVIRONMENT = "production"
+
+# ── Database ─────────────────────────────────────────────────────────────────
+# Production Neon project — separate from staging
+# Create via: https://console.neon.tech → New Project
+NEON_CONNECTION_STRING = "TODO"
+
+# ── Model Configuration ──────────────────────────────────────────────────────
+EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
+RERANKER_MODEL = "@cf/baai/bge-reranker-base"
+LLM_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
+
+# ── Content Safety — ENABLED in production ────────────────────────────────────
+DISABLE_CONTENT_SAFETY = "false"
+
+# ── Search Tuning ────────────────────────────────────────────────────────────
+CONFIDENCE_TIER1_THRESHOLD = "0.47"
+CONFIDENCE_TIER2_THRESHOLD = "0.42"
+CACHE_TTL_SECONDS = "120"
+DEFAULT_APPETITE = "balanced"
+VECTOR_WEIGHT = "0.7"
+FULLTEXT_WEIGHT = "0.3"
+SCORE_GAP_THRESHOLD = "0.02"
+CLUSTER_DENSITY_THRESHOLD = "0.05"
+DEEP_SEARCH_ENABLED = "true"
+LLM_MAX_TOKENS = "500"
+MULTI_VECTOR_ENABLED = "true"
+
+# ── Production Hardening ─────────────────────────────────────────────────────
+CIRCUIT_BREAKER_THRESHOLD = "3"
+CIRCUIT_BREAKER_COOLDOWN_MS = "30000"
+RATE_LIMIT_RPM = "300"               # Higher limit for production traffic
+RERANKER_ENABLED = "true"
+RERANKER_TOP_N = "20"
+
+# ── Cognium (Circle-IR) ─────────────────────────────────────────────────────
+COGNIUM_URL = "https://circle.cognium.net"
+COGNIUM_POLL_DELAY_MS = "15000"
+COGNIUM_MAX_POLL_ATTEMPTS = "12"
+# Secrets (set after first deploy):
+#   wrangler secret put ADMIN_API_KEY -c wrangler.production.toml
+#   wrangler secret put COGNIUM_API_KEY -c wrangler.production.toml
+#   wrangler secret put ACTIVEPIECES_WEBHOOK_URL -c wrangler.production.toml
+
+# ── Version Ranking ──────────────────────────────────────────────────────────
+VERSION_TRUST_WEIGHT = "0.7"
+VERSION_USAGE_WEIGHT = "0.3"
+
+# ── Sync Pipelines ───────────────────────────────────────────────────────────
+SYNC_MCP_ENABLED = "true"
+SYNC_CLAWHUB_ENABLED = "true"
+SYNC_GITHUB_ENABLED = "true"
+
+# ── Scan Backpressure ────────────────────────────────────────────────────────
+COGNIUM_FAST_BATCH_SIZE = "10"
+COGNIUM_REPO_BATCH_SIZE = "3"
+COGNIUM_MAX_INFLIGHT = "20"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Setup Checklist — run these on the cognium account before first deploy
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 1. Switch to cognium account:
+#      wrangler whoami
+#      # If wrong account: wrangler login (or CLOUDFLARE_API_TOKEN env var)
+#
+# 2. Create KV namespaces:
+#      wrangler kv namespace create SEARCH_CACHE
+#      wrangler kv namespace create COGNIUM_JOBS
+#      → Paste IDs into [[kv_namespaces]] sections above
+#
+# 3. Create Neon production database:
+#      → https://console.neon.tech → New Project
+#      → Run all migrations (0001–0013) against the new DB
+#      → Paste connection string into NEON_CONNECTION_STRING above
+#
+# 4. Create Hyperdrive:
+#      wrangler hyperdrive create runics-production \
+#        --connection-string "postgresql://..."
+#      → Paste ID into [[hyperdrive]] section above
+#
+# 5. Create R2 bucket:
+#      wrangler r2 bucket create runics-skills
+#
+# 6. Create queues:
+#      wrangler queues create runics-embed
+#      wrangler queues create runics-cognium-v2
+#      wrangler queues create runics-cognium-poll-v2
+#      wrangler queues create cognium-dlq
+#      wrangler queues create cognium-poll-dlq
+#
+# 7. Add DNS for custom domain:
+#      → Cloudflare dashboard → runics.net zone → DNS
+#      → Add CNAME: api → runics.cognium.workers.dev (proxied)
+#
+# 8. First deploy:
+#      wrangler deploy -c wrangler.production.toml
+#
+# 9. Set secrets:
+#      wrangler secret put ADMIN_API_KEY -c wrangler.production.toml
+#      wrangler secret put COGNIUM_API_KEY -c wrangler.production.toml
+#      wrangler secret put ACTIVEPIECES_WEBHOOK_URL -c wrangler.production.toml
+#
+# 10. Seed production database:
+#       npm run seed -- --endpoint https://api.runics.net
+#       (or run sync pipelines to populate from MCP Registry / ClawHub / GitHub)
+#
+# ══════════════════════════════════════════════════════════════════════════════

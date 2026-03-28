@@ -110,6 +110,7 @@ export class McpRegistrySync extends BaseSyncWorker {
       description: server.description ?? '',
       version: server.version ?? '1.0.0',
       executionLayer: 'mcp-remote',
+      runtimeEnv: 'api', // v5.2: MCP servers are API calls
       mcpUrl,
       repositoryUrl,
       capabilitiesRequired: [],

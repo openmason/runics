@@ -45,12 +45,8 @@ export const skills = pgTable(
     authRequirements: jsonb('auth_requirements'),
     installMethod: jsonb('install_method'),
     trustScore: numeric('trust_score', { precision: 3, scale: 2 }).default('0.5'),
-    cogniumScanned: boolean('cognium_scanned').default(false),
-    cogniumReport: jsonb('cognium_report'),
     capabilitiesRequired: text('capabilities_required').array(),
     executionLayer: text('execution_layer').notNull(),
-    sourceExecutionId: uuid('source_execution_id'),
-    reuseCount: integer('reuse_count').default(0),
     contentSafetyPassed: boolean('content_safety_passed'),
     tags: text('tags').array(),
     category: text('category'),
@@ -71,9 +67,7 @@ export const skills = pgTable(
     authorType: text('author_type').notNull().default('human'),
     authorBotModel: text('author_bot_model'),
     authorBotPromptHash: text('author_bot_prompt_hash'),
-    // Type and status (v4 legacy — kept for backward compat during migration)
-    type: text('type').notNull().default('skill'),
-    // v5.0: skill type replaces v4 'type'
+    // v5.0: skill type
     skillType: text('skill_type').notNull().default('atomic'),
     status: text('status').notNull().default('published'),
     // v5.0: status lifecycle tracking
@@ -83,10 +77,6 @@ export const skills = pgTable(
     deprecatedReason: text('deprecated_reason'),
     remediationMessage: text('remediation_message'),
     remediationUrl: text('remediation_url'),
-    // Fork lineage (v4 legacy — kept during migration)
-    forkOf: uuid('fork_of'),
-    originId: uuid('origin_id'),
-    forkDepth: integer('fork_depth').default(0),
     // v5.0: version lineage
     forkedFrom: text('forked_from'),
     forkedBy: text('forked_by'),
@@ -146,6 +136,10 @@ export const skills = pgTable(
     lastUsedAt: timestamp('last_used_at'),
     createdAt: timestamp('created_at').defaultNow(),
     updatedAt: timestamp('updated_at').defaultNow(),
+    // v5.2: Execution environment + visibility
+    runtimeEnv: text('runtime_env').notNull().default('api'),
+    visibility: text('visibility').notNull().default('public'),
+    environmentVariables: text('environment_variables').array(),
   },
   (table) => ({
     trustScoreIdx: index('idx_skills_trust_score').on(table.trustScore),
@@ -153,14 +147,17 @@ export const skills = pgTable(
     slugIdx: index('idx_skills_slug').on(table.slug),
     executionLayerIdx: index('idx_skills_execution_layer').on(table.executionLayer),
     authorIdIdx: index('idx_skills_author_id').on(table.authorId),
-    typeIdx: index('idx_skills_type').on(table.type),
-    forkOfIdx: index('idx_skills_fork_of').on(table.forkOf),
-    originIdIdx: index('idx_skills_origin_id').on(table.originId),
     // v5.0 indexes
     skillTypeIdx: index('idx_skills_skill_type').on(table.skillType),
     statusIdx: index('idx_skills_status').on(table.status),
     verificationTierIdx: index('idx_skills_verification_tier').on(table.verificationTier),
     runCountIdx: index('idx_skills_run_count').on(table.runCount),
+    // v5.2 indexes
+    runtimeEnvIdx: index('idx_skills_runtime_env').on(table.runtimeEnv),
+    visibilityIdx: index('idx_skills_visibility').on(table.visibility),
+    slugVersionIdx: index('idx_skills_slug_version').on(table.slug, table.version),
+    weeklyAgentIdx: index('idx_skills_weekly_agent').on(table.weeklyAgentInvocationCount),
+    humanStarsIdx: index('idx_skills_human_stars').on(table.humanStarCount),
   })
 );
 

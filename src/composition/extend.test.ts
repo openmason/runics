@@ -25,7 +25,7 @@ describe('extendComposition', () => {
   });
 
   it('should throw ValidationError if skill is not a composition/pipeline', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ type: 'skill' }] });
+    mockPool.query.mockResolvedValueOnce({ rows: [{ skill_type: 'atomic' }] });
     await expect(
       extendComposition('id', [{ skillId: 's1' }], 'a', 'human', mockPool, mockEnv)
     ).rejects.toThrow(ValidationError);
@@ -34,7 +34,7 @@ describe('extendComposition', () => {
   it('should throw ValidationError if new step skills not found', async () => {
     mockPool.query
       // source type check
-      .mockResolvedValueOnce({ rows: [{ type: 'composition' }] })
+      .mockResolvedValueOnce({ rows: [{ skill_type: 'auto-composite' }] })
       // validate new step skills
       .mockResolvedValueOnce({ rows: [] }); // none found
 
@@ -46,7 +46,7 @@ describe('extendComposition', () => {
   it('should fork, append steps, and recompute trust/capabilities', async () => {
     mockPool.query
       // extendComposition: source type check
-      .mockResolvedValueOnce({ rows: [{ type: 'composition' }] })
+      .mockResolvedValueOnce({ rows: [{ skill_type: 'auto-composite' }] })
       // extendComposition: validate new step skills
       .mockResolvedValueOnce({ rows: [{ id: 'new-skill' }] })
       // forkSkill: SELECT source
@@ -56,7 +56,6 @@ describe('extendComposition', () => {
             slug: 'comp',
             name: 'Comp',
             skill_type: 'auto-composite',
-            type: 'composition',
             description: 'd',
             readme: null,
             schema_json: null,

@@ -56,7 +56,7 @@ export async function copySkill(
   );
 
   // Copy composition steps if source is a composition
-  const sourceType = s.skill_type ?? s.type;
+  const sourceType = s.skill_type ?? 'atomic';
   if (['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(sourceType)) {
     await pool.query(
       `INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, condition, on_error)

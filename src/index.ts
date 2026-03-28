@@ -42,6 +42,7 @@ import {
   getAgentLeaderboard,
   getTrendingLeaderboard,
   getMostComposedLeaderboard,
+  getMostForkedLeaderboard,
 } from './social/leaderboards';
 import { authorRoutes } from './authors/handler';
 import { zValidator } from '@hono/zod-validator';
@@ -195,6 +196,8 @@ app.post('/v1/search', async (c) => {
         appetite: body.appetite as Appetite,
         tags: body.tags,
         category: body.category,
+        runtimeEnv: body.runtimeEnv,
+        visibility: body.visibility,
       },
       c.executionCtx
     );
@@ -328,23 +331,39 @@ app.post('/v1/skills/:skillId/index', async (c) => {
 
 /**
  * DELETE /v1/skills/:skillId
- * Remove skill from search index
+ * Remove a draft skill. Published skills must be deprecated via PATCH status.
  */
 app.delete('/v1/skills/:skillId', async (c) => {
   try {
     const skillId = c.req.param('skillId');
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const skillResult = await pool.query(
+      `SELECT id, status FROM skills WHERE id = $1`,
+      [skillId]
+    );
+
+    if (skillResult.rows.length === 0) {
+      return c.json({ error: 'not found' }, 404);
+    }
+
+    if (skillResult.rows[0].status !== 'draft') {
+      return c.json(
+        { error: 'only draft skills can be deleted — use PATCH /v1/skills/:id/status to deprecate published skills' },
+        400
+      );
+    }
+
+    // Remove from search index, then delete embeddings + skill row
     const { provider } = initComponents(c.env);
-
     await provider.delete(skillId);
+    await pool.query(`DELETE FROM skill_embeddings WHERE skill_id = $1`, [skillId]);
+    await pool.query(`DELETE FROM skills WHERE id = $1`, [skillId]);
 
-    return c.json({
-      success: true,
-      skillId,
-      deleted: true,
-    });
+    return c.json({ id: skillId, status: 'deleted' });
   } catch (error) {
     console.error('Delete error:', error);
-    return c.json({ error: 'Failed to delete skill' }, 500);
+    return c.json({ error: 'Failed to delete skill', message: (error as Error).message }, 500);
   }
 });
 
@@ -536,9 +555,8 @@ app.post('/v1/eval/run', async (c) => {
       verbose,
     });
 
-    // Return results
-    return c.json({
-      success: true,
+    // Persist to KV for cross-phase comparison (store metrics + summary, not full results)
+    const persistedRun = {
       runId: result.runId,
       timestamp: result.timestamp,
       metrics: result.metrics,
@@ -548,7 +566,35 @@ app.post('/v1/eval/run', async (c) => {
         failed: result.failed,
       },
       errors: result.errors,
-    });
+    };
+
+    const env = c.env as Env;
+    c.executionCtx.waitUntil(
+      (async () => {
+        try {
+          // Store individual run (TTL: 90 days)
+          await env.SEARCH_CACHE.put(
+            `eval:run:${result.runId}`,
+            JSON.stringify(persistedRun),
+            { expirationTtl: 90 * 24 * 60 * 60 }
+          );
+
+          // Maintain a list of recent run IDs (last 50)
+          const indexRaw = await env.SEARCH_CACHE.get('eval:index');
+          const index: string[] = indexRaw ? JSON.parse(indexRaw) : [];
+          index.unshift(result.runId);
+          if (index.length > 50) index.length = 50;
+          await env.SEARCH_CACHE.put('eval:index', JSON.stringify(index), {
+            expirationTtl: 90 * 24 * 60 * 60,
+          });
+        } catch (err) {
+          console.error('Failed to persist eval results:', err);
+        }
+      })()
+    );
+
+    // Return results
+    return c.json({ success: true, ...persistedRun });
   } catch (error) {
     console.error('Eval run error:', error);
     return c.json(
@@ -562,14 +608,103 @@ app.post('/v1/eval/run', async (c) => {
 });
 
 /**
+ * GET /v1/eval/results
+ * List recent eval runs (from KV index)
+ */
+app.get('/v1/eval/results', async (c) => {
+  const env = c.env as Env;
+  const indexRaw = await env.SEARCH_CACHE.get('eval:index');
+  const index: string[] = indexRaw ? JSON.parse(indexRaw) : [];
+
+  if (index.length === 0) {
+    return c.json({ runs: [], message: 'No eval runs found. Run POST /v1/eval/run first.' });
+  }
+
+  // Fetch summaries for all indexed runs
+  const runs = await Promise.all(
+    index.map(async (runId) => {
+      const raw = await env.SEARCH_CACHE.get(`eval:run:${runId}`);
+      if (!raw) return null;
+      const run = JSON.parse(raw);
+      return {
+        runId: run.runId,
+        timestamp: run.timestamp,
+        recall1: run.metrics.recall1,
+        recall5: run.metrics.recall5,
+        mrr: run.metrics.mrr,
+        passed: run.summary.passed,
+        failed: run.summary.failed,
+        fixtureCount: run.summary.fixtureCount,
+      };
+    })
+  );
+
+  return c.json({ runs: runs.filter(Boolean) });
+});
+
+/**
  * GET /v1/eval/results/:runId
- * Get eval run results (not persisted in Phase 1)
+ * Get full eval run results from KV
  */
 app.get('/v1/eval/results/:runId', async (c) => {
+  const env = c.env as Env;
+  const runId = c.req.param('runId');
+  const raw = await env.SEARCH_CACHE.get(`eval:run:${runId}`);
+
+  if (!raw) {
+    return c.json({ error: 'Eval run not found', runId }, 404);
+  }
+
+  return c.json(JSON.parse(raw));
+});
+
+/**
+ * GET /v1/eval/compare
+ * Compare two eval runs side-by-side (deltas for every metric)
+ * Query params: ?runA=...&runB=...
+ */
+app.get('/v1/eval/compare', async (c) => {
+  const env = c.env as Env;
+  const runA = c.req.query('runA');
+  const runB = c.req.query('runB');
+
+  if (!runA || !runB) {
+    return c.json({ error: 'Both runA and runB query params are required' }, 400);
+  }
+
+  const [rawA, rawB] = await Promise.all([
+    env.SEARCH_CACHE.get(`eval:run:${runA}`),
+    env.SEARCH_CACHE.get(`eval:run:${runB}`),
+  ]);
+
+  if (!rawA) return c.json({ error: `Run not found: ${runA}` }, 404);
+  if (!rawB) return c.json({ error: `Run not found: ${runB}` }, 404);
+
+  const a = JSON.parse(rawA);
+  const b = JSON.parse(rawB);
+
+  const delta = (valB: number, valA: number) => {
+    const d = valB - valA;
+    return { value: parseFloat(d.toFixed(4)), improved: d > 0 };
+  };
+
   return c.json({
-    error: 'Eval results are not persisted in Phase 1',
-    message:
-      'Run POST /v1/eval/run to execute the eval suite and get immediate results',
+    runA: { runId: a.runId, timestamp: a.timestamp },
+    runB: { runId: b.runId, timestamp: b.timestamp },
+    metrics: {
+      recall1: { a: a.metrics.recall1, b: b.metrics.recall1, delta: delta(b.metrics.recall1, a.metrics.recall1) },
+      recall5: { a: a.metrics.recall5, b: b.metrics.recall5, delta: delta(b.metrics.recall5, a.metrics.recall5) },
+      mrr: { a: a.metrics.mrr, b: b.metrics.mrr, delta: delta(b.metrics.mrr, a.metrics.mrr) },
+      avgTopScore: { a: a.metrics.avgTopScore, b: b.metrics.avgTopScore, delta: delta(b.metrics.avgTopScore, a.metrics.avgTopScore) },
+    },
+    summary: {
+      a: a.summary,
+      b: b.summary,
+    },
+    tierDistribution: {
+      a: a.metrics.tierDistribution,
+      b: b.metrics.tierDistribution,
+    },
   });
 });
 
@@ -585,7 +720,7 @@ app.get('/v1/skills/:slug/versions', async (c) => {
     const result = await pool.query(
       `SELECT id, name, slug, version, status, trust_score, verification_tier,
               run_count, execution_layer, source, skill_type,
-              cognium_scanned, cognium_scanned_at,
+              runtime_env, visibility, cognium_scanned_at,
               created_at, updated_at, published_at
        FROM skills
        WHERE slug = $1
@@ -613,7 +748,9 @@ app.get('/v1/skills/:slug/versions', async (c) => {
         executionLayer: r.execution_layer,
         source: r.source,
         skillType: r.skill_type ?? 'atomic',
-        cogniumScanned: r.cognium_scanned ?? false,
+        runtimeEnv: r.runtime_env ?? 'api',
+        visibility: r.visibility ?? 'public',
+        cogniumScanned: !!r.cognium_scanned_at,
         cogniumScannedAt: r.cognium_scanned_at?.toISOString() ?? null,
         createdAt: r.created_at?.toISOString() ?? null,
         updatedAt: r.updated_at?.toISOString() ?? null,
@@ -649,7 +786,8 @@ app.get('/v1/skills/:slug', async (c) => {
         s.replacement_skill_id, rs.slug AS replacement_slug,
         s.avg_execution_time_ms, s.error_rate,
         s.human_star_count, s.human_fork_count, s.agent_invocation_count,
-        s.cognium_scanned, s.cognium_scanned_at, s.content_safety_passed,
+        s.runtime_env, s.visibility, s.environment_variables,
+        s.cognium_scanned_at, s.content_safety_passed,
         s.created_at, s.updated_at, s.published_at
       FROM skills s
       LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
@@ -710,7 +848,10 @@ app.get('/v1/skills/:slug', async (c) => {
       humanStarCount: parseInt(row.human_star_count) || 0,
       humanForkCount: parseInt(row.human_fork_count) || 0,
       agentInvocationCount: parseInt(row.agent_invocation_count) || 0,
-      cogniumScanned: row.cognium_scanned ?? false,
+      runtimeEnv: row.runtime_env ?? 'api',
+      visibility: row.visibility ?? 'public',
+      environmentVariables: row.environment_variables ?? [],
+      cogniumScanned: !!row.cognium_scanned_at,
       cogniumScannedAt: row.cognium_scanned_at?.toISOString() ?? null,
       contentSafetyPassed: row.content_safety_passed ?? null,
       createdAt: row.created_at?.toISOString() ?? null,
@@ -1057,7 +1198,8 @@ app.get('/v1/skills/:slug/:version', async (c) => {
         s.replacement_skill_id, rs.slug AS replacement_slug,
         s.avg_execution_time_ms, s.error_rate,
         s.human_star_count, s.human_fork_count, s.agent_invocation_count,
-        s.cognium_scanned, s.cognium_scanned_at, s.content_safety_passed,
+        s.runtime_env, s.visibility, s.environment_variables,
+        s.cognium_scanned_at, s.content_safety_passed,
         s.created_at, s.updated_at, s.published_at
       FROM skills s
       LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
@@ -1117,7 +1259,10 @@ app.get('/v1/skills/:slug/:version', async (c) => {
       humanStarCount: parseInt(row.human_star_count) || 0,
       humanForkCount: parseInt(row.human_fork_count) || 0,
       agentInvocationCount: parseInt(row.agent_invocation_count) || 0,
-      cogniumScanned: row.cognium_scanned ?? false,
+      runtimeEnv: row.runtime_env ?? 'api',
+      visibility: row.visibility ?? 'public',
+      environmentVariables: row.environment_variables ?? [],
+      cogniumScanned: !!row.cognium_scanned_at,
       cogniumScannedAt: row.cognium_scanned_at?.toISOString() ?? null,
       contentSafetyPassed: row.content_safety_passed ?? null,
       createdAt: row.created_at?.toISOString() ?? null,
@@ -1136,7 +1281,7 @@ app.get('/v1/skills/:slug/:version', async (c) => {
 
 function parseLeaderboardFilters(c: any): LeaderboardFilters {
   return {
-    type: c.req.query('type') as LeaderboardFilters['type'],
+    skillType: c.req.query('type') as LeaderboardFilters['skillType'],
     category: c.req.query('category'),
     ecosystem: c.req.query('ecosystem'),
     limit: c.req.query('limit') ? parseInt(c.req.query('limit')) : undefined,
@@ -1184,6 +1329,17 @@ app.get('/v1/leaderboards/most-composed', async (c) => {
     return c.json({ leaderboard: results });
   } catch (error) {
     console.error('[LEADERBOARD] Most-composed error:', error);
+    return c.json({ error: 'Failed to get leaderboard' }, 500);
+  }
+});
+
+app.get('/v1/leaderboards/most-forked', async (c) => {
+  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  try {
+    const results = await getMostForkedLeaderboard(parseLeaderboardFilters(c), pool);
+    return c.json({ leaderboard: results });
+  } catch (error) {
+    console.error('[LEADERBOARD] Most-forked error:', error);
     return c.json({ error: 'Failed to get leaderboard' }, 500);
   }
 });
@@ -1443,16 +1599,16 @@ app.get('/v1/admin/scan-stats', async (c) => {
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
     const [statusBreakdown, tierBreakdown, sourceBreakdown, trustDistribution, trustHistogram, topFindings, scanCoverage] = await Promise.all([
-      pool.query(`SELECT status, count(*)::int AS cnt FROM skills WHERE cognium_scanned = true GROUP BY status ORDER BY cnt DESC`),
-      pool.query(`SELECT verification_tier, count(*)::int AS cnt FROM skills WHERE cognium_scanned = true GROUP BY verification_tier ORDER BY cnt DESC`),
-      pool.query(`SELECT source, status, count(*)::int AS cnt FROM skills WHERE cognium_scanned = true GROUP BY source, status ORDER BY source, cnt DESC`),
+      pool.query(`SELECT status, count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL GROUP BY status ORDER BY cnt DESC`),
+      pool.query(`SELECT verification_tier, count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL GROUP BY verification_tier ORDER BY cnt DESC`),
+      pool.query(`SELECT source, status, count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL GROUP BY source, status ORDER BY source, cnt DESC`),
       pool.query(`SELECT
         count(*) FILTER (WHERE trust_score >= 0.9)::int AS high,
         count(*) FILTER (WHERE trust_score >= 0.5 AND trust_score < 0.9)::int AS medium,
         count(*) FILTER (WHERE trust_score > 0 AND trust_score < 0.5)::int AS low,
         count(*) FILTER (WHERE trust_score = 0)::int AS zero,
         count(*) FILTER (WHERE trust_score IS NULL)::int AS unscored
-      FROM skills WHERE cognium_scanned = true`),
+      FROM skills WHERE cognium_scanned_at IS NOT NULL`),
       pool.query(`SELECT
         CASE
           WHEN trust_score = 1.0 THEN '1.00'
@@ -1476,19 +1632,19 @@ app.get('/v1/admin/scan-stats', async (c) => {
         f->>'title' AS title,
         count(*)::int AS cnt
       FROM skills, jsonb_array_elements(cognium_findings::jsonb) AS f
-      WHERE cognium_scanned = true AND cognium_findings IS NOT NULL AND cognium_findings != '[]'
+      WHERE cognium_scanned_at IS NOT NULL AND cognium_findings IS NOT NULL AND cognium_findings != '[]'
       GROUP BY f->>'severity', f->>'cweId', f->>'title'
       ORDER BY
         CASE f->>'severity' WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
         cnt DESC
       LIMIT 30`),
-      pool.query(`SELECT scan_coverage, count(*)::int AS cnt FROM skills WHERE cognium_scanned = true AND scan_coverage IS NOT NULL GROUP BY scan_coverage ORDER BY cnt DESC`),
+      pool.query(`SELECT scan_coverage, count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL AND scan_coverage IS NOT NULL GROUP BY scan_coverage ORDER BY cnt DESC`),
     ]);
 
-    const totalScanned = await pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned = true`);
+    const totalScanned = await pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL`);
     const totalSkills = await pool.query(`SELECT count(*)::int AS cnt FROM skills`);
     const inFlight = await pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE cognium_job_id IS NOT NULL`);
-    const remaining = await pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned = false AND verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL`);
+    const remaining = await pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NULL AND verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL`);
 
     return c.json({
       total: totalSkills.rows[0].cnt,
@@ -1538,7 +1694,7 @@ app.get('/v1/admin/scan-preview', async (c) => {
                 length(coalesce(skill_md,''))::int AS skill_md_len,
                 length(coalesce(agent_summary,''))::int AS agent_summary_len,
                 length(coalesce(changelog::text,''))::int AS changelog_len,
-                trust_score, verification_tier, scan_coverage, cognium_scanned,
+                trust_score, verification_tier, scan_coverage, cognium_scanned_at,
                 analyzer_summary::text AS "analyzerSummary"
          FROM skills WHERE slug = $1 LIMIT 1`;
       params = [slug];
@@ -1591,7 +1747,7 @@ app.get('/v1/admin/scan-preview', async (c) => {
           skill_context: request.skill_context,
           options: request.options,
         },
-        scanResult: skill.cognium_scanned ? {
+        scanResult: skill.cognium_scanned_at ? {
           trustScore: skill.trust_score,
           tier: skill.verification_tier,
           coverage: skill.scan_coverage,
@@ -1638,19 +1794,19 @@ app.get('/v1/admin/skill-inventory', async (c) => {
         count(*) FILTER (WHERE skill_md IS NULL AND schema_json IS NULL AND (source != 'github' AND repository_url IS NULL))::int AS metadata_only
       FROM skills WHERE status = 'published'`),
       pool.query(`SELECT
-        count(*) FILTER (WHERE cognium_scanned = false)::int AS never_scanned,
-        count(*) FILTER (WHERE cognium_scanned = true AND verification_tier = 'unverified')::int AS scan_failed,
-        count(*) FILTER (WHERE cognium_scanned = true AND verification_tier != 'unverified')::int AS scan_completed,
+        count(*) FILTER (WHERE cognium_scanned_at IS NULL)::int AS never_scanned,
+        count(*) FILTER (WHERE cognium_scanned_at IS NOT NULL AND verification_tier = 'unverified')::int AS scan_failed,
+        count(*) FILTER (WHERE cognium_scanned_at IS NOT NULL AND verification_tier != 'unverified')::int AS scan_completed,
         count(*) FILTER (WHERE cognium_job_id IS NOT NULL)::int AS in_flight,
-        count(*) FILTER (WHERE cognium_scanned = false AND (skill_md IS NOT NULL AND length(skill_md) > 100))::int AS unscanned_with_instructions,
-        count(*) FILTER (WHERE cognium_scanned = false AND (source = 'github' OR repository_url IS NOT NULL))::int AS unscanned_with_repo,
-        count(*) FILTER (WHERE cognium_scanned = true AND verification_tier = 'unverified' AND (skill_md IS NOT NULL AND length(skill_md) > 100))::int AS failed_with_instructions
+        count(*) FILTER (WHERE cognium_scanned_at IS NULL AND (skill_md IS NOT NULL AND length(skill_md) > 100))::int AS unscanned_with_instructions,
+        count(*) FILTER (WHERE cognium_scanned_at IS NULL AND (source = 'github' OR repository_url IS NOT NULL))::int AS unscanned_with_repo,
+        count(*) FILTER (WHERE cognium_scanned_at IS NOT NULL AND verification_tier = 'unverified' AND (skill_md IS NOT NULL AND length(skill_md) > 100))::int AS failed_with_instructions
       FROM skills WHERE status = 'published'`),
       pool.query(`SELECT
         COALESCE(scan_failure_reason, 'unknown (pre-tracking)') AS reason,
         count(*)::int AS cnt
       FROM skills
-      WHERE cognium_scanned = true AND verification_tier = 'unverified'
+      WHERE cognium_scanned_at IS NOT NULL AND verification_tier = 'unverified'
       GROUP BY scan_failure_reason
       ORDER BY cnt DESC
       LIMIT 20`),
@@ -1680,8 +1836,8 @@ app.post('/v1/admin/backfill', async (c) => {
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
     let baseWhere = retry
-      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned = true`
-      : `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned = false`;
+      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NOT NULL`
+      : `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NULL`;
 
     const extraFilters: string[] = [];
     if (source) extraFilters.push(`source = '${source.replace(/'/g, "''")}'`);
@@ -1745,7 +1901,7 @@ app.post('/v1/admin/backfill', async (c) => {
       }
 
       const remaining = await pool.query(
-        `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_scanned = false`
+        `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_scanned_at IS NULL`
       );
 
       return c.json({
@@ -1799,13 +1955,13 @@ app.post('/v1/admin/backfill', async (c) => {
       }
 
       const remaining = await pool.query(
-        `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned = false`
+        `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NULL`
       );
       const inFlight = await pool.query(
         `SELECT count(*)::int AS cnt FROM skills WHERE cognium_job_id IS NOT NULL`
       );
       const scannedCount = await pool.query(
-        `SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned = true`
+        `SELECT count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL`
       );
 
       return c.json({
@@ -1891,7 +2047,7 @@ app.post('/v1/admin/backfill', async (c) => {
     }
 
     const remaining = await pool.query(
-      `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_scanned = false`
+      `SELECT count(*)::int AS cnt FROM skills WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_scanned_at IS NULL`
     );
 
     return c.json({ scanned, failed, remaining: remaining.rows[0].cnt, details, errors: errors.slice(0, 10) });
@@ -2268,7 +2424,7 @@ export default {
                     agent_summary AS "agentSummary",
                     changelog::text AS "changelog"
              FROM skills
-             WHERE cognium_scanned = false AND status = 'published'
+             WHERE cognium_scanned_at IS NULL AND status = 'published'
                AND cognium_job_id IS NULL
                AND source != 'github' AND repository_url IS NULL
              ORDER BY created_at ASC
@@ -2289,7 +2445,7 @@ export default {
                     agent_summary AS "agentSummary",
                     changelog::text AS "changelog"
              FROM skills
-             WHERE cognium_scanned = false AND status = 'published'
+             WHERE cognium_scanned_at IS NULL AND status = 'published'
                AND cognium_job_id IS NULL
                AND (source = 'github' OR repository_url IS NOT NULL)
              ORDER BY created_at ASC

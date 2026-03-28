@@ -69,7 +69,7 @@ export async function forkSkill(
   );
 
   // If source is a composition, copy its steps and composition_skill_ids
-  const sourceType = s.skill_type ?? s.type;
+  const sourceType = s.skill_type ?? 'atomic';
   if (['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(sourceType)) {
     await pool.query(
       `INSERT INTO composition_steps (composition_id, step_order, skill_id, step_name, input_mapping, condition, on_error)

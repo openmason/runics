@@ -4,6 +4,7 @@ import {
   getAgentLeaderboard,
   getTrendingLeaderboard,
   getMostComposedLeaderboard,
+  getMostForkedLeaderboard,
 } from './leaderboards';
 
 describe('getHumanLeaderboard', () => {
@@ -20,7 +21,7 @@ describe('getHumanLeaderboard', () => {
           id: 's1',
           slug: 'skill-1',
           name: 'Skill 1',
-          type: 'skill',
+          skill_type: 'atomic',
           author_handle: 'alice',
           author_type: 'human',
           human_score: 75,
@@ -38,7 +39,7 @@ describe('getHumanLeaderboard', () => {
         id: 's1',
         slug: 'skill-1',
         name: 'Skill 1',
-        type: 'skill',
+        skillType: 'atomic',
         authorHandle: 'alice',
         authorType: 'human',
         score: 75,
@@ -52,10 +53,10 @@ describe('getHumanLeaderboard', () => {
   it('should apply type filter', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-    await getHumanLeaderboard({ type: 'auto-composite' }, mockPool);
+    await getHumanLeaderboard({ skillType: 'auto-composite' }, mockPool);
 
     const sql = mockPool.query.mock.calls[0][0];
-    expect(sql).toContain('WHERE type = $1');
+    expect(sql).toContain('WHERE skill_type = $1');
     expect(mockPool.query.mock.calls[0][1][0]).toBe('auto-composite');
   });
 
@@ -81,7 +82,7 @@ describe('getHumanLeaderboard', () => {
   it('should combine multiple filters', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-    await getHumanLeaderboard({ type: 'atomic', category: 'ai', ecosystem: 'npm' }, mockPool);
+    await getHumanLeaderboard({ skillType: 'atomic', category: 'ai', ecosystem: 'npm' }, mockPool);
 
     const sql = mockPool.query.mock.calls[0][0];
     expect(sql).toContain('WHERE');
@@ -121,7 +122,7 @@ describe('getHumanLeaderboard', () => {
           id: 's1',
           slug: 'sk',
           name: 'S',
-          type: 'skill',
+          skill_type: 'atomic',
           author_handle: null,
           author_type: 'human',
           human_score: 10,
@@ -151,7 +152,7 @@ describe('getAgentLeaderboard', () => {
           id: 's1',
           slug: 'skill-1',
           name: 'Skill 1',
-          type: 'skill',
+          skill_type: 'atomic',
           author_handle: 'bot-1',
           author_type: 'bot',
           agent_score: 1054,
@@ -171,7 +172,7 @@ describe('getAgentLeaderboard', () => {
       id: 's1',
       slug: 'skill-1',
       name: 'Skill 1',
-      type: 'skill',
+      skillType: 'atomic',
       authorHandle: 'bot-1',
       authorType: 'bot',
       score: 1054,
@@ -208,8 +209,8 @@ describe('getTrendingLeaderboard', () => {
 
   it('should apply filters same as other leaderboards', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
-    await getTrendingLeaderboard({ type: 'auto-composite' }, mockPool);
-    expect(mockPool.query.mock.calls[0][0]).toContain('WHERE type = $1');
+    await getTrendingLeaderboard({ skillType: 'auto-composite' }, mockPool);
+    expect(mockPool.query.mock.calls[0][0]).toContain('WHERE skill_type = $1');
   });
 });
 
@@ -226,5 +227,70 @@ describe('getMostComposedLeaderboard', () => {
     expect(mockPool.query.mock.calls[0][0]).toContain(
       'ORDER BY composition_inclusion_count DESC'
     );
+  });
+});
+
+describe('getMostForkedLeaderboard', () => {
+  let mockPool: any;
+
+  beforeEach(() => {
+    mockPool = { query: vi.fn() };
+  });
+
+  it('should order by human_fork_count DESC', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    await getMostForkedLeaderboard({}, mockPool);
+    expect(mockPool.query.mock.calls[0][0]).toContain(
+      'ORDER BY human_fork_count DESC'
+    );
+  });
+
+  it('should query leaderboard_human view', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    await getMostForkedLeaderboard({}, mockPool);
+    expect(mockPool.query.mock.calls[0][0]).toContain('leaderboard_human');
+  });
+
+  it('should return mapped human entries', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 's1',
+          slug: 'forked-skill',
+          name: 'Forked Skill',
+          skill_type: 'forked',
+          author_handle: 'alice',
+          author_type: 'human',
+          human_score: 50,
+          trust_score: '0.7',
+          human_star_count: 3,
+          human_fork_count: 20,
+        },
+      ],
+    });
+
+    const result = await getMostForkedLeaderboard({}, mockPool);
+
+    expect(result).toEqual([
+      {
+        id: 's1',
+        slug: 'forked-skill',
+        name: 'Forked Skill',
+        skillType: 'forked',
+        authorHandle: 'alice',
+        authorType: 'human',
+        score: 50,
+        trustScore: 0.7,
+        humanStarCount: 3,
+        humanForkCount: 20,
+      },
+    ]);
+  });
+
+  it('should apply filters', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    await getMostForkedLeaderboard({ skillType: 'atomic' }, mockPool);
+    const sql = mockPool.query.mock.calls[0][0];
+    expect(sql).toContain('WHERE skill_type = $1');
   });
 });

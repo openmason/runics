@@ -104,6 +104,7 @@ export class GitHubSync extends BaseSyncWorker {
       slug: slugify(repo.full_name.replace('/', '-')),
       description: repo.description ?? '',
       executionLayer: 'container', // GitHub repos generally need clone + run
+      runtimeEnv: 'vm', // v5.2: GitHub repos run in sandbox
       capabilitiesRequired: ['git'],
       source: 'github',
       sourceUrl: repo.html_url,

@@ -1,4 +1,14 @@
-# Runics Search - Cloudflare Workers Configuration
+# ══════════════════════════════════════════════════════════════════════════════
+# Runics Search — Staging (phantoms account)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Deploy:  wrangler deploy
+# URL:     runics.phantoms.workers.dev
+#
+# Production config is in wrangler.production.toml (cognium account).
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
@@ -31,9 +41,8 @@ localConnectionString = "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-ri
 [ai]
 binding = "AI"
 
-# Environment variables (configurable per environment)
 [vars]
-ENVIRONMENT = "development"
+ENVIRONMENT = "staging"
 NEON_CONNECTION_STRING = "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-river-akx7s38p.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require"
 
 # Model configuration
@@ -135,14 +144,3 @@ dead_letter_queue = "cognium-poll-dlq"
 [triggers]
 crons = ["* * * * *"]
 
-# Production environment overrides
-[env.production]
-[env.production.vars]
-ENVIRONMENT = "production"
-CACHE_TTL_SECONDS = "120"
-
-# Staging environment
-[env.staging]
-[env.staging.vars]
-ENVIRONMENT = "staging"
-CACHE_TTL_SECONDS = "120"

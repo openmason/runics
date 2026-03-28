@@ -80,6 +80,9 @@ export interface FindSkillRequest {
   tags?: string[];
   category?: string;
   limit?: number;
+  // v5.2: execution environment + visibility
+  runtimeEnv?: string[];
+  visibility?: 'public' | 'private' | 'unlisted';
 }
 
 export interface FindSkillResponse {
@@ -200,6 +203,9 @@ export interface SearchFilters {
   statusFilter?: SkillStatus[]; // v5.0: explicit status filter
   slug?: string; // v5.0: pin to specific slug
   version?: string; // v5.0: pin to specific version
+  // v5.2: execution environment + visibility
+  runtimeEnv?: string[]; // filter by runtime environment(s)
+  visibility?: 'public' | 'private' | 'unlisted'; // default: respects tenant scope
 }
 
 export interface SearchOptions {
@@ -473,6 +479,9 @@ export interface SkillUpsert {
   sourceUrl: string;
   sourceHash: string;
   trustScore?: number;
+  // v5.2
+  runtimeEnv?: string;
+  visibility?: 'public' | 'private' | 'unlisted';
   tenantId?: string;
 }
 
@@ -544,7 +553,7 @@ export interface ForkResult {
 }
 
 export interface LeaderboardFilters {
-  type?: SkillType;
+  skillType?: SkillType;
   category?: string;
   ecosystem?: string;
   limit?: number;
@@ -555,7 +564,7 @@ export interface LeaderboardEntry {
   id: string;
   slug: string;
   name: string;
-  type: string;
+  skillType: string;
   authorHandle: string;
   authorType: string;
   score: number;

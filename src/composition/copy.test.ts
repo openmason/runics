@@ -85,7 +85,7 @@ describe('copySkill', () => {
 
   it('should copy composition steps for pipeline type', async () => {
     mockPool.query
-      .mockResolvedValueOnce({ rows: [{ ...SOURCE_ROW, skill_type: 'auto-composite', type: 'pipeline' }] })
+      .mockResolvedValueOnce({ rows: [{ ...SOURCE_ROW, skill_type: 'auto-composite' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'c', slug: 's', version: '1.0.0', status: 'draft' }] })
       .mockResolvedValueOnce({ rows: [] }) // copy steps
       .mockResolvedValueOnce({ rows: [] }); // human_copy_count
@@ -123,5 +123,25 @@ describe('copySkill', () => {
 
     const insertParams = mockPool.query.mock.calls[1][1];
     expect(insertParams[4]).toBe('{"type":"object"}');
+  });
+
+  it('should not inherit v5.2 fields (runtime_env, visibility, environment_variables) — uses DB defaults', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{
+          ...SOURCE_ROW,
+          runtime_env: 'vm',
+          visibility: 'unlisted',
+          environment_variables: ['SECRET'],
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: 'c', slug: 's', version: '1.0.0', status: 'draft' }] });
+
+    await copySkill('src', 'a', 'bot', mockPool, mockEnv);
+
+    const insertSql = mockPool.query.mock.calls[1][0];
+    expect(insertSql).not.toContain('runtime_env');
+    expect(insertSql).not.toContain('visibility');
+    expect(insertSql).not.toContain('environment_variables');
   });
 });

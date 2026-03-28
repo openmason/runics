@@ -8,9 +8,9 @@ function buildWhereClause(
   const params: any[] = [];
   let paramIdx = 1;
 
-  if (filters.type) {
-    conditions.push(`type = $${paramIdx++}`);
-    params.push(filters.type);
+  if (filters.skillType) {
+    conditions.push(`skill_type = $${paramIdx++}`);
+    params.push(filters.skillType);
   }
   if (filters.category) {
     conditions.push(`$${paramIdx++} = ANY(categories)`);
@@ -101,12 +101,30 @@ export async function getMostComposedLeaderboard(
   return result.rows.map(mapAgentEntry);
 }
 
+export async function getMostForkedLeaderboard(
+  filters: LeaderboardFilters,
+  pool: Pool
+): Promise<LeaderboardEntry[]> {
+  const { clause, params, nextParam } = buildWhereClause(filters);
+  const limit = clampLimit(filters);
+  const offset = filters.offset || 0;
+
+  const result = await pool.query(
+    `SELECT * FROM leaderboard_human ${clause}
+     ORDER BY human_fork_count DESC
+     LIMIT $${nextParam} OFFSET $${nextParam + 1}`,
+    [...params, limit, offset]
+  );
+
+  return result.rows.map(mapHumanEntry);
+}
+
 function mapHumanEntry(r: any): LeaderboardEntry {
   return {
     id: r.id,
     slug: r.slug,
     name: r.name,
-    type: r.type,
+    skillType: r.skill_type,
     authorHandle: r.author_handle,
     authorType: r.author_type,
     score: r.human_score,
@@ -121,7 +139,7 @@ function mapAgentEntry(r: any): LeaderboardEntry {
     id: r.id,
     slug: r.slug,
     name: r.name,
-    type: r.type,
+    skillType: r.skill_type,
     authorHandle: r.author_handle,
     authorType: r.author_type,
     score: r.agent_score,

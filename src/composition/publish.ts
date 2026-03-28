@@ -8,7 +8,7 @@ export async function publishComposition(
 ): Promise<{ id: string; slug: string; status: string }> {
   // Verify skill exists and is a draft composition/pipeline
   const skill = await pool.query(
-    `SELECT id, slug, status, type FROM skills WHERE id = $1`,
+    `SELECT id, slug, status, skill_type FROM skills WHERE id = $1`,
     [compositionId]
   );
 
@@ -16,8 +16,8 @@ export async function publishComposition(
     throw new NotFoundError(`Composition ${compositionId} not found`);
   }
 
-  if (!['composition', 'pipeline'].includes(skill.rows[0].type)) {
-    throw new ValidationError(`Skill ${compositionId} is not a composition or pipeline`);
+  if (!['auto-composite', 'human-composite', 'composition', 'pipeline'].includes(skill.rows[0].skill_type)) {
+    throw new ValidationError(`Skill ${compositionId} is not a composition`);
   }
 
   if (skill.rows[0].status !== 'draft') {

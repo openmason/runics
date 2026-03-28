@@ -17,7 +17,7 @@ describe('publishComposition', () => {
 
   it('should throw ValidationError if skill is not a composition/pipeline', async () => {
     mockPool.query.mockResolvedValue({
-      rows: [{ id: 'id', slug: 's', status: 'draft', type: 'skill' }],
+      rows: [{ id: 'id', slug: 's', status: 'draft', skill_type: 'atomic' }],
     });
     await expect(publishComposition('id', mockPool)).rejects.toThrow(ValidationError);
     await expect(publishComposition('id', mockPool)).rejects.toThrow('not a composition');
@@ -25,7 +25,7 @@ describe('publishComposition', () => {
 
   it('should throw ValidationError if status is not draft', async () => {
     mockPool.query.mockResolvedValue({
-      rows: [{ id: 'id', slug: 's', status: 'published', type: 'composition' }],
+      rows: [{ id: 'id', slug: 's', status: 'published', skill_type: 'auto-composite' }],
     });
     await expect(publishComposition('id', mockPool)).rejects.toThrow(ValidationError);
     await expect(publishComposition('id', mockPool)).rejects.toThrow("'published' state");
@@ -37,7 +37,7 @@ describe('publishComposition', () => {
       callCount++;
       if (callCount % 2 === 1) {
         return Promise.resolve({
-          rows: [{ id: 'id', slug: 's', status: 'draft', type: 'composition' }],
+          rows: [{ id: 'id', slug: 's', status: 'draft', skill_type: 'auto-composite' }],
         });
       }
       return Promise.resolve({
@@ -56,7 +56,7 @@ describe('publishComposition', () => {
     mockPool.query
       // SELECT skill
       .mockResolvedValueOnce({
-        rows: [{ id: 'comp-id', slug: 'my-comp', status: 'draft', type: 'composition' }],
+        rows: [{ id: 'comp-id', slug: 'my-comp', status: 'draft', skill_type: 'auto-composite' }],
       })
       // SELECT steps
       .mockResolvedValueOnce({
@@ -80,7 +80,7 @@ describe('publishComposition', () => {
   it('should work for pipeline type', async () => {
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [{ id: 'p-id', slug: 'my-pipe', status: 'draft', type: 'pipeline' }],
+        rows: [{ id: 'p-id', slug: 'my-pipe', status: 'draft', skill_type: 'human-composite' }],
       })
       .mockResolvedValueOnce({ rows: [] }) // no steps
       .mockResolvedValueOnce({
@@ -94,7 +94,7 @@ describe('publishComposition', () => {
   it('should include unpublished skill names in error message', async () => {
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [{ id: 'id', slug: 's', status: 'draft', type: 'composition' }],
+        rows: [{ id: 'id', slug: 's', status: 'draft', skill_type: 'auto-composite' }],
       })
       .mockResolvedValueOnce({
         rows: [

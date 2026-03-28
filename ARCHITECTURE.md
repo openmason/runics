@@ -7,7 +7,7 @@
 > **Status:** DECIDED — measure-first, provider-abstracted. Sprint 3a in progress.
 > **v5.0 changes:** Status lifecycle (vulnerable/revoked/degraded), version ranking by trust×usage, Circle-IR async scanning, composite trust formula, human-distilled source.
 > **v5.1 changes:** ControlCenter renamed to ControlDeck (controldeck.dev). Product appetite defaults documented inline. Cortex API session config drives all search filter parameters — Runics does not set product defaults independently. Company: Cognium Labs.
-> **v5.2 changes:** scan_coverage expanded to v2 taxonomy (`code-full`, `code-partial`, `instructions-only`, `metadata-only`). Queue bindings upgraded to v2. Cron consolidated to every-minute schedule. MCP Registry sync extracts `repository_url` from upstream `server.repository.url` for Mode A code scanning. Admin endpoints added: `scan-stats`, `scan-preview`, `skill-inventory`, `clear-stale`, `backfill`. Cognium scan pipeline: queue-free submit mode with cron-based poll drain. Confidence thresholds tuned from eval data (0.47/0.42).
+> **v5.2 changes:** `runtime_env` column added to skills table — declares the execution environment a skill requires (`llm`, `api`, `browser`, `vm`, `local`, `device`). `visibility` column added (`public`, `private`, `unlisted`). `PUT /v1/skills/:id` expanded to allow content editing on draft skills (skill_md, description, schema_json, tags, categories, name). `share_url` domain updated to runics.net. SearchFilters extended. Companion doc: `runics-app-specification.md`.
 
 ---
 
@@ -140,6 +140,10 @@ export interface SearchFilters {
   // v5.0: status lifecycle filters
   allowVulnerable?: boolean;        // default: depends on appetite (balanced=true, cautious=false)
   statusFilter?: SkillStatus[];     // override: specific statuses to include
+
+  // v5.2: execution environment + visibility
+  runtimeEnv?: string[];            // filter by runtime environment(s)
+  visibility?: 'public' | 'private' | 'unlisted';  // default: respects tenant scope
 }
 
 export type SkillStatus =
@@ -271,7 +275,7 @@ WITH BOTH LAYERS (Layer A missed, Layer B rescues):
 | **Tier 3: Low** | Score below threshold | 500–1000ms | ~9% | Full LLM deep search. |
 | **No match** | Tier 3 still poor | 500–1000ms | ~3% | Return generation hints. |
 
-**Thresholds are configurable via env vars and derived from eval data.** The TDR assumed 0.85/0.70 — eval data showed optimal boundaries at **0.47/0.42** (set in `wrangler.toml`).
+**Thresholds are configurable via env vars and derived from eval data in Phase 1.** The TDR assumed 0.85/0.70 — this may be wrong. Measure first.
 
 ### Deep Search (Tier 3)
 
@@ -356,6 +360,7 @@ CREATE TABLE IF NOT EXISTS skills (
   root_source TEXT,             -- original registry source preserved across forks
                                 -- (set at first fork from parent.source; copied from parent.root_source on re-fork)
                                 -- used for trust floor lookup to prevent floor regression on fork-of-fork
+  fork_changes JSONB,           -- list of human-readable changes from parent
 
   -- v5.0: Composition
   composition_skill_ids UUID[], -- ordered constituent skill IDs (for composites)
@@ -368,7 +373,6 @@ CREATE TABLE IF NOT EXISTS skills (
   description TEXT,
   readme TEXT,
   agent_summary TEXT,           -- LLM-generated, search-optimized
-  repository_url TEXT,          -- v5.2: GitHub repo URL (from upstream metadata or manual)
   alternate_queries TEXT[],
   schema_json JSONB,
   auth_requirements JSONB,
@@ -380,6 +384,23 @@ CREATE TABLE IF NOT EXISTS skills (
   capabilities_required TEXT[],
   execution_layer TEXT NOT NULL
     CHECK (execution_layer IN ('mcp-remote', 'instructions', 'worker', 'container', 'composite')),
+
+  -- v5.2: Execution environment (what infrastructure the skill needs)
+  runtime_env TEXT NOT NULL DEFAULT 'api'
+    CHECK (runtime_env IN ('llm', 'api', 'browser', 'vm', 'local', 'device')),
+    -- llm: LLM context only, no external call
+    -- api: stateless HTTP call to external service
+    -- browser: interactive web session (CF Browser Rendering)
+    -- vm: sandboxed code execution (Daytona)
+    -- local: runs on user's machine via local node
+    -- device: commands to physical hardware (ThingsBoard/Mongrov)
+
+  -- v5.2: Visibility control
+  visibility TEXT NOT NULL DEFAULT 'public'
+    CHECK (visibility IN ('public', 'private', 'unlisted')),
+    -- public: searchable by everyone (tenant_id NULL or any tenant)
+    -- private: searchable only by owning tenant
+    -- unlisted: accessible by direct ID/URL, not in search results
 
   -- Discoverability
   tags TEXT[] DEFAULT '{}',
@@ -393,7 +414,7 @@ CREATE TABLE IF NOT EXISTS skills (
   homepage_url TEXT,
   demo_url TEXT,
   share_url TEXT GENERATED ALWAYS AS (
-    'https://runics.dev/skills/' || slug
+    'https://runics.net/skills/' || slug
   ) STORED,
 
   -- v5.0: Lifecycle management
@@ -409,16 +430,12 @@ CREATE TABLE IF NOT EXISTS skills (
   verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   scan_coverage TEXT
-    CHECK (scan_coverage IN ('code-full', 'code-partial', 'instructions-only', 'metadata-only')),
-    -- v5.2: expanded from ('full','partial','text-only') to match Circle-IR analysis modes
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
   trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
-  cognium_scanned BOOLEAN DEFAULT FALSE,  -- v5.2: true after scan attempt (success or fail)
   cognium_scanned_at TIMESTAMPTZ,
-  cognium_job_id TEXT,           -- v5.2: in-flight Circle-IR job ID (cleared on completion)
-  cognium_job_submitted_at TIMESTAMPTZ,  -- v5.2: when job was submitted
   cognium_findings JSONB,       -- [{severity, cwe_id, tool, title, description, confidence, verdict}]
-  analyzer_summary JSONB,       -- per-analyzer result summary from Circle-IR
+  analyzer_summary JSONB,       -- per-analyzer result summary
   content_safety_passed BOOLEAN,
   adversarial_tested BOOLEAN DEFAULT FALSE,
   provenance_attested BOOLEAN DEFAULT FALSE,
@@ -469,6 +486,8 @@ CREATE INDEX idx_skills_source ON skills(source);
 CREATE INDEX idx_skills_slug ON skills(slug);
 CREATE INDEX idx_skills_slug_version ON skills(slug, version);
 CREATE INDEX idx_skills_execution_layer ON skills(execution_layer);
+CREATE INDEX idx_skills_runtime_env ON skills(runtime_env);
+CREATE INDEX idx_skills_visibility ON skills(visibility);
 CREATE INDEX idx_skills_skill_type ON skills(skill_type);
 CREATE INDEX idx_skills_tags ON skills USING gin(tags);
 CREATE INDEX idx_skills_categories ON skills USING gin(categories);
@@ -838,7 +857,7 @@ ALTER TABLE skills
   ADD COLUMN IF NOT EXISTS verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   ADD COLUMN IF NOT EXISTS scan_coverage TEXT
-    CHECK (scan_coverage IN ('code-full', 'code-partial', 'instructions-only', 'metadata-only')),
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
   ADD COLUMN IF NOT EXISTS trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
   ADD COLUMN IF NOT EXISTS cognium_findings JSONB,
@@ -1024,7 +1043,6 @@ interface SkillUpsert {
   executionLayer: string;
   mcpUrl?: string;
   skillMd?: string;
-  repositoryUrl?: string;           // v5.2: GitHub repo URL for Mode A code scanning
   capabilitiesRequired?: string[];
   source: string;
   sourceUrl: string;
@@ -1039,18 +1057,13 @@ export class McpRegistrySync extends BaseSyncWorker {
   protected get sourceName() { return 'mcp-registry'; }
 
   normalize(raw: McpRegistrySkill): SkillUpsert {
-    // v5.2: Extract GitHub repo URL from upstream registry metadata
-    // Enables Mode A code scanning for skills that have a repository field
-    const repoUrl = raw.repository?.url;
-    const repositoryUrl = repoUrl && isGitHubRepoUrl(repoUrl) ? repoUrl : undefined;
-
     return {
       name: raw.name,
       slug: slugify(raw.name),
       description: raw.description,
       executionLayer: 'mcp-remote',
+      runtimeEnv: 'api',                           // v5.2: MCP servers are API calls
       mcpUrl: raw.endpoint,
-      repositoryUrl,              // v5.2: stored for Cognium Mode A code scanning
       capabilitiesRequired: raw.requiredScopes ?? [],
       source: 'mcp-registry',
       sourceUrl: raw.registryUrl,
@@ -1060,8 +1073,6 @@ export class McpRegistrySync extends BaseSyncWorker {
   }
 }
 ```
-
-> **v5.2 note:** ~73 of 954 MCP Registry skills have `server.repository.url` pointing to GitHub. These get full SAST analysis via Mode A. The remaining ~881 only have inline description/agent_summary (100-500 chars) — insufficient for meaningful code analysis.
 
 ### 10.2 ClawHub Sync
 
@@ -1075,6 +1086,7 @@ export class ClawHubSync extends BaseSyncWorker {
       slug: slugify(raw.name),
       description: raw.description ?? '',
       executionLayer: raw.hasCode ? 'worker' : 'instructions',
+      runtimeEnv: raw.hasCode ? 'api' : 'llm',    // v5.2: instructions = llm, code = api default
       skillMd: raw.skillMd,
       schemaJson: raw.schema,
       source: 'clawhub',
@@ -1098,6 +1110,7 @@ export class GitHubSync extends BaseSyncWorker {
       slug: slugify(raw.full_name.replace('/', '-')),
       description: raw.description ?? '',
       executionLayer: 'container',
+      runtimeEnv: 'vm',                             // v5.2: GitHub repos run in sandbox
       capabilitiesRequired: ['git'],
       source: 'github',
       sourceUrl: raw.html_url,
@@ -1110,28 +1123,25 @@ export class GitHubSync extends BaseSyncWorker {
 ### Cron Configuration
 
 ```toml
-# wrangler.toml — v5.2: consolidated to single every-minute trigger
+# wrangler.toml
 [triggers]
-crons = ["* * * * *"]
+crons = [
+  "*/5 * * * *",    # sync-mcp-registry (every 5 min)
+  "*/10 * * * *",   # sync-clawhub (every 10 min)
+  "*/15 * * * *",   # sync-github (every 15 min)
+  "0 3 * * 0",      # weekly prune cron (Sunday 3am)
+]
 ```
-
-The single cron trigger runs every minute and multiplexes all scheduled tasks internally:
-
-- **Every minute (Phase 1):** Poll up to 10 in-flight Cognium scan jobs, fetch results, apply via `applyScanReport()`
-- **Every 5 minutes (Phase 2):** Submit new skills for Cognium scanning (guarded by `minute % 5 === 0`)
-- **Every 5 minutes:** Sync mcp-registry, clawhub, github (staggered by minute offset)
-- **Hourly:** Refresh materialized views (`search_quality_summary`, leaderboards, co-occurrence)
-- **Phase 3:** GC orphaned scan jobs older than 60 minutes
 
 ### Sync Summary
 
-| Source | Count | Trust Default | Cognium Mode | Notes |
-|---|---|---|---|---|
-| ClawHub | ~10,885 | 0.5 (Cognium updates) | Mode B (bundle_url) | `worker`/`instructions` layer. Bundle download works; code files may be skipped by Circle-IR |
-| GitHub | ~1,072 | 0.5 (Cognium updates) | Mode A (repo_url) | `container` layer. Full SAST analysis |
-| MCP Registry | ~954 | 0.5 (Cognium updates) | Mode A (73 with repo) / Mode C (881 inline) | `mcp-remote` layer. Inline-only skills get rubber-stamp scan |
-| Direct publish | — | 0.5 (Cognium updates) | Mode C (inline) | Forge / manual |
-| Human-distilled | — | min(sub-skills)×0.90 | Mode C (inline) | Forge Mode 3 |
+| Source | Frequency | Trust Default | Notes |
+|---|---|---|---|
+| MCP Registry | 5 min | 0.5 (Cognium updates) | `mcp-remote` execution layer |
+| ClawHub | 10 min | 0.5 (Cognium updates) | ~3,000 skills |
+| GitHub | 15 min | 0.5 (Cognium updates) | `container` layer |
+| Direct publish | Immediate | 0.5 (Cognium updates) | Forge / manual |
+| Human-distilled | Immediate | min(sub-skills)×0.90 | Forge Mode 3 |
 
 ---
 
@@ -1209,12 +1219,6 @@ app.post('/v1/skills', zValidator('json', publishSkillSchema), async (c) => {
 
 Trust scores, status, and findings are applied directly to the DB by the Cognium poll consumer via `applyScanReport()` in `src/cognium/scan-report-handler.ts`. There is no `PUT /v1/skills/:id/trust` HTTP endpoint — Cognium does not push to Runics; Runics pulls from Circle-IR.
 
-**v5.2 scan pipeline (queue-free):** Due to CF Queues rate limiting ("Too Many Requests" at scale), the scan pipeline now operates without queues:
-1. **Submit:** `POST /v1/admin/backfill?mode=submit` sends skills to Circle-IR and stores `cognium_job_id` in the DB
-2. **Poll:** Cron Phase 1 (every minute) queries `WHERE cognium_job_id IS NOT NULL`, checks status via Circle-IR API, fetches findings/results on completion
-3. **Apply:** `applyScanReport()` updates trust_score, verification_tier, status, scan_coverage, cognium_findings, analyzer_summary
-4. **Constraints:** 10 jobs polled per cron cycle (CF Workers subrequest budget), status checks batched 6 concurrent, result fetches batched 3 concurrent
-
 
 ### PATCH /v1/skills/:id/status — Owner-Initiated Status Changes
 
@@ -1238,6 +1242,88 @@ app.patch('/v1/skills/:id/status', async (c) => {
   }).where(eq(skills.id, skillId));
 
   return c.json({ id: skillId, status });
+});
+```
+
+### PUT /v1/skills/:id — Draft Content Editing (v5.2)
+
+Draft skills can have their content edited. Published skills are immutable — modifications require a fork.
+
+```typescript
+const draftEditSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().min(10).max(2000).optional(),
+  skillMd: z.string().optional(),
+  schemaJson: z.record(z.unknown()).optional(),
+  tags: z.array(z.string()).optional(),
+  categories: z.array(z.string()).optional(),
+  mcpUrl: z.string().url().optional(),
+  environmentVariables: z.array(z.string()).optional(),
+});
+
+app.put('/v1/skills/:id', zValidator('json', draftEditSchema), async (c) => {
+  const skillId = c.req.param('id');
+  const skill = await db.query.skills.findFirst({ where: eq(skills.id, skillId) });
+
+  if (!skill) return c.json({ error: 'not found' }, 404);
+  if (skill.status !== 'draft') {
+    return c.json({ error: 'only draft skills are editable — fork to modify published skills' }, 400);
+  }
+
+  const input = c.req.valid('json');
+
+  // Immutable fields: slug, execution_layer, runtime_env, source, forked_from, tenant_id
+
+  await db.update(skills).set({
+    ...input,
+    updatedAt: new Date(),
+  }).where(eq(skills.id, skillId));
+
+  // Re-embed if description or skill_md changed
+  if (input.description || input.skillMd) {
+    await c.env.EMBED_QUEUE.send({ skillId, action: 'embed' });
+  }
+
+  // Re-scan if skill_md or mcpUrl changed
+  if (input.skillMd || input.mcpUrl) {
+    await c.env.COGNIUM_QUEUE.send({
+      skillId,
+      priority: 'normal',
+      timestamp: Date.now(),
+    });
+  }
+
+  return c.json({ id: skillId, status: 'draft' });
+});
+```
+
+### POST /v1/skills/:id/publish — Publish a Draft (v5.2)
+
+Transitions a draft skill to published status. Runs final validation.
+
+```typescript
+app.post('/v1/skills/:id/publish', async (c) => {
+  const skillId = c.req.param('id');
+  const skill = await db.query.skills.findFirst({ where: eq(skills.id, skillId) });
+
+  if (!skill) return c.json({ error: 'not found' }, 404);
+  if (skill.status !== 'draft') {
+    return c.json({ error: 'only draft skills can be published' }, 400);
+  }
+
+  // Require description and at least one content artifact
+  if (!skill.description) return c.json({ error: 'description required' }, 400);
+  if (!skill.skillMd && !skill.mcpUrl && !skill.r2BundleKey) {
+    return c.json({ error: 'skill needs content: skill_md, mcp_url, or code bundle' }, 400);
+  }
+
+  await db.update(skills).set({
+    status: 'published',
+    publishedAt: new Date(),
+    updatedAt: new Date(),
+  }).where(eq(skills.id, skillId));
+
+  return c.json({ id: skillId, status: 'published' });
 });
 ```
 
@@ -1269,6 +1355,10 @@ export const publishSkillSchema = z.object({
   trustScore: z.number().min(0).max(1).optional(),
   altQueries: z.array(z.string()).optional(), // provided by Forge Mode 3
   bundle: z.instanceof(ArrayBuffer).optional(),
+
+  // v5.2: execution environment + visibility
+  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local', 'device']).optional(),
+  visibility: z.enum(['public', 'private', 'unlisted']).optional(),
 });
 ```
 
@@ -1331,7 +1421,9 @@ export class PgVectorProvider implements SearchProvider {
           s.skill_type,
           s.forked_from,
           s.run_count,
-          s.last_run_at
+          s.last_run_at,
+          s.runtime_env,
+          s.visibility
 
         FROM skill_embeddings se
         JOIN skills s ON se.skill_id = s.id
@@ -1348,6 +1440,17 @@ export class PgVectorProvider implements SearchProvider {
 
           -- Tenant scope
           AND (s.tenant_id IS NULL OR s.tenant_id = ${tenantId})
+
+          -- v5.2: Visibility filter
+          AND (
+            s.visibility = 'public'
+            OR (s.visibility IN ('private', 'unlisted') AND s.tenant_id = ${tenantId})
+          )
+
+          -- v5.2: Runtime environment filter
+          ${filters.runtimeEnv?.length
+            ? sql`AND s.runtime_env IN (${sql.join(filters.runtimeEnv.map(r => sql`${r}`), sql`,`)})`
+            : sql``}
 
           -- Optional: pin to specific slug
           ${options?.slug ? sql`AND s.slug = ${options.slug}` : sql``}
@@ -1380,7 +1483,9 @@ export class PgVectorProvider implements SearchProvider {
         skill_type,
         forked_from,
         run_count,
-        last_run_at
+        last_run_at,
+        runtime_env,
+        visibility
       FROM vector_search
       ORDER BY fused_score DESC
       LIMIT ${options?.limit ?? 10}
@@ -1555,10 +1660,11 @@ POST   /v1/search/feedback              // record quality feedback
 
 // ── Publish ──
 POST   /v1/skills                       // publish a new skill
-PUT    /v1/skills/:id                   // update skill (draft only)
+PUT    /v1/skills/:id                   // update skill content (draft only, v5.2)
 // (no PUT /v1/skills/:id/trust — Cognium poll consumer writes via applyScanReport())
 PATCH  /v1/skills/:id/status            // owner: deprecate / restore to published
 DELETE /v1/skills/:id                   // remove (draft only; published = deprecate)
+POST   /v1/skills/:id/publish           // publish a draft skill (v5.2)
 
 // ── Versions ──
 GET    /v1/skills/:slug/versions        // all versions of a skill slug
@@ -1612,18 +1718,10 @@ GET    /v1/analytics/revoked-impact     // v5.0
 GET    /v1/analytics/vulnerable-usage   // v5.0
 
 // ── Eval ──
-POST   /v1/eval/run
-GET    /v1/eval/results/:runId
-
-// ── Admin (v5.2, requires Authorization: Bearer <ADMIN_API_KEY>) ──
-POST   /v1/admin/scan/:skillId              // inline scan a single skill (submit + poll + apply)
-POST   /v1/admin/apply-job/:skillId         // manually apply a completed Circle-IR job
-POST   /v1/admin/scan-test/:skillId         // dry-run scan (submit only, no apply)
-GET    /v1/admin/scan-stats                  // scan statistics: by status, source, coverage, findings
-GET    /v1/admin/scan-preview?slug=X         // preview what buildCircleIRRequest would send
-GET    /v1/admin/skill-inventory             // content type + scan status breakdown by source
-POST   /v1/admin/clear-stale                 // clear stale in-flight scan jobs
-POST   /v1/admin/backfill                    // bulk scan submission (mode=submit|inline, source, content filters)
+POST   /v1/eval/run                       // run eval suite, persist results to KV
+GET    /v1/eval/results                    // list recent eval runs (from KV index)
+GET    /v1/eval/results/:runId             // get full run data
+GET    /v1/eval/compare?runA=...&runB=...  // compare two runs with metric deltas
 
 // ── Health ──
 GET    /health
@@ -1766,13 +1864,17 @@ Both within Neon Pro 10GB limit.
 ### Phase 5: Sync Pipelines & Publish API (Weeks 5–6)
 
 - [ ] `BaseSyncWorker` — v5.0: no trust_score set on sync
-- [ ] `McpRegistrySync`, `ClawHubSync`, `GitHubSync` adapters
-- [ ] `POST /v1/skills` — full publishSkillSchema with v5.0 fields
+- [ ] `McpRegistrySync`, `ClawHubSync`, `GitHubSync` adapters — v5.2: include `runtimeEnv` inference
+- [ ] `POST /v1/skills` — full publishSkillSchema with v5.0 + v5.2 fields
 - [ ] Cognium poll consumer writes trust scores directly via `applyScanReport()` — no HTTP callback endpoint
 - [ ] `PATCH /v1/skills/:id/status` — owner deprecate/restore
+- [ ] `PUT /v1/skills/:id` — draft content editing (v5.2)
+- [ ] `POST /v1/skills/:id/publish` — publish a draft (v5.2)
 - [ ] `GET /v1/skills/:slug/versions` — version listing
 - [ ] Queue integration: EMBED_QUEUE + COGNIUM_QUEUE (submit) + COGNIUM_POLL_QUEUE producers; COGNIUM_JOBS KV namespace
-- [ ] Migration 0008 (lifecycle columns)
+- [x] Migration 0008–0013 (lifecycle, cognium, scan coverage)
+- [x] Migration 0014: add `runtime_env`, `visibility`, `environment_variables` columns + indices (v5.2)
+- [ ] Search filters: `runtimeEnv[]`, visibility-aware query (v5.2)
 - [ ] Cache invalidation on status change
 
 ### Phase 6: Lifecycle & Composition (Sprint 4, alongside Cognium)
@@ -1903,14 +2005,13 @@ runics/
 │   │   └── schema.ts                     # publishSkillSchema
 │   │
 │   ├── cognium/
-│   │   ├── submit-consumer.ts            # Queue consumer: submit skills to Circle-IR
-│   │   ├── poll-consumer.ts              # Queue consumer: poll Circle-IR for results
-│   │   ├── request-builder.ts            # Skill → CircleIRSkillAnalyzeRequest (Mode A/B/C)
+│   │   ├── queue-consumer.ts             # HTTP client → Cognium Server
+│   │   ├── request-builder.ts            # Skill → ScanRequest (no source/priority/composite)
 │   │   ├── scoring-policy.ts             # Runics trust formula, severity→status, tier, remediation
-│   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status + coverage
+│   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status (in src/cognium/)
 │   │   ├── composite-cascade.ts          # Cascade status to composites
 │   │   ├── notification-trigger.ts       # Webhook to Activepieces on revoke/flag
-│   │   └── types.ts                      # CircleIRSkillAnalyzeRequest, CircleIRJobStatus, etc.
+│   │   └── types.ts                      # CogniumSubmitMessage, CogniumPollMessage, ScanFinding, CircleIRFinding
 │   │
 │   ├── monitoring/
 │   │   ├── search-logger.ts
@@ -1920,8 +2021,11 @@ runics/
 │   ├── cache/
 │   │   └── kv-cache.ts                   # + slug-based invalidation (v5.0)
 │   │
+│   ├── middleware/
+│   │   └── rate-limiter.ts               # Per-IP rate limiting (KV sliding window)
+│   │
 │   ├── db/
-│   │   ├── schema.ts                     # Drizzle schema (v5.0 columns)
+│   │   ├── schema.ts                     # Drizzle schema (v5.0 + v5.2 columns)
 │   │   └── migrations/
 │   │       ├── 0001_skill_embeddings.sql
 │   │       ├── 0002_search_logs.sql
@@ -1930,7 +2034,9 @@ runics/
 │   │       ├── 0005_compositions.sql
 │   │       ├── 0006_invocation_graph.sql
 │   │       ├── 0007_leaderboards.sql
-│   │       └── 0008_skill_lifecycle.sql  ← NEW (v5.0)
+│   │       ├── 0008_skill_lifecycle.sql  (v5.0)
+│   │       ├── 0009–0013                 (cognium, scan coverage, backpressure)
+│   │       └── 0014_v52_columns.sql      (v5.2: runtime_env, visibility, environment_variables)
 │   │
 │   └── eval/
 │       ├── runner.ts
@@ -1972,7 +2078,7 @@ runics/
 
 5. **Content safety runs on ingest, not query.** Llama Guard sets `content_safety_passed = false` at ingest → excluded via WHERE filter. Interim until Circle-IR adds native content safety.
 
-6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, `quality_feedback`. It reads from `skills` but adds columns via migration 0008.
+6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, `quality_feedback`. It reads from `skills` but adds columns via migrations 0008–0014.
 
 7. **Status filter is not optional.** `revoked`, `draft`, `degraded` are always excluded. `vulnerable` exclusion depends on appetite.
 
@@ -1981,6 +2087,10 @@ runics/
 9. **Trust is Cognium's responsibility.** Sync workers do NOT set trust_score. `0.5 / unverified` is the default until Cognium scans.
 
 10. **Eval runs before and after every change.** Numbers only — no "feels better."
+
+11. **`runtime_env` is orthogonal to `execution_layer` (v5.2).** `execution_layer` describes *how* Cortex invokes the skill (MCP protocol, prompt injection, code bundle). `runtime_env` describes *what infrastructure* the skill needs (browser session, sandbox, device connection). Both must be set. Sync adapters infer `runtime_env` from source conventions; users can override on fork.
+
+12. **Visibility defaults (v5.2).** Public catalog skills: `visibility = 'public'`. Forked skills: `visibility = 'private'`. Users can change visibility on their own skills only. Visibility is enforced in the search query, not just a display hint.
 
 ### Cloudflare bindings
 
@@ -2010,11 +2120,11 @@ queue = "runics-embed"
 
 [[queues.producers]]
 binding = "COGNIUM_QUEUE"
-queue = "runics-cognium-v2"
+queue = "runics-cognium"
 
 [[queues.producers]]
 binding = "COGNIUM_POLL_QUEUE"
-queue = "runics-cognium-poll-v2"
+queue = "runics-cognium-poll"
 
 [[queues.consumers]]
 queue = "runics-embed"
@@ -2022,14 +2132,14 @@ max_batch_size = 10
 max_batch_timeout = 30
 
 [[queues.consumers]]
-queue = "runics-cognium-v2"
+queue = "runics-cognium"
 max_batch_size = 5
 max_batch_timeout = 30
 max_retries = 2
 dead_letter_queue = "cognium-dlq"
 
 [[queues.consumers]]
-queue = "runics-cognium-poll-v2"
+queue = "runics-cognium-poll"
 max_batch_size = 10
 max_batch_timeout = 30
 max_retries = 0                     # self-manages retries via delayed re-enqueue
@@ -2040,7 +2150,12 @@ binding = "COGNIUM_JOBS"
 id = "..."                          # stores job state: cognium:job:{skillId}
 
 [triggers]
-crons = ["* * * * *"]   # v5.2: every minute — multiplexes scan poll, sync, mat view refresh
+crons = [
+  "*/5 * * * *",
+  "*/10 * * * *",
+  "*/15 * * * *",
+  "0 3 * * 0",     # weekly prune (Forge auto-distilled cleanup)
+]
 
 [ai]
 binding = "AI"
@@ -2051,8 +2166,8 @@ EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
 RERANKER_MODEL = "@cf/baai/bge-reranker-base"
 LLM_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
-CONFIDENCE_TIER1_THRESHOLD = "0.47"   # v5.2: tuned from eval data (was 0.85)
-CONFIDENCE_TIER2_THRESHOLD = "0.42"   # v5.2: tuned from eval data (was 0.70)
+CONFIDENCE_TIER1_THRESHOLD = "0.85"
+CONFIDENCE_TIER2_THRESHOLD = "0.70"
 CACHE_TTL_SECONDS = "60"
 DEFAULT_APPETITE = "balanced"
 VECTOR_WEIGHT = "0.7"
@@ -2156,7 +2271,8 @@ export async function forkSkill(
       root_source,
       trust_score, verification_tier, trust_badge,
       run_count,
-      capabilities_required, source
+      capabilities_required, source,
+      runtime_env, visibility
     ) VALUES (
       $1, $2, $3, 'forked', 'draft',
       $4, $5, $6, $7,
@@ -2166,7 +2282,8 @@ export async function forkSkill(
       $16,
       $17, 'unverified', NULL,
       0,
-      $18, 'human-distilled'
+      $18, 'human-distilled',
+      $19, 'private'
     ) RETURNING id, slug, version`,
     [
       `${source.rows[0].name}`,           // keep original name
@@ -2187,6 +2304,7 @@ export async function forkSkill(
       originSource,                       // root_source: preserved across all fork generations
       resetTrust,                         // trust reset — not inherited
       source.rows[0].capabilities_required,
+      source.rows[0].runtime_env,         // v5.2: runtime_env copied from parent
     ]
   );
 
@@ -2207,6 +2325,10 @@ export async function forkSkill(
         FROM composition_steps WHERE composition_id = $1
       ) WHERE id = $1`,
       [fork.rows[0].id]
+    );
+  }
+      FROM composition_steps WHERE composition_id = $2`,
+      [fork.rows[0].id, sourceId]
     );
   }
 

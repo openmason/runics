@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy",
+    "deploy:production": "wrangler deploy -c wrangler.production.toml",
     "db:migrate": "drizzle-kit migrate",
     "db:generate": "drizzle-kit generate",
     "db:test": "tsx scripts/test-db.ts",
@@ -18,7 +20,9 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest watch",
-    "perf": "tsx scripts/perf-test.ts"
+    "perf": "tsx scripts/perf-test.ts",
+    "perf:staging": "tsx scripts/perf-test.ts --endpoint https://runics.phantoms.workers.dev",
+    "perf:production": "tsx scripts/perf-test.ts --endpoint https://api.runics.net"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.1",

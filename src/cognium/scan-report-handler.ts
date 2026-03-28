@@ -79,7 +79,6 @@ export async function applyScanReport(
           remediation_message = 'Revoked: skill contains instruction injection or prompt hijacking risk.',
           cognium_findings = $1,
           cognium_scanned_at = NOW(),
-          cognium_scanned = true,
           cognium_job_id = NULL,
           scan_coverage = $2,
           analyzer_summary = $3,
@@ -135,7 +134,6 @@ export async function applyScanReport(
         remediation_url = $7,
         cognium_findings = $8,
         cognium_scanned_at = NOW(),
-        cognium_scanned = true,
         cognium_job_id = NULL,
         analyzer_summary = $9,
         scan_failure_reason = NULL,
@@ -186,7 +184,6 @@ export async function markScanFailed(pool: Pool, skillId: string, reason: string
       verification_tier = 'unverified',
       scan_failure_reason = $2,
       cognium_scanned_at = NOW(),
-      cognium_scanned = true,
       cognium_job_id = NULL,
       updated_at = NOW()
     WHERE id = $1`,

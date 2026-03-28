@@ -34,22 +34,28 @@ export const publishSkillSchema = z.object({
   humanDistilledBy: z.string().optional(),
   trustBadge: z.enum(['human-verified', 'auto-distilled', 'upstream']).optional(),
   altQueries: z.array(z.string()).optional(),
+  // v5.2: execution environment + visibility
+  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local', 'device']).optional(),
+  visibility: z.enum(['public', 'private', 'unlisted']).optional(),
+  environmentVariables: z.array(z.string()).optional(),
 });
 
 export const updateSkillSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().min(10).max(2000).optional(),
   schemaJson: z.record(z.unknown()).optional(),
-  executionLayer: z.enum(['mcp-remote', 'instructions', 'worker', 'container', 'composite']).optional(),
   mcpUrl: z.string().url().optional(),
   skillMd: z.string().optional(),
   capabilitiesRequired: z.array(z.string()).optional(),
-  trustScore: z.number().min(0).max(1).optional(),
   tags: z.array(z.string()).optional(),
   category: z.string().optional(),
+  categories: z.array(z.string()).optional(),
+  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local', 'device']).optional(),
+  visibility: z.enum(['public', 'private', 'unlisted']).optional(),
+  environmentVariables: z.array(z.string()).optional(),
 });
 
-// v5.0: Full attestation schema (replaces trustUpdateSchema)
+// v5.0: Full attestation schema (Cognium writes directly)
 export const attestationUpdateSchema = z.object({
   trustScore: z.number().min(0).max(1),
   tier: z.enum(['unverified', 'scanned', 'verified', 'certified']),
@@ -82,24 +88,7 @@ export const statusChangeSchema = z.object({
   replacementSkillId: z.string().uuid().optional(),
 });
 
-// Legacy trust update schema (kept for backward compat)
-export const trustUpdateSchema = z.object({
-  trustScore: z.number().min(0).max(1),
-  cogniumReport: z.object({
-    contentSafe: z.boolean(),
-    findings: z.array(
-      z.object({
-        tool: z.string(),
-        severity: z.enum(['low', 'medium', 'high', 'critical']),
-        message: z.string(),
-      })
-    ),
-    scannedAt: z.string().datetime(),
-  }),
-});
-
 export type PublishSkillInput = z.infer<typeof publishSkillSchema>;
 export type UpdateSkillInput = z.infer<typeof updateSkillSchema>;
 export type AttestationUpdateInput = z.infer<typeof attestationUpdateSchema>;
 export type StatusChangeInput = z.infer<typeof statusChangeSchema>;
-export type TrustUpdateInput = z.infer<typeof trustUpdateSchema>;

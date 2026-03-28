@@ -179,8 +179,8 @@ export abstract class BaseSyncWorker {
         name, slug, version, source, description, schema_json,
         execution_layer, mcp_url, skill_md, capabilities_required,
         source_url, source_hash, trust_score, tenant_id, repository_url,
-        changelog, content_safety_passed, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,NOW())
+        changelog, content_safety_passed, runtime_env, visibility, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,$17,$18,NOW())
       ON CONFLICT (source, source_url) WHERE source_url IS NOT NULL
       DO UPDATE SET
         name = EXCLUDED.name,
@@ -194,6 +194,7 @@ export abstract class BaseSyncWorker {
         repository_url = COALESCE(EXCLUDED.repository_url, skills.repository_url),
         changelog = COALESCE(EXCLUDED.changelog, skills.changelog),
         content_safety_passed = EXCLUDED.content_safety_passed,
+        runtime_env = EXCLUDED.runtime_env,
         updated_at = NOW()
       RETURNING id`,
       [
@@ -213,6 +214,8 @@ export abstract class BaseSyncWorker {
         skill.tenantId ?? null,
         skill.repositoryUrl ?? null,
         skill.changelog ? JSON.stringify(skill.changelog) : null,
+        skill.runtimeEnv ?? 'api',
+        skill.visibility ?? 'public',
       ]
     );
     return result.rows[0].id;

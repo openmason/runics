@@ -68,7 +68,7 @@ authorRoutes.get('/:handle/skills', async (c) => {
     let paramIdx = 2;
 
     if (type) {
-      conditions.push(`s.type = $${paramIdx++}`);
+      conditions.push(`s.skill_type = $${paramIdx++}`);
       params.push(type);
     }
     if (status) {
@@ -79,7 +79,7 @@ authorRoutes.get('/:handle/skills', async (c) => {
     const where = conditions.join(' AND ');
 
     const result = await pool.query(
-      `SELECT s.id, s.name, s.slug, s.type, s.status, s.description,
+      `SELECT s.id, s.name, s.slug, s.skill_type, s.status, s.description,
               s.trust_score, s.human_star_count, s.agent_invocation_count,
               s.tags, s.created_at, s.published_at
        FROM skills s
@@ -95,7 +95,7 @@ authorRoutes.get('/:handle/skills', async (c) => {
         id: r.id,
         name: r.name,
         slug: r.slug,
-        type: r.type,
+        skillType: r.skill_type,
         status: r.status,
         description: r.description,
         trustScore: parseFloat(r.trust_score) || 0,
