@@ -15,6 +15,8 @@
 
 import type { FindSkillResponse } from '../types';
 
+const REVOKED_SLUGS_KEY = 'revoked_slugs';
+
 export class SearchCache {
   constructor(
     private kv: KVNamespace,
@@ -81,6 +83,14 @@ export class SearchCache {
       }
 
       const parsed = JSON.parse(cached) as FindSkillResponse;
+
+      // Filter out revoked slugs from cached results
+      const revokedSlugs = await this.getRevokedSlugs();
+      if (revokedSlugs.size > 0) {
+        parsed.results = parsed.results.filter(
+          (r) => !revokedSlugs.has(r.slug)
+        );
+      }
 
       // Mark as cache hit in metadata
       parsed.meta.cacheHit = true;
@@ -156,6 +166,54 @@ export class SearchCache {
       await this.kv.delete(key);
     } catch (error) {
       console.error('Cache invalidate error:', error);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Revoked Slugs — Instant Cache Invalidation
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Add a slug to the revoked set. Cached search results containing
+   * this slug will be filtered out on read.
+   */
+  async addRevokedSlug(slug: string): Promise<void> {
+    try {
+      const slugs = await this.getRevokedSlugs();
+      slugs.add(slug);
+      await this.kv.put(REVOKED_SLUGS_KEY, JSON.stringify([...slugs]));
+    } catch (error) {
+      console.error('[CACHE] addRevokedSlug error:', error);
+    }
+  }
+
+  /**
+   * Remove a slug from the revoked set (e.g., after re-scan clears the issue).
+   */
+  async removeRevokedSlug(slug: string): Promise<void> {
+    try {
+      const slugs = await this.getRevokedSlugs();
+      slugs.delete(slug);
+      if (slugs.size === 0) {
+        await this.kv.delete(REVOKED_SLUGS_KEY);
+      } else {
+        await this.kv.put(REVOKED_SLUGS_KEY, JSON.stringify([...slugs]));
+      }
+    } catch (error) {
+      console.error('[CACHE] removeRevokedSlug error:', error);
+    }
+  }
+
+  /**
+   * Get the current set of revoked slugs.
+   */
+  async getRevokedSlugs(): Promise<Set<string>> {
+    try {
+      const raw = await this.kv.get(REVOKED_SLUGS_KEY, 'text');
+      if (!raw) return new Set();
+      return new Set(JSON.parse(raw) as string[]);
+    } catch {
+      return new Set();
     }
   }
 

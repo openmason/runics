@@ -28,6 +28,9 @@ describe('Eval Metrics', () => {
         capabilitiesRequired: [],
         skillType: 'atomic',
         runCount: 0,
+        runtimeEnv: 'api',
+        visibility: 'public',
+        shareUrl: 'https://runics.net/skills/test-skill',
       },
     ],
     confidence: tier === 1 ? 'high' : tier === 2 ? 'medium' : 'low_enriched',
@@ -71,6 +74,9 @@ describe('Eval Metrics', () => {
           capabilitiesRequired: [],
           skillType: 'atomic',
           runCount: 0,
+          runtimeEnv: 'api',
+          visibility: 'public',
+          shareUrl: 'https://runics.net/skills/another',
         },
         {
           id: mockFixture.expectedSkillId,
@@ -88,6 +94,9 @@ describe('Eval Metrics', () => {
           capabilitiesRequired: [],
           skillType: 'atomic',
           runCount: 0,
+          runtimeEnv: 'api',
+          visibility: 'public',
+          shareUrl: 'https://runics.net/skills/expected',
         }
       );
 
@@ -161,6 +170,9 @@ describe('Eval Metrics', () => {
         capabilitiesRequired: [],
         skillType: 'atomic',
         runCount: 0,
+        runtimeEnv: 'api',
+        visibility: 'public',
+        shareUrl: 'https://runics.net/skills/expected',
       });
 
       const results = [

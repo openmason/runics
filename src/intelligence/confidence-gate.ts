@@ -527,6 +527,8 @@ export class ConfidenceGate {
         s.human_fork_count,
         s.agent_invocation_count,
         s.composition_inclusion_count,
+        s.runtime_env,
+        s.visibility,
         a.handle AS author_handle,
         a.author_type AS author_type
       FROM skills s
@@ -562,6 +564,7 @@ export class ConfidenceGate {
           remediationUrl: row.remediation_url ?? undefined,
           replacementSkillId: row.replacement_skill_id ?? undefined,
           replacementSlug: row.replacement_slug ?? undefined,
+          shareUrl: `https://runics.net/skills/${row.slug}`,
           tags: row.tags ?? undefined,
           avgExecutionTimeMs: row.avg_execution_time_ms ?? undefined,
           errorRate: row.error_rate ?? undefined,
@@ -569,6 +572,8 @@ export class ConfidenceGate {
           humanForkCount: parseInt(row.human_fork_count) || 0,
           agentInvocationCount: parseInt(row.agent_invocation_count) || 0,
           compositionInclusionCount: parseInt(row.composition_inclusion_count) || 0,
+          runtimeEnv: row.runtime_env ?? 'api',
+          visibility: row.visibility ?? 'public',
           authorHandle: row.author_handle ?? undefined,
           authorType: row.author_type ?? undefined,
         },

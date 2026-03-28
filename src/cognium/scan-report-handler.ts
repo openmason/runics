@@ -18,6 +18,7 @@ import { computeTrustScore, deriveStatus, deriveTier, buildRemediationMessage } 
 import { cascadeStatusToComposites, repairCompositeStatus } from './composite-cascade';
 import { triggerNotification } from './notification-trigger';
 import { isGitHubRepoUrl } from '../sync/utils';
+import { SearchCache } from '../cache/kv-cache';
 
 export type ScanCoverageV2 = 'code-full' | 'code-partial' | 'instructions-only' | 'metadata-only';
 
@@ -104,6 +105,10 @@ export async function applyScanReport(
 
     // Notification is fire-and-forget — outside transaction (non-critical)
     await triggerNotification(env, skill.id, 'revoked', 'Content safety failure');
+
+    // Invalidate cache for revoked slug
+    const cache = new SearchCache(env.SEARCH_CACHE, 120);
+    await cache.addRevokedSlug(skill.slug);
     return;
   }
 
@@ -168,6 +173,14 @@ export async function applyScanReport(
     throw err;
   } finally {
     client.release();
+  }
+
+  // Cache invalidation for status changes
+  const cache = new SearchCache(env.SEARCH_CACHE, 120);
+  if (newStatus === 'revoked') {
+    await cache.addRevokedSlug(skill.slug);
+  } else if (newStatus === 'published' && ['vulnerable', 'revoked'].includes(skill.status)) {
+    await cache.removeRevokedSlug(skill.slug);
   }
 
   // Notifications are fire-and-forget — outside transaction (non-critical)

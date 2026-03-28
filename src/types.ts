@@ -149,6 +149,10 @@ export interface SkillResult {
   skillType: SkillType;
   forkedFrom?: string;
 
+  // v5.2: Environment
+  runtimeEnv: string;
+  visibility: string;
+
   // Usage
   runCount: number;
   lastRunAt?: string;
@@ -161,6 +165,9 @@ export interface SkillResult {
   // Deprecation auto-migration
   replacementSkillId?: string;
   replacementSlug?: string;
+
+  // Share
+  shareUrl: string;
 
   // Social (optional, for enriched results)
   authorHandle?: string;

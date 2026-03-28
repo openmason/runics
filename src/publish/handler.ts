@@ -22,6 +22,7 @@ import {
   statusChangeSchema,
 } from './schema';
 import type { Env, CogniumSubmitMessage } from '../types';
+import { SearchCache } from '../cache/kv-cache';
 
 export const publishRoutes = new Hono<{ Bindings: Env }>();
 
@@ -325,20 +326,48 @@ publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async
   const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
   try {
-    const result = await pool.query(
+    // Status transition guard: owner can only toggle between published ↔ deprecated.
+    // Cognium controls all other transitions (revoked, vulnerable, etc.).
+    const currentResult = await pool.query(
+      `SELECT status, slug FROM skills WHERE id = $1`,
+      [skillId]
+    );
+
+    if (currentResult.rows.length === 0) {
+      return c.json({ error: 'Skill not found' }, 404);
+    }
+
+    const currentStatus = currentResult.rows[0].status;
+    const slug = currentResult.rows[0].slug;
+    const validTransitions: Record<string, string[]> = {
+      published: ['deprecated'],
+      deprecated: ['published'],
+    };
+
+    const allowed = validTransitions[currentStatus];
+    if (!allowed || !allowed.includes(status)) {
+      return c.json({
+        error: `Cannot transition from '${currentStatus}' to '${status}'. Owner can only toggle between published and deprecated.`,
+      }, 409);
+    }
+
+    await pool.query(
       `UPDATE skills SET
         status = $1,
         deprecated_at = CASE WHEN $1 = 'deprecated' THEN NOW() ELSE NULL END,
         deprecated_reason = CASE WHEN $1 = 'deprecated' THEN $2 ELSE NULL END,
         replacement_skill_id = $3,
         updated_at = NOW()
-      WHERE id = $4
-      RETURNING id, slug`,
+      WHERE id = $4`,
       [status, reason ?? null, replacementSkillId ?? null, skillId]
     );
 
-    if (result.rows.length === 0) {
-      return c.json({ error: 'Skill not found' }, 404);
+    // Cache invalidation: deprecation removes from search, un-deprecation restores
+    const cache = new SearchCache(c.env.SEARCH_CACHE, parseInt(c.env.CACHE_TTL_SECONDS || '120'));
+    if (status === 'deprecated') {
+      await cache.addRevokedSlug(slug);
+    } else if (status === 'published') {
+      await cache.removeRevokedSlug(slug);
     }
 
     return c.json({ id: skillId, status });

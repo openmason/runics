@@ -24,6 +24,9 @@ describe('SearchCache', () => {
         capabilitiesRequired: [],
         skillType: 'atomic',
         runCount: 0,
+        runtimeEnv: 'api',
+        visibility: 'public',
+        shareUrl: 'https://runics.net/skills/test-skill',
       },
     ],
     confidence: 'high',
@@ -82,10 +85,11 @@ describe('SearchCache', () => {
       await cache.get('  Test QUERY  ', 'tenant-1', 'balanced');
       await cache.get('test query', 'tenant-1', 'balanced');
 
-      // Both calls should use the same normalized key
+      // Both calls should use the same normalized key (filter out revoked_slugs checks)
       const calls = vi.mocked(mockKV.get).mock.calls;
-      expect(calls.length).toBe(2);
-      expect(calls[0][0]).toBe(calls[1][0]);
+      const searchKeyCalls = calls.filter(([key]) => (key as unknown as string).startsWith('search:'));
+      expect(searchKeyCalls.length).toBe(2);
+      expect(searchKeyCalls[0][0]).toBe(searchKeyCalls[1][0]);
     });
   });
 

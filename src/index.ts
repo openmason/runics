@@ -14,6 +14,7 @@ import { PerfMonitor } from './monitoring/perf-monitor';
 import { ConfidenceGate } from './intelligence/confidence-gate';
 import { rateLimiter } from './middleware/rate-limiter';
 import { adminAuth } from './middleware/admin-auth';
+import { publicGuard } from './middleware/public-guard';
 import { publishRoutes } from './publish/handler';
 import { McpRegistrySync } from './sync/mcp-registry';
 import { ClawHubSync } from './sync/clawhub';
@@ -69,6 +70,9 @@ const app = new Hono<{ Bindings: Env }>();
 
 // Enable CORS for all routes
 app.use('*', cors());
+
+// Block write/admin endpoints on the public domain (api.runics.net)
+app.use('*', publicGuard());
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Component Initialization Helper
@@ -843,6 +847,7 @@ app.get('/v1/skills/:slug', async (c) => {
       remediationUrl: row.remediation_url ?? null,
       replacementSkillId: row.replacement_skill_id ?? null,
       replacementSlug: row.replacement_slug ?? null,
+      shareUrl: `https://runics.net/skills/${row.slug}`,
       avgExecutionTimeMs: row.avg_execution_time_ms ?? null,
       errorRate: row.error_rate ?? null,
       humanStarCount: parseInt(row.human_star_count) || 0,
@@ -1254,6 +1259,7 @@ app.get('/v1/skills/:slug/:version', async (c) => {
       remediationUrl: row.remediation_url ?? null,
       replacementSkillId: row.replacement_skill_id ?? null,
       replacementSlug: row.replacement_slug ?? null,
+      shareUrl: `https://runics.net/skills/${row.slug}`,
       avgExecutionTimeMs: row.avg_execution_time_ms ?? null,
       errorRate: row.error_rate ?? null,
       humanStarCount: parseInt(row.human_star_count) || 0,
