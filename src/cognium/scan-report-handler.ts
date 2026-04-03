@@ -79,6 +79,7 @@ export async function applyScanReport(
           revoked_reason = 'content_safety_failed',
           remediation_message = 'Revoked: skill contains instruction injection or prompt hijacking risk.',
           cognium_findings = $1,
+          cognium_scanned = true,
           cognium_scanned_at = NOW(),
           cognium_job_id = NULL,
           scan_coverage = $2,
@@ -113,9 +114,10 @@ export async function applyScanReport(
   }
 
   // Prefer Circle-IR's trust score when available (more accurate — considers full analysis context);
-  // fall back to local computation for backward compat
+  // fall back to local computation for backward compat.
+  // API v1.8.0: trust_score is 0–100; normalize to 0–1 for DB storage.
   const trustScore = (skillResult?.trust_score != null)
-    ? Math.max(0.0, Math.min(1.0, Math.round(skillResult.trust_score * 100) / 100))
+    ? Math.max(0.0, Math.min(1.0, skillResult.trust_score / 100))
     : computeTrustScore(skill, findings);
   const newStatus = deriveStatus(worstSeverity);
   const tier = deriveTier(worstSeverity, trustScore, coverage);
@@ -138,6 +140,7 @@ export async function applyScanReport(
         remediation_message = $6,
         remediation_url = $7,
         cognium_findings = $8,
+        cognium_scanned = true,
         cognium_scanned_at = NOW(),
         cognium_job_id = NULL,
         analyzer_summary = $9,

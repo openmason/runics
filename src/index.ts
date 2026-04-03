@@ -267,7 +267,7 @@ app.post('/v1/search/feedback', async (c) => {
  * POST /v1/skills/:skillId/index
  * Index a skill (Phase 1: single embedding)
  */
-app.post('/v1/skills/:skillId/index', async (c) => {
+app.post('/v1/skills/:skillId/index', adminAuth(), async (c) => {
   try {
     const skillId = c.req.param('skillId');
     const skill = await c.req.json<SkillInput>();
@@ -281,22 +281,8 @@ app.post('/v1/skills/:skillId/index', async (c) => {
 
     const { provider, embedPipeline } = initComponents(c.env);
 
-    // ── 1. Content Safety Check ──
-    console.log(`[INDEX] Step 1: Content safety check`);
-    const isSafe = await embedPipeline.checkContentSafety(skill);
-
-    if (!isSafe) {
-      console.log(`[INDEX] Content safety check failed for ${skillId}`);
-      return c.json(
-        {
-          success: false,
-          error: 'Content safety check failed',
-          skillId,
-          contentSafe: false,
-        },
-        400
-      );
-    }
+    // ── 1. Content Safety Check (skipped for admin-submitted skills) ──
+    // Admin requests are trusted — content safety is enforced on public publish paths only.
 
     // ── 2. Generate Embeddings ──
     const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';

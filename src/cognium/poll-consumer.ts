@@ -149,7 +149,7 @@ async function handleCompleted(
   }
 
   await applyScanReport(env, pool, skill, findings, job, skillResult);
-  const verdict = skillResult?.verdict ?? job.summary?.verdict ?? 'unknown';
+  const verdict = skillResult?.verdict ?? 'unknown';
   const bundleInfo = job.bundle_metadata ? `, bundle=${job.bundle_metadata.bundle_download}` : '';
   console.log(`[COGNIUM-POLL] Scan report applied for skill ${skill.slug} (${findings.length} findings, verdict=${verdict}${bundleInfo})`);
 }

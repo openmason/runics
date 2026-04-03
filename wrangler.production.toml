@@ -113,7 +113,7 @@ DISABLE_CONTENT_SAFETY = "false"
 # ── Search Tuning ────────────────────────────────────────────────────────────
 CONFIDENCE_TIER1_THRESHOLD = "0.47"
 CONFIDENCE_TIER2_THRESHOLD = "0.42"
-CACHE_TTL_SECONDS = "120"
+CACHE_TTL_SECONDS = "600"
 DEFAULT_APPETITE = "balanced"
 VECTOR_WEIGHT = "0.7"
 FULLTEXT_WEIGHT = "0.3"

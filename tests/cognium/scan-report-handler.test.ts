@@ -273,7 +273,8 @@ describe('applyScanReport', () => {
     const client = mockClient();
     const pool = mockPool(client);
     const skill = makeSkill({ source: 'github' });
-    const skillResult = { trust_score: 0.74, verdict: 'TRUSTED' as const } as any;
+    // v1.8.0: trust_score is 0–100; API returns 74, we store 0.74
+    const skillResult = { trust_score: 74, verdict: 'TRUSTED' as const } as any;
 
     await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
 
@@ -298,7 +299,8 @@ describe('applyScanReport', () => {
     const client = mockClient();
     const pool = mockPool(client);
     const skill = makeSkill();
-    const skillResult = { trust_score: 1.5, verdict: 'TRUSTED' as const } as any;
+    // v1.8.0: trust_score 0–100; value > 100 should clamp to 1.0
+    const skillResult = { trust_score: 150, verdict: 'TRUSTED' as const } as any;
 
     await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
 

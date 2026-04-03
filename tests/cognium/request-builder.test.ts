@@ -18,22 +18,21 @@ function makeSkill(overrides?: Partial<SkillRow>): SkillRow {
 
 describe('buildCircleIRRequest', () => {
   describe('skill_context', () => {
-    it('should include name, description, source_registry, execution_layer', () => {
+    it('should include name, source_registry, version, and description (v1.8.0 schema)', () => {
       const skill = makeSkill();
       const req = buildCircleIRRequest(skill);
       expect(req.skill_context).toEqual({
         name: 'Test Skill',
-        description: 'A test skill for testing purposes',
         source_registry: 'github',
-        source_url: undefined,
-        execution_layer: 'mcp-remote',
+        version: '1.0.0',
+        description: 'A test skill for testing purposes',
       });
     });
 
-    it('should include source_url when available', () => {
-      const skill = makeSkill({ sourceUrl: 'https://github.com/owner/repo' });
+    it('should omit description when empty', () => {
+      const skill = makeSkill({ description: '' });
       const req = buildCircleIRRequest(skill);
-      expect(req.skill_context.source_url).toBe('https://github.com/owner/repo');
+      expect(req.skill_context.description).toBeUndefined();
     });
   });
 
@@ -44,7 +43,6 @@ describe('buildCircleIRRequest', () => {
       expect(req.options).toEqual({
         enable_sast: true,
         enable_instruction_safety: true,
-        enable_instruction_analysis: true,
         enable_capability_mismatch: true,
         enable_enrichment: true,
         enable_llm_verification: true,

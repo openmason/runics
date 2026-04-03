@@ -873,6 +873,7 @@ function parseArgs() {
   const options = {
     endpoint: 'http://localhost:8787',
     tenantId: 'eval-tenant',
+    adminKey: process.env.ADMIN_API_KEY || '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -884,6 +885,10 @@ function parseArgs() {
       case '--tenant':
       case '-t':
         options.tenantId = args[++i];
+        break;
+      case '--admin-key':
+      case '-k':
+        options.adminKey = args[++i];
         break;
       case '--help':
       case '-h':
@@ -969,14 +974,16 @@ async function insertSkillsToDatabase(skills: SkillInput[]): Promise<void> {
 
 async function indexSkill(
   endpoint: string,
-  skill: SkillInput
+  skill: SkillInput,
+  adminKey?: string
 ): Promise<{ success: boolean; error?: string; details?: any }> {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (adminKey) headers['Authorization'] = `Bearer ${adminKey}`;
+
     const response = await fetch(`${endpoint}/v1/skills/${skill.id}/index`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(skill),
     });
 
@@ -1047,7 +1054,7 @@ async function main() {
     const skill = TEST_SKILLS[i];
     process.stdout.write(`[${i + 1}/${TEST_SKILLS.length}] ${skill.name.padEnd(20)} `);
 
-    const result = await indexSkill(options.endpoint, skill);
+    const result = await indexSkill(options.endpoint, skill, options.adminKey);
 
     if (result.success) {
       console.log('✅');

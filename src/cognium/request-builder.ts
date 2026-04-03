@@ -20,16 +20,14 @@ export function buildCircleIRRequest(
 ): CircleIRSkillAnalyzeRequest {
   const skillContext: CircleIRSkillAnalyzeRequest['skill_context'] = {
     name: skill.name,
-    description: skill.description,
     source_registry: skill.source,
-    source_url: skill.sourceUrl ?? undefined,
-    execution_layer: skill.executionLayer,
+    version: skill.version,
+    description: skill.description || undefined,
   };
 
   const options: CircleIRSkillAnalyzeRequest['options'] = {
     enable_sast: true,
     enable_instruction_safety: true,
-    enable_instruction_analysis: true, // deprecated alias — remove once Circle-IR confirms new name is live
     enable_capability_mismatch: true,
     enable_enrichment: true,
     enable_llm_verification: true,

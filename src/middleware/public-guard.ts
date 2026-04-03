@@ -16,13 +16,15 @@ const PUBLIC_HOSTNAME = 'api.runics.net';
 
 // Routes allowed on the public domain (method + path prefix).
 // Everything else returns 404.
-const PUBLIC_ROUTES: Array<{ method: string; path: string; exact?: boolean }> = [
+const PUBLIC_ROUTES: Array<{ method: string; path: string; exact?: boolean; suffix?: string }> = [
   // Health
   { method: 'GET', path: '/health' },
   // Search (exact — excludes /v1/search/feedback)
   { method: 'POST', path: '/v1/search', exact: true },
   // Skill detail (read-only GET — write methods are blocked)
   { method: 'GET', path: '/v1/skills/' },
+  // Skill indexing (admin-protected via ADMIN_API_KEY, required for seeding)
+  { method: 'POST', path: '/v1/skills/', suffix: '/index' },
   // Compositions (read-only GET)
   { method: 'GET', path: '/v1/compositions/' },
   // Leaderboards
@@ -53,7 +55,11 @@ export function publicGuard() {
     const allowed = PUBLIC_ROUTES.some(
       (r) =>
         method === r.method &&
-        (r.exact ? path === r.path : path.startsWith(r.path)),
+        (r.exact
+          ? path === r.path
+          : r.suffix
+            ? path.startsWith(r.path) && path.endsWith(r.suffix)
+            : path.startsWith(r.path)),
     );
 
     if (!allowed) {

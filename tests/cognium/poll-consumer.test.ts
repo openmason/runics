@@ -182,7 +182,7 @@ describe('handleCogniumPollQueue', () => {
     expect(msg.ack).toHaveBeenCalled();
   });
 
-  it('should handle cancelled job same as failed', async () => {
+  it('should handle cancelled job same as failed (v1.12.2)', async () => {
     const pool = mockPool([]);
     const { Pool } = await import('@neondatabase/serverless');
     (Pool as any).mockReturnValue(pool);
@@ -199,7 +199,8 @@ describe('handleCogniumPollQueue', () => {
     await handleCogniumPollQueue(batch, env);
 
     const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
-    expect(markScanFailed).toHaveBeenCalled();
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('cancelled'));
+    expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
     expect(msg.ack).toHaveBeenCalled();
   });
 

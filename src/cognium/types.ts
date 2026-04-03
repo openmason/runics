@@ -28,6 +28,21 @@ export interface CircleIRAnalyzeRequest {
 
 // ─── Circle-IR Skills API Types (POST /api/analyze/skill) ───────────────────
 
+export interface LLMModelConfig {
+  model: string;
+  api_key?: string;
+  base_url?: string;
+}
+
+export interface LLMConfig {
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  enrichment_model?: LLMModelConfig;
+  verification_model?: LLMModelConfig;
+  discovery_model?: LLMModelConfig;
+}
+
 export interface CircleIRSkillAnalyzeRequest {
   // Mode A: repo URL for GitHub-sourced skills
   repo_url?: string;
@@ -39,32 +54,32 @@ export interface CircleIRSkillAnalyzeRequest {
   // Required: skill context for instruction + capability analysis
   skill_context: {
     name: string;
-    description: string;
     source_registry: string;
-    source_url?: string;
-    execution_layer: string;
+    version?: string;
+    author?: string;
+    description?: string;
   };
-  // Analysis options
+  // Analysis options (v1.8.0)
   options?: {
     enable_sast?: boolean;
     enable_instruction_safety?: boolean;
-    enable_instruction_analysis?: boolean; // deprecated alias — remove once Circle-IR confirms new name is live
     enable_capability_mismatch?: boolean;
     enable_enrichment?: boolean;
     enable_llm_verification?: boolean;
     max_files?: number;
-    max_concurrent?: number;
   };
+  llm_config?: LLMConfig;
 }
 
 export type CircleIRAnalysisPhase = 'sast' | 'instruction_safety' | 'capability_mismatch';
 
 export interface CircleIRJobStatus {
   job_id: string;
-  status: 'pending' | 'running' | 'analyzing' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'analyzing' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   current?: {
     phase: string;
+    file?: string;
     step: string;
   };
   metrics?: {
@@ -72,13 +87,19 @@ export interface CircleIRJobStatus {
     files_analyzed: number;
     files_failed: number;
     files_skipped: number;
+    llm_calls_made?: number;
+    llm_tokens_used?: number;
   };
   results?: {
     findings_found: number;
+    components_found?: number;
+    flows_extracted?: number;
+    requirements_inferred?: number;
   };
-  started_at?: string;
-  completed_at?: string;
-  summary?: CircleIRScanSummary;
+  errors?: Array<{ phase: string; error: string; timestamp: string; file?: string }>;
+  warnings?: string[];
+  started_at?: string | null;
+  completed_at?: string | null;
   bundle_metadata?: CircleIRBundleMetadata;
   files_detail?: CircleIRFileDetail[];
 }
@@ -111,28 +132,21 @@ export interface CircleIRFileDetail {
   error?: string;
 }
 
-export interface CircleIRScanSummary {
-  sast_findings: number;
-  instruction_findings: number;
-  capability_mismatches: number;
-  critical_and_high: number;
-  verdict: 'VULNERABLE' | 'SAFE';
-}
-
 export type CircleIRVerdict = 'TRUSTED' | 'REVIEW' | 'UNTRUSTED';
 
+// Response from GET /api/analyze/{job_id}/skill-result (v1.8.0)
+// trust_score is 0–100; TRUSTED ≥ 80, REVIEW 60–79, UNTRUSTED < 60
 export interface CircleIRSkillResult {
   job_id?: string;
   status?: string;
-  trust_score: number;
+  trust_score: number; // 0–100
   verdict: CircleIRVerdict;
   skill_context: {
     name: string;
-    description?: string;
     source_registry?: string;
-    source_url?: string;
-    execution_layer?: string;
     version?: string;
+    author?: string;
+    description?: string;
   };
   phase_counts: Record<CircleIRAnalysisPhase, number>;
   by_phase: Record<CircleIRAnalysisPhase, { findings: number }>;
@@ -149,7 +163,7 @@ export interface CircleIRFinding {
   confidence: number;
   verdict: 'VULNERABLE' | 'SAFE' | 'NEEDS_REVIEW';
   verification_status: 'verified' | 'failed' | 'pending' | 'skipped';
-  phase: CircleIRAnalysisPhase;
+  phase: CircleIRAnalysisPhase; // formally documented in v1.13.1 — safe to rely on
   file: string;
   line_start: number | null;
   line_end: number | null;
@@ -171,7 +185,199 @@ export interface CircleIRFinding {
     reasoning: string;
     exploitability: 'high' | 'medium' | 'low' | 'none';
     severity?: string;
+    exploit_scenario?: string | null;
   };
+}
+
+// ─── Circle-IR v1.12.2 — New Async APIs ─────────────────────────────────────
+//
+// Shared status shape for Trust / Quality / Understand / SpecDiff / Cluster jobs.
+// These APIs follow the same pattern: POST → job_id → poll status → fetch results.
+//
+
+export type AsyncJobStatusValue = 'pending' | 'analyzing' | 'completed' | 'failed' | 'cancelled';
+
+export interface AsyncJobStatus {
+  job_id: string;
+  status: AsyncJobStatusValue;
+  progress: number;
+  current?: { phase: string; file?: string; step: string };
+  started_at?: string | null;
+  completed_at?: string | null;
+  errors?: Array<{ phase: string; error: string; timestamp: string; file?: string }>;
+  warnings?: string[];
+}
+
+// ─── Trust Score API (POST /api/trust) ───────────────────────────────────────
+// 27-pass security analysis: VERIFIED (85+) PASSING (60-84) ADVISORY (40-59) FAILING (<40) BLOCKED (critical)
+
+export type TrustTier = 'VERIFIED' | 'PASSING' | 'ADVISORY' | 'FAILING' | 'BLOCKED';
+
+// Priority: path > repo_url > bundle_url > files. bundle_url falls back to files on download failure.
+// skill_context is stored as job metadata (does not yet influence pass scoring — v1.13.1).
+export interface TrustRequest {
+  path?: string;
+  repo_url?: string;   // v1.13.1 — clones and analyzes
+  branch?: string;
+  bundle_url?: string; // v1.13.1 — downloads and extracts zip
+  files?: Record<string, string>;
+  skill_context?: {    // v1.13.1 — metadata stored on job
+    name?: string;
+    source_registry?: string;
+    version?: string;
+    author?: string;
+    description?: string;
+  };
+  disabledPasses?: string[];
+  trustDisabledPasses?: string[];
+}
+
+export interface TrustPassResult {
+  name: string;
+  score: number; // 0–100
+  findings: Array<{ severity: string; message: string; file?: string; line?: number }>;
+  duration_ms: number;
+}
+
+export interface TrustResultResponse {
+  job_id: string;
+  status: string;
+  score: number; // 0–100
+  tier: TrustTier;
+  passResults: TrustPassResult[];
+  categoryScores: Record<string, number>;
+  artifacts: Record<string, unknown>;
+  duration_ms: number;
+}
+
+// ─── Quality Score API (POST /api/quality) ───────────────────────────────────
+// 5 passes: EXCELLENT (85+) GOOD (70-84) FAIR (50-69) POOR (<50)
+
+export type QualityTier = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
+
+export interface QualityRequest {
+  path?: string;
+  files?: Record<string, string>;
+}
+
+export interface QualityPassResult {
+  name: string; // code-complexity | test-coverage | documentation-coverage | maintainability-index | performance-patterns
+  score: number; // 0–100
+  findings: Array<{ severity: string; message: string }>;
+}
+
+export interface QualityResultResponse {
+  job_id: string;
+  status: string;
+  score: number; // 0–100
+  tier: QualityTier;
+  passResults: QualityPassResult[];
+  duration_ms: number;
+}
+
+// ─── Semantic Understanding API (POST /api/understand) ───────────────────────
+
+export interface UnderstandRequest {
+  path?: string;
+  files?: Record<string, string>;
+}
+
+export interface UnderstandResultResponse {
+  job_id: string;
+  status: string;
+  modules: Array<{
+    file: string;
+    role: string; // controller | service | model | utility | ...
+    summary: string;
+    exports: string[];
+    dependencies: string[];
+  }>;
+  functions: Array<{
+    name: string;
+    file: string;
+    effects: string[]; // network | filesystem | database | logging | ...
+    summary: string;
+  }>;
+  securitySurface: {
+    sources: string[];
+    sinks: string[];
+    sensitive: string[];
+  };
+  duration_ms: number;
+}
+
+// ─── Spec-Gap Analysis API (POST /api/spec-diff) ─────────────────────────────
+
+export interface SpecDiffRequest {
+  path?: string;
+  specDir?: string;
+  files?: Record<string, string>;
+}
+
+export interface SpecDiffResultResponse {
+  job_id: string;
+  status: string;
+  alignmentScore: number; // 0–100
+  gaps: Array<{
+    type: 'uncovered_requirement' | 'extra_code' | 'mismatch';
+    description: string;
+    file?: string;
+    severity: 'high' | 'medium' | 'low';
+  }>;
+  duration_ms: number;
+}
+
+// ─── Component Clustering API (POST /api/cluster) ────────────────────────────
+
+export interface ClusterRequest {
+  path?: string;
+  files?: Record<string, string>;
+  llm?: boolean;
+}
+
+export interface ClusterResultResponse {
+  job_id: string;
+  status: string;
+  components: Array<{ name: string; files: string[]; role: string }>;
+  clusters: Array<{ name: string; components: string[]; description: string }>;
+  features: Array<{ name: string; description: string; components: string[] }>;
+  duration_ms: number;
+}
+
+// ─── Dead Code Detection (POST /api/dead-code — synchronous) ─────────────────
+
+export interface DeadCodeRequest {
+  code: string;
+  filename: string;
+  language?: string;
+}
+
+export interface DeadCodeResponse {
+  deadFunctions: Array<{ name: string; file: string; line: number; reason: string }>;
+  unusedImports: Array<{ name: string; file: string; line: number }>;
+  unusedVariables: Array<{ name: string; file: string; line: number }>;
+  summary: { total_dead: number; files_analyzed: number };
+}
+
+// ─── Persisted Findings API (GET /api/findings) ──────────────────────────────
+
+export type PersistedFindingStatus = 'open' | 'confirmed' | 'dismissed' | 'fixed';
+
+export interface FindingsListResponse {
+  findings: CircleIRFinding[];
+  pagination: {
+    total: number;
+    limit: number;
+    offset: number;
+    has_more: boolean;
+  };
+}
+
+export interface FindingsStatsResponse {
+  total: number;
+  by_severity: Record<string, number>;
+  by_cwe: Record<string, number>;
+  by_status: Record<string, number>;
 }
 
 // ─── Runics Internal Types ───────────────────────────────────────────────────
