@@ -87,6 +87,7 @@ RERANKER_ENABLED = "true"             # Cross-encoder reranking (+4.6% R@1 lift,
 RERANKER_TOP_N = "20"                 # Number of candidates to rerank
 
 # Cognium (Circle-IR integration)
+COGNIUM_ENABLED = "false"             # Hard kill switch — set to "true" to resume cron + queue scanning
 COGNIUM_URL = "https://circle.cognium.net"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"

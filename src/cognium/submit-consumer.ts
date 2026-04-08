@@ -17,6 +17,14 @@ export async function handleCogniumSubmitQueue(
   batch: MessageBatch<CogniumSubmitMessage>,
   env: Env,
 ): Promise<void> {
+  // Hard kill switch — when COGNIUM_ENABLED=false, ack all messages and exit
+  // without contacting Circle-IR. Acking (not retrying) prevents the queue from
+  // backing up while scanning is paused.
+  if (env.COGNIUM_ENABLED === 'false') {
+    for (const msg of batch.messages) msg.ack();
+    console.log(`[COGNIUM-SUBMIT] Disabled (COGNIUM_ENABLED=false), acked ${batch.messages.length} messages`);
+    return;
+  }
   const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
 
   for (const msg of batch.messages) {

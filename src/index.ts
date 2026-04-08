@@ -2265,6 +2265,8 @@ export default {
     // Phase 2: Submit new skills for scanning (every 5 min via minute%5 guard)
     ctx.waitUntil(
       (async () => {
+        // Hard kill switch — when COGNIUM_ENABLED=false, skip all cron-driven cognium work.
+        if (env.COGNIUM_ENABLED === 'false') return;
         const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
         const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
         const apiKey = env.COGNIUM_API_KEY ?? '';

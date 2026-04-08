@@ -439,6 +439,7 @@ export interface Env {
   SYNC_GITHUB_ENABLED?: string; // default "true"
 
   // v5.0: Cognium client configuration
+  COGNIUM_ENABLED?: string;         // default "true" — set to "false" to halt all cron + queue cognium scanning
   COGNIUM_URL?: string; // default "https://circle.cognium.net"
   COGNIUM_API_KEY?: string;
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"

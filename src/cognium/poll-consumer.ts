@@ -27,6 +27,14 @@ export async function handleCogniumPollQueue(
   batch: MessageBatch<CogniumPollMessage>,
   env: Env,
 ): Promise<void> {
+  // Hard kill switch — when COGNIUM_ENABLED=false, ack all messages and exit
+  // without contacting Circle-IR. Stranded cognium_job_id entries in the DB
+  // will be cleaned up by Phase 3 GC once the cron is re-enabled.
+  if (env.COGNIUM_ENABLED === 'false') {
+    for (const msg of batch.messages) msg.ack();
+    console.log(`[COGNIUM-POLL] Disabled (COGNIUM_ENABLED=false), acked ${batch.messages.length} messages`);
+    return;
+  }
   const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
   const maxAttempts = parseInt(env.COGNIUM_MAX_POLL_ATTEMPTS ?? '12', 10);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
