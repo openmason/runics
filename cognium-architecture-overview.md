@@ -3,7 +3,7 @@
 > **Version:** 1.0 · April 2026
 > **Status:** All architectural decisions locked. Core specs complete. Runics v5.4 deployed to production.
 > **Company:** Cognium Labs
-> **Companion docs:** `cortex-specification-v2_0.md` · `runics-unified-architecture-v5_4.md` · `bombastic-specification-v2_3.md` · `cognium-server-specification-v2_1.md` · `cognium-client-specification-v2_1.md` · `cognium-specification-v2_1.md` · `forge-specification-v1_3.md` · `runics-dag-specification.md` · `api-key-middleware-specification.md`
+> **Companion docs:** `cortex-specification-v2_0.md` · `ARCHITECTURE.md` · `bombastic-specification-v2_3.md` · `cognium-server-specification-v2_1.md` · `cognium-client-specification-v2_1.md` · `cognium-specification-v2_1.md` · `forge-specification-v1_3.md` · `runics-dag-specification.md` · `api-key-middleware-specification.md`
 
 ---
 
