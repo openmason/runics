@@ -12,6 +12,7 @@
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
+workers_dev = true
 
 [observability]
 enabled = true
