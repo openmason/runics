@@ -26,11 +26,11 @@ enabled = true
 
 [[kv_namespaces]]
 binding = "SEARCH_CACHE"
-id = "a086237a2e774bf6bef964e85ac7c99d"
+id = "2e63a7085ae54de895da31048e50cf8b"
 
 [[kv_namespaces]]
 binding = "COGNIUM_JOBS"
-id = "6b83cc636bcd46e4a93d80791e30e058"
+id = "bfcb4b45618945d69d55ef3809887367"
 
 # ── Hyperdrive (Postgres Connection Pooling) ─────────────────────────────────
 
