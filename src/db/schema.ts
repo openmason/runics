@@ -140,6 +140,8 @@ export const skills = pgTable(
     runtimeEnv: text('runtime_env').notNull().default('api'),
     visibility: text('visibility').notNull().default('public'),
     environmentVariables: text('environment_variables').array(),
+    // v5.4: DAG workflow definition for composite skills
+    workflowDefinition: jsonb('workflow_definition'),
   },
   (table) => ({
     trustScoreIdx: index('idx_skills_trust_score').on(table.trustScore),

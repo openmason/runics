@@ -98,7 +98,7 @@ describe('publishSkillSchema v5.2 fields', () => {
   };
 
   it('should accept valid runtimeEnv values', () => {
-    for (const env of ['llm', 'api', 'browser', 'vm', 'local', 'device']) {
+    for (const env of ['llm', 'api', 'browser', 'vm', 'local']) {
       const result = publishSkillSchema.safeParse({ ...validBase, runtimeEnv: env });
       expect(result.success).toBe(true);
     }

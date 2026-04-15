@@ -121,7 +121,7 @@ describe('applyScanReport', () => {
 
     // Should notify
     const { triggerNotification } = await import('../../src/cognium/notification-trigger');
-    expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), 'skill-1', 'revoked', 'Content safety failure');
+    expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'skill-1' }), 'revoked', 'Content safety failure');
 
     // Check the UPDATE sets status=revoked, trust=0.0
     const updateCall = client.query.mock.calls[1];
@@ -266,7 +266,7 @@ describe('applyScanReport', () => {
     await applyScanReport(mockEnv(), pool, skill, findings, makeJob());
 
     const { triggerNotification } = await import('../../src/cognium/notification-trigger');
-    expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), 'skill-1', 'vulnerable', 'CWE-89');
+    expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'skill-1' }), 'vulnerable', 'CWE-89');
   });
 
   it('should use Circle-IR trust_score when skillResult is available', async () => {

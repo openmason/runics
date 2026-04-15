@@ -35,9 +35,11 @@ export const publishSkillSchema = z.object({
   trustBadge: z.enum(['human-verified', 'auto-distilled', 'upstream']).optional(),
   altQueries: z.array(z.string()).optional(),
   // v5.2: execution environment + visibility
-  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local', 'device']).optional(),
+  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local']).optional(),
   visibility: z.enum(['public', 'private', 'unlisted']).optional(),
   environmentVariables: z.array(z.string()).optional(),
+  // v5.4: DAG workflow definition for composite skills
+  workflowDefinition: z.record(z.unknown()).optional(),
 });
 
 export const updateSkillSchema = z.object({
@@ -50,9 +52,11 @@ export const updateSkillSchema = z.object({
   tags: z.array(z.string()).optional(),
   category: z.string().optional(),
   categories: z.array(z.string()).optional(),
-  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local', 'device']).optional(),
+  runtimeEnv: z.enum(['llm', 'api', 'browser', 'vm', 'local']).optional(),
   visibility: z.enum(['public', 'private', 'unlisted']).optional(),
   environmentVariables: z.array(z.string()).optional(),
+  // v5.4: DAG workflow definition for composite skills
+  workflowDefinition: z.record(z.unknown()).optional(),
 });
 
 // v5.0: Full attestation schema (Cognium writes directly)

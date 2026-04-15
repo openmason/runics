@@ -18,6 +18,16 @@ export interface CogniumPollMessage {
   attempt: number;
 }
 
+// v5.4: Skill lifecycle events emitted to SKILL_EVENTS queue for Cortex consumption
+export interface SkillEventMessage {
+  type: 'skill.revoked' | 'skill.vulnerable';
+  skillId: string;
+  slug: string;
+  version: string;
+  reason: string | null;
+  timestamp: string;
+}
+
 // ─── Circle-IR API Types (Legacy — single-file analyze) ─────────────────────
 
 export interface CircleIRAnalyzeRequest {

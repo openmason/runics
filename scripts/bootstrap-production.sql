@@ -2,11 +2,11 @@
 -- Bootstrap: Create the skills table on a fresh production database
 -- ══════════════════════════════════════════════════════════════════════════════
 --
--- The incremental migrations (0001–0014) expect the skills table to already
+-- The incremental migrations (0001–0015) expect the skills table to already
 -- exist with its original core columns. On staging, the broader Runics platform
 -- manages this table. For a fresh production database, we create it here.
 --
--- After running this script, run all 14 migrations in order.
+-- After running this script, run all 15 migrations in order.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 

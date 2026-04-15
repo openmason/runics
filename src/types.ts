@@ -430,6 +430,7 @@ export interface Env {
   EMBED_QUEUE: Queue;
   COGNIUM_QUEUE: Queue;
   COGNIUM_POLL_QUEUE: Queue; // v5.0: poll queue for async job flow
+  SKILL_EVENTS?: Queue;       // v5.4: skill revocation/vulnerability events for Cortex
   COGNIUM_JOBS: KVNamespace; // v5.0: job state KV namespace
   R2_BUCKET: R2Bucket;
   NEON_CONNECTION_STRING: string;

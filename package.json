@@ -30,6 +30,7 @@
   "dependencies": {
     "@hono/zod-validator": "^0.4.1",
     "@neondatabase/serverless": "^0.10.0",
+    "@runics/dag": "file:../runics-sdk/packages/dag",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.0.0",
     "nanoid": "^5.1.6",

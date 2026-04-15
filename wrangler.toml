@@ -121,6 +121,10 @@ queue = "runics-cognium-v2"
 binding = "COGNIUM_POLL_QUEUE"
 queue = "runics-cognium-poll-v2"
 
+[[queues.producers]]
+binding = "SKILL_EVENTS"
+queue = "runics-skill-events"
+
 # Queue consumers
 [[queues.consumers]]
 queue = "runics-embed"

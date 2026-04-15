@@ -105,7 +105,7 @@ export async function applyScanReport(
     }
 
     // Notification is fire-and-forget — outside transaction (non-critical)
-    await triggerNotification(env, skill.id, 'revoked', 'Content safety failure');
+    await triggerNotification(env, skill, 'revoked', 'Content safety failure');
 
     // Invalidate cache for revoked slug
     const cache = new SearchCache(env.SEARCH_CACHE, 120);
@@ -188,9 +188,9 @@ export async function applyScanReport(
 
   // Notifications are fire-and-forget — outside transaction (non-critical)
   if (newStatus === 'revoked') {
-    await triggerNotification(env, skill.id, 'revoked', worstFinding?.cweId ?? worstFinding?.title);
+    await triggerNotification(env, skill, 'revoked', worstFinding?.cweId ?? worstFinding?.title);
   } else if (newStatus === 'vulnerable' && worstSeverity === 'HIGH') {
-    await triggerNotification(env, skill.id, 'vulnerable', worstFinding?.cweId ?? worstFinding?.title);
+    await triggerNotification(env, skill, 'vulnerable', worstFinding?.cweId ?? worstFinding?.title);
   }
 }
 

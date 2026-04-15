@@ -23,6 +23,7 @@ import {
 } from './schema';
 import type { Env, CogniumSubmitMessage } from '../types';
 import { SearchCache } from '../cache/kv-cache';
+import { validateWorkflowDefinition } from './dag-validator';
 
 export const publishRoutes = new Hono<{ Bindings: Env }>();
 
@@ -32,6 +33,13 @@ export const publishRoutes = new Hono<{ Bindings: Env }>();
 
 publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
   const input = c.req.valid('json');
+
+  // v5.4: DAG validation for composite skills
+  const dagCheck = validateWorkflowDefinition(input.executionLayer, input.workflowDefinition);
+  if (!dagCheck.valid) {
+    return c.json({ error: dagCheck.error, details: dagCheck.details }, 400);
+  }
+
   const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
 
   try {
@@ -44,10 +52,11 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         skill_type, composition_skill_ids, forked_from, forked_by,
         fork_changes, human_distilled_by, human_distilled_at,
         trust_badge, verification_tier, run_count,
-        runtime_env, visibility, environment_variables
+        runtime_env, visibility, environment_variables,
+        workflow_definition
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
                 'published',NOW(),$18,$19,$20,$21,$22,$23,$24,$25,'unverified',0,
-                $26,$27,$28)
+                $26,$27,$28,$29)
       RETURNING id, slug, version`,
       [
         input.name,
@@ -80,6 +89,8 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         input.runtimeEnv ?? 'api',
         input.visibility ?? 'public',
         input.environmentVariables ?? null,
+        // v5.4 fields
+        input.workflowDefinition ? JSON.stringify(input.workflowDefinition) : null,
       ]
     );
 
@@ -141,7 +152,7 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
   try {
     // v5.2: Only draft skills are editable — fork to modify published skills
     const statusCheck = await pool.query(
-      `SELECT status FROM skills WHERE id = $1`,
+      `SELECT status, execution_layer FROM skills WHERE id = $1`,
       [skillId]
     );
     if (statusCheck.rows.length === 0) {
@@ -202,6 +213,19 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
     if (input.environmentVariables !== undefined) {
       setClauses.push(`environment_variables = $${paramIdx}`);
       values.push(input.environmentVariables);
+      paramIdx++;
+    }
+    if (input.workflowDefinition !== undefined) {
+      const currentExecLayer = statusCheck.rows[0].execution_layer;
+      if (currentExecLayer !== 'composite') {
+        return c.json({ error: 'workflowDefinition can only be set on composite skills' }, 400);
+      }
+      const dagCheck = validateWorkflowDefinition('composite', input.workflowDefinition);
+      if (!dagCheck.valid) {
+        return c.json({ error: dagCheck.error, details: dagCheck.details }, 400);
+      }
+      setClauses.push(`workflow_definition = $${paramIdx}`);
+      values.push(JSON.stringify(input.workflowDefinition));
       paramIdx++;
     }
 
