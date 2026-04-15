@@ -458,7 +458,7 @@ app.get('/v1/analytics/revoked-impact', async (c) => {
       pool.query(
         `SELECT count(*)::int AS cnt
          FROM search_logs
-         WHERE created_at > NOW() - INTERVAL '30 days'
+         WHERE timestamp > NOW() - INTERVAL '30 days'
            AND result_skill_ids && (SELECT array_agg(id) FROM skills WHERE status = 'revoked')`
       ).catch(() => ({ rows: [{ cnt: 0 }] })),
     ]);
@@ -492,7 +492,7 @@ app.get('/v1/analytics/vulnerable-usage', async (c) => {
       pool.query(
         `SELECT count(*)::int AS cnt
          FROM search_logs
-         WHERE created_at > NOW() - INTERVAL '30 days'
+         WHERE timestamp > NOW() - INTERVAL '30 days'
            AND result_skill_ids && (SELECT array_agg(id) FROM skills WHERE status = 'vulnerable')`
       ).catch(() => ({ rows: [{ cnt: 0 }] })),
     ]);
@@ -936,7 +936,7 @@ app.get('/v1/compositions/:id', async (c) => {
 
   try {
     const skill = await pool.query(
-      `SELECT * FROM skills WHERE id = $1 AND COALESCE(skill_type, type) IN ('auto-composite', 'human-composite', 'composition', 'pipeline')`,
+      `SELECT * FROM skills WHERE id = $1 AND skill_type IN ('auto-composite', 'human-composite', 'composition', 'pipeline')`,
       [compositionId]
     );
     if (skill.rows.length === 0) return c.json({ error: 'Composition not found' }, 404);
@@ -982,7 +982,7 @@ app.put('/v1/compositions/:id/steps', async (c) => {
 
     // Verify composition exists and is a draft
     const skill = await pool.query(
-      `SELECT status, type FROM skills WHERE id = $1`,
+      `SELECT status, skill_type FROM skills WHERE id = $1`,
       [compositionId]
     );
     if (skill.rows.length === 0) return c.json({ error: 'Composition not found' }, 404);
@@ -1706,8 +1706,8 @@ app.get('/v1/admin/scan-preview', async (c) => {
                 length(coalesce(skill_md,''))::int AS skill_md_len,
                 length(coalesce(agent_summary,''))::int AS agent_summary_len,
                 length(coalesce(changelog::text,''))::int AS changelog_len
-         FROM skills WHERE status = 'published' ${source ? `AND source = '${source.replace(/'/g, "''")}'` : ''} ORDER BY random() LIMIT 3`;
-      params = [];
+         FROM skills WHERE status = 'published' ${source ? 'AND source = $1' : ''} ORDER BY random() LIMIT 3`;
+      params = source ? [source] : [];
     }
 
     const result = await pool.query(query, params);
@@ -1832,14 +1832,17 @@ app.post('/v1/admin/backfill', async (c) => {
       : `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NULL`;
 
     const extraFilters: string[] = [];
-    if (source) extraFilters.push(`source = '${source.replace(/'/g, "''")}'`);
+    const params: any[] = [limit];
+    if (source) {
+      params.push(source);
+      extraFilters.push(`source = $${params.length}`);
+    }
     if (content === 'instructions') extraFilters.push(`(skill_md IS NOT NULL AND length(skill_md) > 100)`);
     if (content === 'repo') extraFilters.push(`(source = 'github' OR repository_url IS NOT NULL)`);
     if (content === 'metadata') extraFilters.push(`skill_md IS NULL AND schema_json IS NULL AND source != 'github' AND repository_url IS NULL`);
     const whereClause = extraFilters.length > 0
       ? `${baseWhere} AND ${extraFilters.join(' AND ')}`
       : baseWhere;
-    const params = [limit];
 
     const result = await pool.query(
       `SELECT id, slug, version, name, description, source, status,
