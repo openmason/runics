@@ -40,7 +40,7 @@ See ARCHITECTURE.md for the full tree. Key directories:
 - src/queues/        — Queue consumers (embed)
 - src/monitoring/    — Search logger, quality tracker, perf monitor
 - src/cache/         — KV cache
-- src/db/            — Drizzle schema + SQL migrations (0001-0010)
+- src/db/            — Drizzle schema + SQL migrations (0001-0015)
 - src/eval/          — Eval suite (fixtures, runner, metrics)
 - src/resilience/    — Circuit breaker
 
