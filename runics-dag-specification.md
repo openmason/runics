@@ -4,7 +4,7 @@
 > **Package:** `@runics/dag`
 > **Status:** Implemented. Schema + validator published as `@runics/dag`. Integrated into Runics v5.4 publish API (migration 0015, DAG validation on composite skills). Deployed to staging + production (April 2026). Core dependency for Cortex v2.0.
 > **Company:** Cognium Labs
-> **Companion docs:** `cognium-architecture-overview.md` · `cortex-specification-v2_0.md` · `ARCHITECTURE.md`
+> **Companion docs:** `ARCHITECTURE.md` · `cortex-specification-v2_0.md`
 
 ---
 

@@ -4,7 +4,7 @@
 > **Status:** New specification. P0 — blocking partner launch.
 > **Company:** Cognium Labs
 > **Scope:** Shared authentication and authorization middleware across Cognium, Runics, and Cortex API surfaces.
-> **Companion docs:** `cognium-architecture-overview.md`
+> **Companion docs:** `ARCHITECTURE.md`
 
 ---
 
