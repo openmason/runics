@@ -87,6 +87,7 @@ Query params: `type`, `category`, `ecosystem`, `limit` (1–100, default 20), `o
 ## Links
 
 - [Home](https://runics.net/)
+- [Featured skills](https://runics.net/#featured)
 - [FAQ](https://runics.net/#faq)
 - [Features](https://runics.net/#features)
 - [API health](https://api.runics.net/health)
