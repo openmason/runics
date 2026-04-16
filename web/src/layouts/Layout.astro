@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css'
+import interLatinWoff2 from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url'
 
 interface Props {
   title?: string
@@ -97,6 +98,9 @@ const softwareAppJsonLd = {
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+
+    <!-- Preload LCP font (hero h1 uses Inter latin) -->
+    <link rel="preload" as="font" type="font/woff2" href={interLatinWoff2} crossorigin fetchpriority="high" />
 
     <!-- API preconnect (site calls api.runics.net on search) -->
     <link rel="preconnect" href="https://api.runics.net" />
