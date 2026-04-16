@@ -458,6 +458,39 @@ const faqJsonLd = {
       return 'text-red-400';
     }
 
+    function confidenceClass(c: string): string {
+      if (c === 'high') return 'bg-accent-glow border-accent/30 text-accent';
+      if (c === 'medium') return 'bg-yellow-400/10 border-yellow-400/30 text-yellow-400';
+      if (c === 'low_enriched') return 'bg-orange-400/10 border-orange-400/30 text-orange-400';
+      return 'bg-bg-elevated border-border-subtle text-text-muted';
+    }
+
+    function latencyClass(ms: number): string {
+      if (ms < 100) return 'text-green-400';
+      if (ms < 300) return 'text-yellow-400';
+      return 'text-orange-400';
+    }
+
+    function tierLabel(tier: number): string {
+      if (tier === 1) return 'Vector';
+      if (tier === 2) return 'Reranked';
+      if (tier === 3) return 'LLM';
+      return `Tier ${tier}`;
+    }
+
+    function tierDots(tier: number): string {
+      const colors = ['bg-accent', 'bg-yellow-400', 'bg-orange-400'];
+      return [1, 2, 3].map(i => {
+        const active = i <= tier;
+        const cls = active ? colors[i - 1] : 'bg-border';
+        return `<span class="inline-block w-1.5 h-1.5 rounded-full ${cls}"></span>`;
+      }).join('');
+    }
+
+    function escapeHtml(s: string): string {
+      return String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string));
+    }
+
     function renderResults(data: any) {
       if (!data.results || data.results.length === 0) {
         resultsEl.innerHTML = `<div class="p-4 rounded-xl border border-border-subtle bg-bg-card text-sm text-text-muted text-center">No results found. Try a different query.</div>`;
@@ -465,28 +498,57 @@ const faqJsonLd = {
         return;
       }
 
-      const html = data.results.map((r: any) => `
-        <div class="p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all cursor-default">
-          <div class="flex items-start justify-between gap-3">
-            <div class="min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-semibold text-text-primary text-sm truncate">${r.name || r.slug}</span>
-                <span class="text-xs px-1.5 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono">${r.source || 'unknown'}</span>
+      const meta = data.meta || {};
+      const tier = meta.tier || 1;
+      const latency = meta.latencyMs || 0;
+      const confidence = data.confidence || 'unknown';
+
+      const metaPanel = `
+        <div class="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-border-subtle bg-bg-card mb-2 text-xs" aria-label="Search routing metadata">
+          <span class="inline-flex items-center gap-1.5 font-mono text-text-secondary" title="Routing tier ${tier}: ${tierLabel(tier)}">
+            <span class="inline-flex items-center gap-1" aria-hidden="true">${tierDots(tier)}</span>
+            <span class="text-[10px] uppercase tracking-wide">${tierLabel(tier)}</span>
+          </span>
+          <span class="inline-block w-px h-3 bg-border-subtle" aria-hidden="true"></span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded border font-mono ${confidenceClass(confidence)}" title="Confidence: ${escapeHtml(confidence)}">
+            ${escapeHtml(confidence)}
+          </span>
+          <span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated font-mono ${latencyClass(latency)}" title="Latency">
+            ${latency}ms
+          </span>
+          ${meta.reranked ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="Cross-encoder reranking applied">reranked</span>' : ''}
+          ${meta.llmInvoked ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="LLM deep search invoked">LLM</span>' : ''}
+          ${meta.cacheHit ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="Served from cache">cached</span>' : ''}
+          <span class="ml-auto text-text-muted">${data.results.length} result${data.results.length === 1 ? '' : 's'}</span>
+        </div>
+      `;
+
+      const html = data.results.map((r: any) => {
+        const name = escapeHtml(r.name || r.slug || 'unnamed');
+        const summary = escapeHtml(r.agentSummary || '');
+        const matchSrc = r.matchSource ? escapeHtml(String(r.matchSource).replace(/_/g, ' ')) : null;
+        const tier = escapeHtml(r.verificationTier || 'unverified');
+        const trustPct = ((r.trustScore || 0) * 100).toFixed(0);
+        return `
+          <div class="p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all cursor-default">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-semibold text-text-primary text-sm truncate">${name}</span>
+                  ${matchSrc ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono uppercase tracking-wide" title="Matched on: ${matchSrc}">${matchSrc}</span>` : ''}
+                </div>
+                ${summary ? `<p class="mt-1 text-xs text-text-secondary line-clamp-2">${summary}</p>` : ''}
               </div>
-              <p class="mt-1 text-xs text-text-secondary line-clamp-2">${r.description || r.agentSummary || ''}</p>
-            </div>
-            <div class="shrink-0 text-right">
-              <div class="text-xs font-mono ${trustColor(r.trustScore || 0)}">${((r.trustScore || 0) * 100).toFixed(0)}%</div>
-              <div class="text-[10px] text-text-muted mt-0.5">${r.verificationTier || 'unverified'}</div>
+              <div class="shrink-0 text-right">
+                <div class="text-xs font-mono ${trustColor(r.trustScore || 0)}">${trustPct}%</div>
+                <div class="text-[10px] text-text-muted mt-0.5">${tier}</div>
+              </div>
             </div>
           </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
 
-      resultsEl.innerHTML = `<div class="flex flex-col gap-2">${html}</div>
-        <div class="mt-2 text-center text-xs text-text-muted">
-          ${data.results.length} results &middot; ${data.confidence || 'unknown'} confidence &middot; tier ${data.meta?.tier || '?'} &middot; ${data.meta?.latencyMs || '?'}ms
-        </div>`;
+      resultsEl.innerHTML = `${metaPanel}<div class="flex flex-col gap-2">${html}</div>`;
       resultsEl.classList.remove('hidden');
     }
   </script>
