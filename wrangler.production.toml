@@ -13,6 +13,7 @@
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
+account_id = "bb8e02ea0ca7c225d2fb62d24a9940be"  # cognium account (has runics.net zone)
 
 # Custom domain — api.runics.net DNS proxied through Cloudflare
 routes = [
@@ -26,17 +27,17 @@ enabled = true
 
 [[kv_namespaces]]
 binding = "SEARCH_CACHE"
-id = "2e63a7085ae54de895da31048e50cf8b"
+id = "a086237a2e774bf6bef964e85ac7c99d"  # cognium account
 
 [[kv_namespaces]]
 binding = "COGNIUM_JOBS"
-id = "bfcb4b45618945d69d55ef3809887367"
+id = "6b83cc636bcd46e4a93d80791e30e058"  # cognium account
 
 # ── Hyperdrive (Postgres Connection Pooling) ─────────────────────────────────
 
 [[hyperdrive]]
 binding = "HYPERDRIVE"
-id = "6ddcb1d1e5a5423fb72bfe42e67d9193"
+id = "88fe050882fc46839624062eac474d79"  # cognium account: runics-production
 
 # ── Workers AI ───────────────────────────────────────────────────────────────
 
