@@ -2,6 +2,12 @@
 
 Semantic skill registry search service for the Runics platform.
 
+## Status
+
+v5.4 spec. 526 tests, 57 endpoints, 15 migrations. Deployed to staging + production (April 2026).
+v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
+Known SDK issues documented in ARCHITECTURE.md §17 Known Issues table.
+
 ## Architecture
 
 Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
@@ -46,12 +52,16 @@ See ARCHITECTURE.md for the full tree. Key directories:
 
 ## Commands
 
-npm run dev        — wrangler dev (local)
-npm run deploy     — wrangler deploy
-npm run db:migrate — run drizzle migrations
-npm run eval       — run eval suite against live endpoint
-npm run typecheck  — tsc --noEmit
-npm run test:run   — run vitest (single run, no watch)
+npm run dev               — wrangler dev (local)
+npm run deploy:staging    — wrangler deploy (staging)
+npm run deploy:production — wrangler deploy -c wrangler.production.toml
+npm run db:migrate        — run drizzle migrations
+npm run eval              — run eval suite against live endpoint
+npm run typecheck         — tsc --noEmit
+npm run test:run          — run vitest (single run, no watch)
+npm run smoke:production  — smoke test against api.runics.net
+npm run smoke:staging     — smoke test against staging
+npm run perf              — latency benchmark with SLOs
 
 ## Testing
 
