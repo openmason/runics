@@ -1,24 +1,9 @@
 # Runics — https://runics.net
+# Semantic skill registry for AI agents. Indexing is welcome — the whole point
+# of the site is that agents and their tooling can discover skills here.
+
 User-agent: *
-Allow: /
-
-# Explicitly allow well-known AI crawlers (set policy per your preference)
-User-agent: GPTBot
-Allow: /
-
-User-agent: ClaudeBot
-Allow: /
-
-User-agent: Claude-Web
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Google-Extended
-Allow: /
-
-User-agent: CCBot
+Content-Signal: search=yes,ai-input=yes,ai-train=yes
 Allow: /
 
 Sitemap: https://runics.net/sitemap.xml
