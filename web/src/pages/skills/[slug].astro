@@ -94,32 +94,113 @@ function formatDate(iso: string | null): string | null {
   }
 }
 
+// Convert a license string (SPDX id preferred) to the canonical SPDX URL when it
+// looks like an identifier; otherwise return as-is so the raw text still surfaces.
+function licenseToUrl(license: string | null): string | undefined {
+  if (!license) return undefined
+  const trimmed = license.trim()
+  if (!trimmed) return undefined
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (/^[A-Za-z0-9.+-]+$/.test(trimmed)) return `https://spdx.org/licenses/${trimmed}.html`
+  return trimmed
+}
+
+type InteractionCounter = {
+  '@type': 'InteractionCounter'
+  interactionType: string
+  userInteractionCount: number
+}
+
+function buildInteractions(s: SkillDetail): InteractionCounter[] {
+  const out: InteractionCounter[] = []
+  if ((s.agentInvocationCount || 0) > 0) {
+    out.push({
+      '@type': 'InteractionCounter',
+      interactionType: 'https://schema.org/UseAction',
+      userInteractionCount: s.agentInvocationCount!,
+    })
+  }
+  if ((s.humanStarCount || 0) > 0) {
+    out.push({
+      '@type': 'InteractionCounter',
+      interactionType: 'https://schema.org/LikeAction',
+      userInteractionCount: s.humanStarCount!,
+    })
+  }
+  if ((s.humanForkCount || 0) > 0) {
+    out.push({
+      '@type': 'InteractionCounter',
+      interactionType: 'https://schema.org/ShareAction',
+      userInteractionCount: s.humanForkCount!,
+    })
+  }
+  return out
+}
+
+function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out = {} as Record<string, unknown>
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined && v !== null && v !== '') out[k] = v
+  }
+  return out as T
+}
+
 const softwareJsonLd = skill
-  ? {
-      '@context': 'https://schema.org',
+  ? stripUndefined({
       '@type': 'SoftwareApplication',
+      '@id': canonical,
       name: skill.name,
       description: skill.description || skill.agentSummary || undefined,
       applicationCategory: 'DeveloperApplication',
+      applicationSubCategory: skill.category || undefined,
       operatingSystem: 'Any',
       url: canonical,
+      sameAs: skill.sourceUrl || undefined,
       softwareVersion: skill.version || undefined,
-      author: skill.source
-        ? { '@type': 'Organization', name: skill.source }
-        : undefined,
+      datePublished: skill.publishedAt || undefined,
+      dateModified: skill.updatedAt || undefined,
+      author: skill.source ? { '@type': 'Organization', name: skill.source } : undefined,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-    }
+      downloadUrl: skill.sourceUrl || undefined,
+      license: licenseToUrl(skill.license),
+      keywords: skill.tags && skill.tags.length > 0 ? skill.tags.join(', ') : undefined,
+      isAccessibleForFree: true,
+      interactionStatistic: (() => {
+        const i = buildInteractions(skill)
+        return i.length > 0 ? i : undefined
+      })(),
+    })
+  : null
+
+const sourceCodeJsonLd = skill && skill.sourceUrl
+  ? stripUndefined({
+      '@type': 'SoftwareSourceCode',
+      '@id': `${canonical}#source`,
+      name: skill.name,
+      codeRepository: skill.sourceUrl,
+      programmingLanguage: skill.language || undefined,
+      license: licenseToUrl(skill.license),
+      dateModified: skill.updatedAt || undefined,
+      author: skill.source ? { '@type': 'Organization', name: skill.source } : undefined,
+      isPartOf: { '@id': canonical },
+    })
   : null
 
 const breadcrumbJsonLd = skill
   ? {
-      '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
       itemListElement: [
         { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://runics.net/' },
         { '@type': 'ListItem', position: 2, name: 'Skills', item: 'https://runics.net/#featured' },
         { '@type': 'ListItem', position: 3, name: skill.name, item: canonical },
       ],
+    }
+  : null
+
+const graphJsonLd = skill
+  ? {
+      '@context': 'https://schema.org',
+      '@graph': [softwareJsonLd, sourceCodeJsonLd, breadcrumbJsonLd].filter(Boolean),
     }
   : null
 
@@ -307,6 +388,5 @@ const description = skill?.description || skill?.agentSummary || ''
     )}
   </main>
 
-  {softwareJsonLd && <script type="application/ld+json" set:html={JSON.stringify(softwareJsonLd)} />}
-  {breadcrumbJsonLd && <script type="application/ld+json" set:html={JSON.stringify(breadcrumbJsonLd)} />}
+  {graphJsonLd && <script type="application/ld+json" set:html={JSON.stringify(graphJsonLd)} />}
 </Layout>
