@@ -1920,13 +1920,36 @@ Backend is ~95% of the v5.4 spec. 526 tests passing across 35 files. 57 HTTP end
 
 | Area | Issue | Severity |
 |---|---|---|
-| SDK: deleteSkill | Response shape mismatch (`{id, status}` vs SDK expects `{success, skillId}`) | Critical |
-| SDK: indexSkill | Sends `skillId` field but API expects `id` — always fails | Critical |
-| SDK: getComposition | Zod parses `type` but API returns `skill_type` — always fails | Critical |
-| SDK: analytics | Sends `startDate/endDate` but API expects `hours` param — all broken | Mismatch |
-| SDK: getAuthorSkills | Zod expects `type` but API returns `skillType` — always fails | Mismatch |
+| SDK: deleteSkill | Response typed as `{id, status}` — fixed in runics-sdk `bb55aa6` | Fixed |
+| SDK: indexSkill | Accepts full SkillInput with `id` field, response shape matches API — fixed in runics-sdk `bb55aa6` | Fixed |
+| SDK: getComposition | `CompositionDetailSchema` uses `skill_type` with full enum and `.passthrough()` — fixed in runics-sdk `bb55aa6` | Fixed |
+| SDK: analytics | All six methods accept `hours` instead of `startDate/endDate` — fixed in runics-sdk `bb55aa6` | Fixed |
+| SDK: getAuthorSkills | `AuthorSkillsResponseSchema` uses `skillType` — fixed in runics-sdk `bb55aa6` | Fixed |
 | Spec: cognium_scanned | Legacy boolean column still referenced in some code paths; actual code uses `cognium_scanned_at` | Stale |
 | Spec: v5.3 features | pull, export, portable, API keys — zero implementation (moved to §25 Roadmap) | Deferred |
+
+### Production Eval Baseline (2026-04-16)
+
+Run against `https://api.runics.net/v1/search` with `tenantId=eval-tenant` (87 fixtures, 40 seeded skills). Run ID `eval-1776324167645-vfjby9z`.
+
+| Metric | Value |
+|---|---|
+| Recall@1 | 20.7% |
+| Recall@5 | 32.2% |
+| MRR | 0.249 |
+| Tier 1 share | 46% (40/87) |
+| Tier 2 share | 54% (47/87) |
+| Tier 3 share | 0% |
+| Tier 1 accuracy @ rank 1 | 35.0% |
+| Tier 2 accuracy @ rank 1 | 8.5% |
+| Tier 1 latency p50 / p95 | 877ms / 1179ms |
+| Tier 2 latency p50 / p95 | 3070ms / 4162ms |
+| LLM fallback lift (Tier 2) | +21.3% |
+
+By pattern: composition 50.0%, alternate 42.9%, direct 30.3%, problem 25.0%, business 21.4%.
+By match source: `alt_query_0` is the strongest (31% of queries, 33% R@1); `alt_query_3` and `alt_query_4` also lift R@1 to 25-31%; `alt_query_1` and `alt_query_2` underperform (6% R@1); `agent_summary` is rarely selected (1 query, 0% R@1).
+
+**Interpretation:** recall is below the 50% pass threshold and Tier 2 latency is well above the p50<60ms spec goal. Most failures route through Tier 2 without matching; the LLM rerank lifts ~21% of those. Next steps: improve alt-query generation (investigate why `alt_query_1/2` are weak), tune confidence gates to route more to Tier 1, and investigate why `agent_summary` is so rarely the winning source. Latency is dominated by cold Workers AI embed + pgvector lookup; the 60ms spec target only applies to cache-hit paths.
 
 ### P0 Fixes — Before Any Public Exposure
 
@@ -1949,7 +1972,7 @@ Backend is ~95% of the v5.4 spec. 526 tests passing across 35 files. 57 HTTP end
 
 - [x] P0 fixes (cache invalidation, search result fields, share_url) *(done — 008e372)*
 - [x] P1 fixes (status transitions, public read-only router) *(done — 008e372)*
-- [ ] CORS for runics.net origin
+- [x] CORS for runics.net origin — wildcard `*` serving correctly in production (verified via `OPTIONS` preflight at `api.runics.net`, returns 204 with `access-control-allow-origin: *` and full method list)
 - [ ] Verify API latency: p50 < 60ms, p99 < 500ms under load
 
 #### Data Import & Validation (3-5 days, parallel with UI)
