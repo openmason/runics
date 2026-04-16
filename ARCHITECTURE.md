@@ -7,8 +7,8 @@
 > **Status:** Backend ~95% complete (526 tests, 57 endpoints, 15 migrations). Deployed to staging + production (April 2026). P0/P1 fixes done. Production infra provisioned. Step 1 critical path: web UI + data import.
 > **v5.0 changes:** Status lifecycle (vulnerable/revoked/degraded), version ranking by trust×usage, Circle-IR async scanning, composite trust formula, human-distilled source.
 > **v5.1 changes:** ControlCenter renamed to ControlDeck (controldeck.dev). Product appetite defaults documented inline. Cortex API session config drives all search filter parameters — Runics does not set product defaults independently. Company: Cognium Labs.
-> **v5.2 changes:** `runtime_env` column added to skills table — declares the execution environment a skill requires (`llm`, `api`, `browser`, `vm`, `local`, `device`). `visibility` column added (`public`, `private`, `unlisted`). `PUT /v1/skills/:id` expanded to allow content editing on draft skills (skill_md, description, schema_json, tags, categories, name). `share_url` domain updated to runics.net. SearchFilters extended. Companion doc: `runics-app-specification.md`.
-> **v5.3 changes:** Local agent support. `portable` derived flag on skills (can this skill run outside cloud infrastructure?). `GET /v1/skills/:slug/pull` for downloading full skill content. `GET /v1/catalog/export` for offline skill catalog snapshots. Invocation reporting accepts `source` field (`cortex` vs `local`). API key types (`cortex`, `agent`, `cli`, `ci`). SearchFilters extended with `portable` filter. Cortex Protocol spec referenced as companion doc.
+> **v5.2 changes:** `runtime_env` column added to skills table — declares the execution environment a skill requires (`llm`, `api`, `browser`, `vm`, `local`). `visibility` column added (`public`, `private`, `unlisted`). `PUT /v1/skills/:id` expanded to allow content editing on draft skills (skill_md, description, schema_json, tags, categories, name). `share_url` domain updated to runics.net. SearchFilters extended. Companion doc: `runics-app-specification.md`.
+> **v5.3 changes [Spec — not yet implemented]:** Local agent support. `portable` derived flag on skills (can this skill run outside cloud infrastructure?). `GET /v1/skills/:slug/pull` for downloading full skill content. `GET /v1/catalog/export` for offline skill catalog snapshots. Invocation reporting accepts `source` field (`cortex` vs `local`). API key types (`cortex`, `agent`, `cli`, `ci`). SearchFilters extended with `portable` filter. Cortex Protocol spec referenced as companion doc.
 > **v5.4 changes:** `workflow_definition` JSONB column added to skills table for DAG-based compositions (uses @runics/dag schema). `runtime_env: device` removed (Thingz out of scope). Skill revocation/modification event system added — Runics emits events on skill status changes, Cortex receives and forwards to products. Cognium relationship clarified: Cognium is exclusively a Runics ingestion-time dependency, never called at runtime by Cortex. Companion doc: `runics-dag-specification.md` · `api-key-middleware-specification.md`.
 
 ---
@@ -276,7 +276,7 @@ WITH BOTH LAYERS (Layer A missed, Layer B rescues):
 | Tier | Condition | Latency | ~% | Behavior |
 |---|---|---|---|---|
 | **Tier 1: High** | Top score > threshold, clear gap | ~50ms | ~70% | Return immediately. $0 LLM cost. |
-| **Tier 2: Medium** | Score in middle band | ~50ms initial | ~18% | Return results, stream LLM enrichment async. |
+| **Tier 2: Medium** | Score in middle band | ~80ms | ~18% | Rerank with cross-encoder, return inline. No LLM call. |
 | **Tier 3: Low** | Score below threshold | 500–1000ms | ~9% | Full LLM deep search. |
 | **No match** | Tier 3 still poor | 500–1000ms | ~3% | Return generation hints. |
 
@@ -454,7 +454,7 @@ CREATE TABLE IF NOT EXISTS skills (
   verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   scan_coverage TEXT
-    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only', 'code-full', 'code-partial', 'instructions-only', 'metadata-only')),
   trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
   cognium_scanned_at TIMESTAMPTZ,
@@ -883,7 +883,7 @@ ALTER TABLE skills
   ADD COLUMN IF NOT EXISTS verification_tier TEXT DEFAULT 'unverified'
     CHECK (verification_tier IN ('unverified', 'scanned', 'verified', 'certified')),
   ADD COLUMN IF NOT EXISTS scan_coverage TEXT
-    CHECK (scan_coverage IN ('full', 'partial', 'text-only')),
+    CHECK (scan_coverage IN ('full', 'partial', 'text-only', 'code-full', 'code-partial', 'instructions-only', 'metadata-only')),
   ADD COLUMN IF NOT EXISTS trust_badge TEXT
     CHECK (trust_badge IN ('human-verified', 'auto-distilled', 'upstream', NULL)),
   ADD COLUMN IF NOT EXISTS cognium_findings JSONB,
@@ -1374,115 +1374,6 @@ app.post('/v1/skills/:id/publish', async (c) => {
 });
 ```
 
-### GET /v1/skills/:slug/pull — Download Skill for Local Use (v5.3)
-
-Returns full skill content for local agents to embed in their own context. The `npm install` equivalent for skills.
-
-```typescript
-app.get('/v1/skills/:slug/pull', async (c) => {
-  const slug = c.req.param('slug');
-  const version = c.req.query('version');
-
-  const skill = version
-    ? await db.query.skills.findFirst({ where: and(eq(skills.slug, slug), eq(skills.version, version)) })
-    : await db.query.skills.findFirst({
-        where: eq(skills.slug, slug),
-        orderBy: [desc(skills.trustScore)],  // best trust version
-      });
-
-  if (!skill) return c.json({ error: 'not found' }, 404);
-  if (skill.visibility === 'private') return c.json({ error: 'private skill' }, 403);
-
-  return c.json({
-    slug: skill.slug,
-    version: skill.version,
-    name: skill.name,
-    description: skill.description,
-    skillMd: skill.skillMd,
-    schemaJson: skill.schemaJson,
-    executionLayer: skill.executionLayer,
-    runtimeEnv: skill.runtimeEnv,
-    portable: skill.portable,
-    trustScore: skill.trustScore,
-    verificationTier: skill.verificationTier,
-    trustBadge: skill.trustBadge,
-    status: skill.status,
-    tags: skill.tags,
-    categories: skill.categories,
-    authRequirements: skill.authRequirements,
-    capabilitiesRequired: skill.capabilitiesRequired,
-    mcpUrl: skill.mcpUrl,
-    forkedFrom: skill.forkedFrom,
-    source: skill.source,
-  });
-});
-```
-
-### GET /v1/catalog/export — Offline Skill Catalog Snapshot (v5.3)
-
-Returns a JSONL file of skills for offline local agent use. Filtered by portability, runtime, and trust.
-
-```typescript
-app.get('/v1/catalog/export', async (c) => {
-  const runtimeEnv = c.req.query('runtimeEnv')?.split(',');
-  const portable = c.req.query('portable') === 'true' ? true : undefined;
-  const minTrust = parseFloat(c.req.query('minTrust') ?? '0.5');
-  const format = c.req.query('format') ?? 'jsonl';  // jsonl only for now
-
-  const rows = await db.select({
-    slug: skills.slug,
-    version: skills.version,
-    name: skills.name,
-    description: skills.description,
-    agentSummary: skills.agentSummary,
-    skillMd: skills.skillMd,
-    schemaJson: skills.schemaJson,
-    executionLayer: skills.executionLayer,
-    runtimeEnv: skills.runtimeEnv,
-    portable: skills.portable,
-    trustScore: skills.trustScore,
-    tags: skills.tags,
-    categories: skills.categories,
-    mcpUrl: skills.mcpUrl,
-  })
-  .from(skills)
-  .where(and(
-    eq(skills.status, 'published'),
-    eq(skills.visibility, 'public'),
-    gte(skills.trustScore, minTrust),
-    portable !== undefined ? eq(skills.portable, portable) : undefined,
-    runtimeEnv?.length ? inArray(skills.runtimeEnv, runtimeEnv) : undefined,
-  ));
-
-  const body = rows.map(r => JSON.stringify(r)).join('\n');
-  return new Response(body, {
-    headers: {
-      'Content-Type': 'application/x-ndjson',
-      'Content-Disposition': 'attachment; filename="runics-catalog.jsonl"',
-    },
-  });
-});
-```
-
-### POST /v1/invocations — Invocation Reporting (v5.3 update)
-
-v5.3 adds `source` field to distinguish Cortex-originated invocations from local agent invocations.
-
-```typescript
-const invocationSchema = z.object({
-  invocations: z.array(z.object({
-    skillId: z.string().uuid(),
-    source: z.enum(['cortex', 'local']).default('cortex'),  // v5.3: caller origin
-    callerType: z.enum(['agent', 'human']).default('agent'),
-    compositionId: z.string().uuid().optional(),
-    durationMs: z.number().optional(),
-    succeeded: z.boolean(),
-  })),
-});
-```
-
-Local agent invocations count toward `agent_invocation_count` and version ranking but are tracked separately in `search_logs` for analytics. Leaderboard signals from local vs cortex sources are not blended — both contribute to the agent track but with `source` attribution for filtering.
-
 ### Validation Schema
 
 ```typescript
@@ -1832,7 +1723,7 @@ POST   /v1/skills/:id/publish           // publish a draft skill (v5.2)
 // ── Versions ──
 GET    /v1/skills/:slug/versions        // all versions of a skill slug
 GET    /v1/skills/:slug/:version        // specific version
-GET    /v1/skills/:slug/pull            // v5.3: full skill content for local use (skill_md, schema, trust_score)
+GET    /v1/skills/:slug/pull            // v5.3 — NOT YET IMPLEMENTED: full skill content for local use
 
 // ── Composition ──
 POST   /v1/skills/:id/fork              // fork → new version, trust resets
@@ -1857,9 +1748,8 @@ GET    /v1/skills/:id/stars
 POST   /v1/invocations                  // record skill invocations (bulk), v5.3: accepts source field
 GET    /v1/skills/:id/cooccurrence      // top skills used alongside this one
 
-// ── Catalog (v5.3) ──
-GET    /v1/catalog/export               // offline skill catalog snapshot (JSONL)
-                                        // ?runtimeEnv=llm,api&portable=true&minTrust=0.5
+// ── Catalog (v5.3 — NOT YET IMPLEMENTED) ──
+GET    /v1/catalog/export               // offline skill catalog snapshot (JSONL) — NOT YET IMPLEMENTED
 
 // ── Leaderboards ──
 GET    /v1/leaderboards/human
@@ -1885,9 +1775,17 @@ GET    /v1/analytics/tier3-patterns
 GET    /v1/analytics/revoked-impact     // v5.0
 GET    /v1/analytics/vulnerable-usage   // v5.0
 
+// ── Admin (internal) ──
+GET    /v1/admin/scan-stats             // Cognium scan statistics
+POST   /v1/admin/scan-reset             // Reset failed scans
+GET    /v1/admin/scan-preview           // Preview scannable skills
+POST   /v1/admin/backfill              // Backfill scan queue
+
 // ── Eval ──
 POST   /v1/eval/run
-GET    /v1/eval/results/:runId
+GET    /v1/eval/results                 // list all eval runs
+GET    /v1/eval/results/:runId          // single run detail
+GET    /v1/eval/compare                 // compare two runs
 
 // ── Health ──
 GET    /health
@@ -1904,7 +1802,7 @@ GET    /health
   "tags": ["rust"],
   "category": "security",
   "runtimeEnv": ["llm", "api"],          // v5.2: filter by execution environment
-  "portable": true,                       // v5.3: only skills that run locally
+  "portable": true,                       // v5.3 — NOT YET IMPLEMENTED: only skills that run locally
   "limit": 10,
   "version": "1.0.0"         // optional: pin to specific version
 }
@@ -2017,6 +1915,18 @@ Backend is ~95% of the v5.4 spec. 526 tests passing across 35 files. 57 HTTP end
 | v5.4 runtime_env: device removed | ✅ Done |
 | Production deploy (api.runics.net) | ✅ Done |
 | Staging deploy (runics.phantoms.workers.dev) | ✅ Done |
+
+### Known Issues (from v5.4 critical review)
+
+| Area | Issue | Severity |
+|---|---|---|
+| SDK: deleteSkill | Response shape mismatch (`{id, status}` vs SDK expects `{success, skillId}`) | Critical |
+| SDK: indexSkill | Sends `skillId` field but API expects `id` — always fails | Critical |
+| SDK: getComposition | Zod parses `type` but API returns `skill_type` — always fails | Critical |
+| SDK: analytics | Sends `startDate/endDate` but API expects `hours` param — all broken | Mismatch |
+| SDK: getAuthorSkills | Zod expects `type` but API returns `skillType` — always fails | Mismatch |
+| Spec: cognium_scanned | Legacy boolean column still referenced in some code paths; actual code uses `cognium_scanned_at` | Stale |
+| Spec: v5.3 features | pull, export, portable, API keys — zero implementation (moved to §25 Roadmap) | Deferred |
 
 ### P0 Fixes — Before Any Public Exposure
 
@@ -2139,7 +2049,7 @@ Depends on: Step 1 traction signal (search volume, return visitors, community fe
 |---|---|---|
 | Auth / API keys | Step 2 | Read-only launch needs no auth |
 | Fork / compose / publish UI | Step 2 | Consumption-first |
-| v5.3 portable, pull, export | Step 2 | Local agent story follows public launch |
+| v5.3 portable, pull, export | Step 2 | Local agent story follows public launch. Full spec in §25 Roadmap. |
 | GitHub sync improvements | Week 2 post-launch | ClawHub + MCP Registry is enough for launch |
 | Intelligence layer tuning | Post-launch | Thresholds already calibrated from eval (0.40/0.35) |
 | Multi-vector A/B testing | Post-launch | Already implemented, tune with real traffic data |
@@ -2275,10 +2185,11 @@ runics/
 │   │
 │   ├── publish/
 │   │   ├── handler.ts                    # POST /v1/skills, PUT trust, PATCH status
+│   │   ├── dag-validator.ts              # v5.4: DAG workflow validation (uses @runics/dag)
 │   │   └── schema.ts                     # publishSkillSchema
 │   │
 │   ├── cognium/
-│   │   ├── queue-consumer.ts             # HTTP client → Cognium Server
+│   │   ├── poll-consumer.ts              # HTTP client → Cognium Server (poll + apply)
 │   │   ├── request-builder.ts            # Skill → ScanRequest (no source/priority/composite)
 │   │   ├── scoring-policy.ts             # Runics trust formula, severity→status, tier, remediation
 │   │   ├── scan-report-handler.ts        # Apply Circle-IR findings → trust + status (in src/cognium/)
@@ -2300,11 +2211,18 @@ runics/
 │   │       ├── 0001_skill_embeddings.sql
 │   │       ├── 0002_search_logs.sql
 │   │       ├── 0003_quality_feedback.sql
-│   │       ├── 0004_authors.sql
-│   │       ├── 0005_compositions.sql
-│   │       ├── 0006_invocation_graph.sql
-│   │       ├── 0007_leaderboards.sql
-│   │       └── 0008_skill_lifecycle.sql  ← NEW (v5.0)
+│   │       ├── 0004_sync_columns.sql
+│   │       ├── 0005_skills_v4.sql
+│   │       ├── 0006_authors.sql
+│   │       ├── 0007_compositions.sql
+│   │       ├── 0008_invocation_graph.sql
+│   │       ├── 0009_leaderboards.sql
+│   │       ├── 0010_skill_lifecycle.sql         ← v5.0
+│   │       ├── 0011_cognium_job_tracking.sql    ← Cognium pipeline
+│   │       ├── 0012_scan_coverage_v2.sql        ← 7-value coverage enum + repository_url
+│   │       ├── 0013_scan_failure_reason.sql     ← scan_failure_reason column
+│   │       ├── 0014_v52_columns.sql             ← runtime_env, visibility, env vars, share_url
+│   │       └── 0015_workflow_definition.sql     ← v5.4 DAG workflow
 │   │
 │   └── eval/
 │       ├── runner.ts
@@ -2312,8 +2230,10 @@ runics/
 │       └── metrics.ts                    # + statusFilterAccuracy, versionRankingAccuracy
 │
 ├── scripts/
-│   ├── seed-eval-corpus.ts
-│   └── run-eval.ts
+│   ├── seed-eval-skills.ts              # Seed eval corpus
+│   ├── bootstrap-production.sql         # Production DB bootstrap (all 15 migrations)
+│   ├── smoke-test.ts                    # Production smoke test suite
+│   └── perf-test.ts                     # Latency benchmark with SLOs
 │
 └── tests/
     ├── providers/pgvector-provider.test.ts  # + status filter + version ranking tests
@@ -2346,7 +2266,7 @@ runics/
 
 5. **Content safety runs on ingest, not query.** Llama Guard sets `content_safety_passed = false` at ingest → excluded via WHERE filter. Interim until Circle-IR adds native content safety.
 
-6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, `quality_feedback`. It reads from `skills` but adds columns via migration 0008.
+6. **The skills table already exists.** The search service creates `skill_embeddings`, `search_logs`, `quality_feedback`. It reads from `skills` but adds columns via migration 0010 (skill lifecycle).
 
 7. **Status filter is not optional.** `revoked`, `draft`, `degraded` are always excluded. `vulnerable` exclusion depends on appetite.
 
@@ -2360,11 +2280,11 @@ runics/
 
 12. **Visibility defaults (v5.2).** Public catalog skills: `visibility = 'public'`. Forked skills: `visibility = 'private'`. Users can change visibility on their own skills only. Visibility is enforced in the search query, not just a display hint.
 
-13. **`portable` is derived, never set manually (v5.3).** Computed from `runtime_env` as a generated column. `llm` and `local` are always portable. `api` is portable if `mcp_url` is public. `browser` and `vm` are not portable (require cloud infrastructure). Local agents filter `?portable=true` to get only skills they can run.
+13. **[v5.3 — not yet implemented] `portable` is derived, never set manually.** Computed from `runtime_env` as a generated column. `llm` and `local` are always portable. `api` is portable if `mcp_url` is public. `browser` and `vm` are not portable (require cloud infrastructure). Local agents filter `?portable=true` to get only skills they can run.
 
-14. **Skill pull is the download, not the search result (v5.3).** Search returns metadata + scores. `/v1/skills/:slug/pull` returns the full `skill_md`, `schema_json`, and `auth_requirements` — everything a local agent needs to embed the skill in its own context. Private skills return 403 on pull.
+14. **[v5.3 — not yet implemented] Skill pull is the download, not the search result.** Search returns metadata + scores. `/v1/skills/:slug/pull` returns the full `skill_md`, `schema_json`, and `auth_requirements` — everything a local agent needs to embed the skill in its own context. Private skills return 403 on pull.
 
-15. **Invocation source tracking (v5.3).** The `source` field on invocations (`cortex` vs `local`) allows distinguishing cloud-originated usage from local agent usage. Both contribute to version ranking and leaderboards but can be filtered independently for analytics. Never blend blindly — local agents may have different invocation patterns.
+15. **[v5.3 — not yet implemented] Invocation source tracking.** The `source` field on invocations (`cortex` vs `local`) allows distinguishing cloud-originated usage from local agent usage. Both contribute to version ranking and leaderboards but can be filtered independently for analytics. Never blend blindly — local agents may have different invocation patterns.
 
 ### Cloudflare bindings
 
@@ -2399,6 +2319,10 @@ queue = "runics-cognium"
 [[queues.producers]]
 binding = "COGNIUM_POLL_QUEUE"
 queue = "runics-cognium-poll"
+
+[[queues.producers]]
+binding = "SKILL_EVENTS"
+queue = "runics-skill-events"           # v5.4: skill status change events for Cortex
 
 [[queues.consumers]]
 queue = "runics-embed"
@@ -2868,6 +2792,121 @@ Cortex (and any future consumers) subscribes to the `runics-skill-events` queue:
 4. Products handle per their own logic (pause, notify, auto-substitute)
 
 Runics has no knowledge of how consumers handle events. It emits and moves on.
+
+---
+
+## 25. Roadmap: v5.3 Local Agent Support
+
+> **Status:** Designed but not yet implemented. These endpoints will be built when local agent support becomes the priority (Step 2 in the build plan). The `portable` derived column, `pull` endpoint, `export` endpoint, API key types, and invocation `source` field are all spec'd here for reference.
+
+### GET /v1/skills/:slug/pull — Download Skill for Local Use
+
+Returns full skill content for local agents to embed in their own context. The `npm install` equivalent for skills.
+
+```typescript
+app.get('/v1/skills/:slug/pull', async (c) => {
+  const slug = c.req.param('slug');
+  const version = c.req.query('version');
+
+  const skill = version
+    ? await db.query.skills.findFirst({ where: and(eq(skills.slug, slug), eq(skills.version, version)) })
+    : await db.query.skills.findFirst({
+        where: eq(skills.slug, slug),
+        orderBy: [desc(skills.trustScore)],  // best trust version
+      });
+
+  if (!skill) return c.json({ error: 'not found' }, 404);
+  if (skill.visibility === 'private') return c.json({ error: 'private skill' }, 403);
+
+  return c.json({
+    slug: skill.slug,
+    version: skill.version,
+    name: skill.name,
+    description: skill.description,
+    skillMd: skill.skillMd,
+    schemaJson: skill.schemaJson,
+    executionLayer: skill.executionLayer,
+    runtimeEnv: skill.runtimeEnv,
+    portable: skill.portable,
+    trustScore: skill.trustScore,
+    verificationTier: skill.verificationTier,
+    trustBadge: skill.trustBadge,
+    status: skill.status,
+    tags: skill.tags,
+    categories: skill.categories,
+    authRequirements: skill.authRequirements,
+    capabilitiesRequired: skill.capabilitiesRequired,
+    mcpUrl: skill.mcpUrl,
+    forkedFrom: skill.forkedFrom,
+    source: skill.source,
+  });
+});
+```
+
+### GET /v1/catalog/export — Offline Skill Catalog Snapshot
+
+Returns a JSONL file of skills for offline local agent use. Filtered by portability, runtime, and trust.
+
+```typescript
+app.get('/v1/catalog/export', async (c) => {
+  const runtimeEnv = c.req.query('runtimeEnv')?.split(',');
+  const portable = c.req.query('portable') === 'true' ? true : undefined;
+  const minTrust = parseFloat(c.req.query('minTrust') ?? '0.5');
+  const format = c.req.query('format') ?? 'jsonl';  // jsonl only for now
+
+  const rows = await db.select({
+    slug: skills.slug,
+    version: skills.version,
+    name: skills.name,
+    description: skills.description,
+    agentSummary: skills.agentSummary,
+    skillMd: skills.skillMd,
+    schemaJson: skills.schemaJson,
+    executionLayer: skills.executionLayer,
+    runtimeEnv: skills.runtimeEnv,
+    portable: skills.portable,
+    trustScore: skills.trustScore,
+    tags: skills.tags,
+    categories: skills.categories,
+    mcpUrl: skills.mcpUrl,
+  })
+  .from(skills)
+  .where(and(
+    eq(skills.status, 'published'),
+    eq(skills.visibility, 'public'),
+    gte(skills.trustScore, minTrust),
+    portable !== undefined ? eq(skills.portable, portable) : undefined,
+    runtimeEnv?.length ? inArray(skills.runtimeEnv, runtimeEnv) : undefined,
+  ));
+
+  const body = rows.map(r => JSON.stringify(r)).join('\n');
+  return new Response(body, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Content-Disposition': 'attachment; filename="runics-catalog.jsonl"',
+    },
+  });
+});
+```
+
+### POST /v1/invocations — Invocation Reporting (v5.3 update)
+
+v5.3 adds `source` field to distinguish Cortex-originated invocations from local agent invocations.
+
+```typescript
+const invocationSchema = z.object({
+  invocations: z.array(z.object({
+    skillId: z.string().uuid(),
+    source: z.enum(['cortex', 'local']).default('cortex'),  // v5.3: caller origin
+    callerType: z.enum(['agent', 'human']).default('agent'),
+    compositionId: z.string().uuid().optional(),
+    durationMs: z.number().optional(),
+    succeeded: z.boolean(),
+  })),
+});
+```
+
+Local agent invocations count toward `agent_invocation_count` and version ranking but are tracked separately in `search_logs` for analytics. Leaderboard signals from local vs cortex sources are not blended — both contribute to the agent track but with `source` attribution for filtering.
 
 ---
 
