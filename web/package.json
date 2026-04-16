@@ -9,7 +9,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "deploy": "astro build && CLOUDFLARE_ACCOUNT_ID=bb8e02ea0ca7c225d2fb62d24a9940be wrangler pages deploy dist/client --project-name runics-web --commit-dirty=true",
+    "deploy": "astro build && CLOUDFLARE_ACCOUNT_ID=bb8e02ea0ca7c225d2fb62d24a9940be wrangler deploy",
     "astro": "astro",
     "generate-types": "wrangler types",
     "og:build": "node scripts/gen-og-image.mjs"

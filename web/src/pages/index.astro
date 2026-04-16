@@ -63,15 +63,15 @@ const featuredSkills = await loadFeaturedSkills()
 const faqs = [
   {
     q: 'What is Runics?',
-    a: 'Runics is a semantic skill registry for AI agents. It indexes over 15,000 agent skills from sources like the MCP Registry, ClawHub, and GitHub, then ranks them by a security trust score computed by Cognium Circle-IR. Agents and developers can search by natural language and get results ranked by relevance, trust, and real usage.',
+    a: 'Runics is a semantic skill registry for AI agents. It indexes over 15,000 agent skills from sources like the MCP Registry, ClawHub, and GitHub, then ranks them by a security trust score computed by Cognium. Agents and developers can search by natural language and get results ranked by relevance, trust, and real usage.',
   },
   {
     q: 'How is Runics different from the MCP Registry and ClawHub?',
-    a: 'The MCP Registry and ClawHub list skills but rely on keyword matching and do not score skills for security. Runics adds semantic search (vector embeddings plus cross-encoder reranking), vulnerability and prompt-injection scanning via Cognium Circle-IR, a continuously updated trust score, and confidence signals that tell an agent how certain a match is. Runics also aggregates skills from multiple sources in a single search.',
+    a: 'The MCP Registry and ClawHub list skills but rely on keyword matching and do not score skills for security. Runics adds semantic search (vector embeddings plus cross-encoder reranking), vulnerability and prompt-injection scanning via Cognium, a continuously updated trust score, and confidence signals that tell an agent how certain a match is. Runics also aggregates skills from multiple sources in a single search.',
   },
   {
     q: 'What is a trust score and how is it computed?',
-    a: 'A trust score is a 0–1 rating assigned to every indexed skill. It is produced by Cognium Circle-IR, which scans each skill for known vulnerabilities, license problems, unsafe permissions, and prompt-injection patterns. Scores update continuously as new scans run and as usage signals arrive. Versions are ranked by trust × 0.7 + usage × 0.3, so the most reliable version surfaces first rather than simply the newest.',
+    a: 'A trust score is a 0–1 rating assigned to every indexed skill. It is produced by Cognium, which scans each skill for known vulnerabilities, license problems, unsafe permissions, and prompt-injection patterns. Scores update continuously as new scans run and as usage signals arrive. Versions are ranked by trust × 0.7 + usage × 0.3, so the most reliable version surfaces first rather than simply the newest.',
   },
   {
     q: 'What sources does Runics index?',
@@ -218,7 +218,7 @@ const faqJsonLd = {
             },
             {
               title: 'Trust Scores',
-              desc: 'Cognium Circle-IR scans every skill for vulnerabilities, license issues, and prompt injection.',
+              desc: 'Cognium scans every skill for vulnerabilities, license issues, and prompt injection.',
               icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />`,
             },
             {
@@ -265,7 +265,7 @@ const faqJsonLd = {
               Featured <span class="text-accent">high-trust</span> skills
             </h2>
             <p class="mt-4 text-text-secondary max-w-xl mx-auto">
-              Ranked by Cognium Circle-IR trust score. Updates continuously as new scans run.
+              Ranked by Cognium trust score. Updates continuously as new scans run.
             </p>
           </div>
 
@@ -327,7 +327,7 @@ const faqJsonLd = {
           </div>
 
           <p class="mt-10 text-center text-sm text-text-muted">
-            Security-scanned by <span class="text-text-secondary">Cognium Circle-IR</span>. Trust scores update continuously.
+            Security-scanned by <span class="text-text-secondary">Cognium</span>. Trust scores update continuously.
           </p>
         </div>
       </section>
@@ -438,6 +438,13 @@ const faqJsonLd = {
       debounceTimer = setTimeout(() => doSearch(q), 250);
     });
 
+    // Auto-search if landed with ?q=<query>
+    const urlQuery = new URLSearchParams(window.location.search).get('q');
+    if (urlQuery && urlQuery.length >= 2) {
+      input.value = urlQuery;
+      doSearch(urlQuery);
+    }
+
     async function doSearch(query: string) {
       try {
         const res = await fetch(`${API}/v1/search`, {
@@ -529,8 +536,11 @@ const faqJsonLd = {
         const matchSrc = r.matchSource ? escapeHtml(String(r.matchSource).replace(/_/g, ' ')) : null;
         const tier = escapeHtml(r.verificationTier || 'unverified');
         const trustPct = ((r.trustScore || 0) * 100).toFixed(0);
+        const href = r.slug ? `/skills/${encodeURIComponent(r.slug)}` : null;
+        const openTag = href ? `<a href="${href}" class="block p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-accent/50 transition-all">` : `<div class="p-4 rounded-xl border border-border-subtle bg-bg-card">`;
+        const closeTag = href ? `</a>` : `</div>`;
         return `
-          <div class="p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all cursor-default">
+          ${openTag}
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
@@ -544,7 +554,7 @@ const faqJsonLd = {
                 <div class="text-[10px] text-text-muted mt-0.5">${tier}</div>
               </div>
             </div>
-          </div>
+          ${closeTag}
         `;
       }).join('');
 

@@ -1,0 +1,312 @@
+---
+import Layout from '../../layouts/Layout.astro'
+
+// SSR per request — skill catalog has 15K+ entries, cannot prerender
+export const prerender = false
+
+type SkillDetail = {
+  id: string
+  slug: string
+  name: string
+  version: string | null
+  description: string | null
+  agentSummary: string | null
+  trustScore: number
+  verificationTier: string | null
+  trustBadge: string | null
+  status: string | null
+  executionLayer: string | null
+  mcpUrl: string | null
+  skillType: string | null
+  source: string | null
+  sourceUrl: string | null
+  tags: string[] | null
+  category: string | null
+  categories: string[] | null
+  ecosystem: string | null
+  language: string | null
+  license: string | null
+  authorType: string | null
+  runCount: number | null
+  humanStarCount: number | null
+  humanForkCount: number | null
+  agentInvocationCount: number | null
+  cogniumScanned: boolean | null
+  cogniumScannedAt: string | null
+  contentSafetyPassed: boolean | null
+  createdAt: string | null
+  updatedAt: string | null
+  publishedAt: string | null
+  shareUrl: string | null
+}
+
+async function fetchSkill(slug: string): Promise<SkillDetail | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
+  try {
+    const res = await fetch(`https://api.runics.net/v1/skills/${encodeURIComponent(slug)}`, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'runics-web' },
+    })
+    if (!res.ok) return null
+    return (await res.json()) as SkillDetail
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const { slug } = Astro.params
+const skill = slug ? await fetchSkill(slug) : null
+
+if (!skill) {
+  Astro.response.status = 404
+}
+
+// Edge cache skill pages for 5 min, CDN for 10 min, SWR for 1h
+Astro.response.headers.set(
+  'Cache-Control',
+  skill ? 'public, max-age=300, s-maxage=600, stale-while-revalidate=3600' : 'public, max-age=60',
+)
+
+const canonicalSlug = skill?.slug || slug || ''
+const canonical = `https://runics.net/skills/${canonicalSlug}`
+
+const title = skill
+  ? `${skill.name} — Runics`
+  : 'Skill not found — Runics'
+
+const pageDescription = skill
+  ? (skill.description || skill.agentSummary || `${skill.name}: indexed on Runics with a trust score of ${Math.round((skill.trustScore || 0) * 100)}%.`).slice(0, 300)
+  : `The skill "${slug ?? ''}" was not found in the Runics registry.`
+
+const trustPct = Math.round((skill?.trustScore || 0) * 100)
+const trustTextCls = (skill?.trustScore || 0) >= 0.8 ? 'text-green-400' : (skill?.trustScore || 0) >= 0.6 ? 'text-yellow-400' : 'text-red-400'
+const trustBarCls = (skill?.trustScore || 0) >= 0.8 ? 'bg-green-400' : (skill?.trustScore || 0) >= 0.6 ? 'bg-yellow-400' : 'bg-red-400'
+
+function formatDate(iso: string | null): string | null {
+  if (!iso) return null
+  try {
+    return new Date(iso).toISOString().split('T')[0]
+  } catch {
+    return null
+  }
+}
+
+const softwareJsonLd = skill
+  ? {
+      '@context': 'https://schema.org',
+      '@type': 'SoftwareApplication',
+      name: skill.name,
+      description: skill.description || skill.agentSummary || undefined,
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Any',
+      url: canonical,
+      softwareVersion: skill.version || undefined,
+      author: skill.source
+        ? { '@type': 'Organization', name: skill.source }
+        : undefined,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+    }
+  : null
+
+const breadcrumbJsonLd = skill
+  ? {
+      '@context': 'https://schema.org',
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Home', item: 'https://runics.net/' },
+        { '@type': 'ListItem', position: 2, name: 'Skills', item: 'https://runics.net/#featured' },
+        { '@type': 'ListItem', position: 3, name: skill.name, item: canonical },
+      ],
+    }
+  : null
+
+// Build a keyed metadata list, filtering out empties
+type MetaRow = { label: string; value: string }
+const metaRows: MetaRow[] = skill
+  ? ([
+      skill.version && { label: 'Version', value: skill.version },
+      skill.skillType && { label: 'Skill type', value: skill.skillType },
+      skill.executionLayer && { label: 'Execution layer', value: skill.executionLayer },
+      skill.category && { label: 'Category', value: skill.category },
+      skill.ecosystem && { label: 'Ecosystem', value: skill.ecosystem },
+      skill.language && { label: 'Language', value: skill.language },
+      skill.license && { label: 'License', value: skill.license },
+      skill.source && { label: 'Source', value: skill.source },
+      skill.authorType && { label: 'Author type', value: skill.authorType },
+      formatDate(skill.cogniumScannedAt) && { label: 'Last scanned', value: formatDate(skill.cogniumScannedAt)! },
+      formatDate(skill.updatedAt) && { label: 'Updated', value: formatDate(skill.updatedAt)! },
+    ].filter(Boolean) as MetaRow[])
+  : []
+
+const description = skill?.description || skill?.agentSummary || ''
+---
+
+<Layout title={title} description={pageDescription} canonical={canonical}>
+  <!-- Nav -->
+  <nav class="fixed top-0 w-full z-50 border-b border-border-subtle bg-bg/80 backdrop-blur-xl" aria-label="Primary">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2.5" aria-label="Runics home">
+        <svg viewBox="0 0 32 32" fill="none" class="w-7 h-7" aria-hidden="true">
+          <path d="M8 10L16 6L24 10V16L16 26L8 16V10Z" stroke="#6ee7b7" stroke-width="1.5" fill="none"/>
+          <circle cx="16" cy="14" r="3" fill="#6ee7b7" opacity="0.8"/>
+        </svg>
+        <span class="text-text-primary font-semibold text-lg tracking-tight">Runics</span>
+      </a>
+      <div class="flex items-center gap-4 sm:gap-6">
+        <a href="/" class="text-sm text-text-muted hover:text-text-secondary transition-colors">Search</a>
+        <a href="/#faq" class="text-sm text-text-muted hover:text-text-secondary transition-colors">FAQ</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="pt-14">
+    {skill ? (
+      <article class="max-w-4xl mx-auto px-6 py-10 md:py-14">
+        <!-- Breadcrumb -->
+        <nav class="text-xs text-text-muted mb-6" aria-label="Breadcrumb">
+          <a href="/" class="hover:text-text-secondary transition-colors">Home</a>
+          <span class="mx-2" aria-hidden="true">/</span>
+          <a href="/#featured" class="hover:text-text-secondary transition-colors">Skills</a>
+          <span class="mx-2" aria-hidden="true">/</span>
+          <span class="text-text-secondary font-mono truncate inline-block max-w-[240px] align-bottom" title={skill.slug}>{skill.slug}</span>
+        </nav>
+
+        <!-- Header -->
+        <header>
+          <div class="flex items-center gap-1.5 flex-wrap mb-4">
+            {skill.source && (
+              <span class="text-[10px] px-2 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono uppercase tracking-wide">
+                {skill.source}
+              </span>
+            )}
+            {skill.verificationTier && skill.verificationTier !== 'unverified' && (
+              <span class="text-[10px] px-2 py-0.5 rounded bg-accent-glow border border-accent/30 text-accent font-mono uppercase tracking-wide">
+                {skill.verificationTier}
+              </span>
+            )}
+            {skill.skillType && (
+              <span class="text-[10px] px-2 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono uppercase tracking-wide">
+                {skill.skillType}
+              </span>
+            )}
+            {skill.executionLayer && (
+              <span class="text-[10px] px-2 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono uppercase tracking-wide">
+                {skill.executionLayer}
+              </span>
+            )}
+          </div>
+
+          <h1 class="text-3xl md:text-5xl font-bold tracking-tight leading-[1.1]">{skill.name}</h1>
+
+          {description && (
+            <p class="mt-5 text-base md:text-lg text-text-secondary leading-relaxed max-w-3xl">{description}</p>
+          )}
+        </header>
+
+        <!-- Trust panel -->
+        <section class="mt-10 p-6 rounded-xl border border-border-subtle bg-bg-card" aria-label="Trust score">
+          <div class="flex items-baseline justify-between gap-3 mb-3">
+            <div>
+              <div class="text-xs text-text-muted uppercase tracking-wide">Cognium trust score</div>
+              <div class={`mt-1 text-4xl font-bold font-mono ${trustTextCls}`}>{trustPct}<span class="text-xl">%</span></div>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-text-muted uppercase tracking-wide">Verification</div>
+              <div class="mt-1 text-sm text-text-secondary font-mono">{skill.verificationTier || 'unverified'}</div>
+            </div>
+          </div>
+          <div class="h-1.5 rounded-full bg-bg-elevated overflow-hidden" aria-hidden="true">
+            <div class={`h-full ${trustBarCls}`} style={`width: ${trustPct}%`}></div>
+          </div>
+          <p class="mt-4 text-xs text-text-muted">
+            Score computed by Cognium from continuous vulnerability, license, and prompt-injection scanning.
+            {skill.cogniumScanned && formatDate(skill.cogniumScannedAt) && (
+              <span> Last scanned {formatDate(skill.cogniumScannedAt)}.</span>
+            )}
+          </p>
+        </section>
+
+        <!-- Metadata grid -->
+        {metaRows.length > 0 && (
+          <section class="mt-10" aria-label="Skill metadata">
+            <h2 class="text-xs uppercase tracking-wide text-text-muted mb-3">Metadata</h2>
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-px bg-border-subtle border border-border-subtle rounded-xl overflow-hidden">
+              {metaRows.map(row => (
+                <div class="bg-bg-card p-4">
+                  <dt class="text-[11px] uppercase tracking-wide text-text-muted">{row.label}</dt>
+                  <dd class="mt-1 text-sm text-text-secondary font-mono break-words">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        <!-- Actions -->
+        <section class="mt-10 flex flex-col sm:flex-row gap-3" aria-label="Skill actions">
+          {skill.sourceUrl && (
+            <a href={skill.sourceUrl} target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-accent text-bg font-semibold text-sm hover:bg-accent-dim transition-colors">
+              View source
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+              </svg>
+            </a>
+          )}
+          <a href={`/?q=${encodeURIComponent(skill.name)}`} class="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border border-border text-text-secondary font-medium text-sm hover:text-text-primary hover:border-border transition-colors">
+            Find related skills
+          </a>
+        </section>
+
+        <!-- Usage signals (only shown if non-zero) -->
+        {((skill.runCount || 0) > 0 || (skill.humanStarCount || 0) > 0 || (skill.agentInvocationCount || 0) > 0) && (
+          <section class="mt-10 p-5 rounded-xl border border-border-subtle bg-bg-card" aria-label="Usage">
+            <h2 class="text-xs uppercase tracking-wide text-text-muted mb-3">Usage</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div>
+                <div class="text-xl font-bold text-text-primary font-mono">{skill.runCount || 0}</div>
+                <div class="text-[11px] text-text-muted mt-0.5 uppercase tracking-wide">Runs</div>
+              </div>
+              <div>
+                <div class="text-xl font-bold text-text-primary font-mono">{skill.agentInvocationCount || 0}</div>
+                <div class="text-[11px] text-text-muted mt-0.5 uppercase tracking-wide">Agent calls</div>
+              </div>
+              <div>
+                <div class="text-xl font-bold text-text-primary font-mono">{skill.humanStarCount || 0}</div>
+                <div class="text-[11px] text-text-muted mt-0.5 uppercase tracking-wide">Stars</div>
+              </div>
+              <div>
+                <div class="text-xl font-bold text-text-primary font-mono">{skill.humanForkCount || 0}</div>
+                <div class="text-[11px] text-text-muted mt-0.5 uppercase tracking-wide">Forks</div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <!-- Footer back link -->
+        <div class="mt-14 pt-6 border-t border-border-subtle">
+          <a href="/" class="text-sm text-text-muted hover:text-text-secondary transition-colors">← Back to search</a>
+        </div>
+      </article>
+    ) : (
+      <section class="max-w-2xl mx-auto px-6 py-20 md:py-28 text-center">
+        <h1 class="text-3xl md:text-4xl font-bold tracking-tight">Skill not found</h1>
+        <p class="mt-4 text-text-secondary">
+          <span class="font-mono text-text-muted">{slug}</span> isn't in the Runics registry — it may have been removed, or the slug is wrong.
+        </p>
+        <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
+          <a href="/" class="px-5 py-3 rounded-xl bg-accent text-bg font-semibold text-sm hover:bg-accent-dim transition-colors">
+            Search Runics
+          </a>
+          <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="px-5 py-3 rounded-xl border border-border text-text-secondary font-medium text-sm hover:text-text-primary transition-colors">
+            Check API status
+          </a>
+        </div>
+      </section>
+    )}
+  </main>
+
+  {softwareJsonLd && <script type="application/ld+json" set:html={JSON.stringify(softwareJsonLd)} />}
+  {breadcrumbJsonLd && <script type="application/ld+json" set:html={JSON.stringify(breadcrumbJsonLd)} />}
+</Layout>
