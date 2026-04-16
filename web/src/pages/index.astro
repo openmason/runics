@@ -1,0 +1,351 @@
+---
+import Layout from '../layouts/Layout.astro'
+
+const faqs = [
+  {
+    q: 'What is Runics?',
+    a: 'Runics is a semantic skill registry for AI agents. It indexes over 15,000 agent skills from sources like the MCP Registry, ClawHub, and GitHub, then ranks them by a security trust score computed by Cognium Circle-IR. Agents and developers can search by natural language and get results ranked by relevance, trust, and real usage.',
+  },
+  {
+    q: 'How is Runics different from the MCP Registry and ClawHub?',
+    a: 'The MCP Registry and ClawHub list skills but rely on keyword matching and do not score skills for security. Runics adds semantic search (vector embeddings plus cross-encoder reranking), vulnerability and prompt-injection scanning via Cognium Circle-IR, a continuously updated trust score, and confidence signals that tell an agent how certain a match is. Runics also aggregates skills from multiple sources in a single search.',
+  },
+  {
+    q: 'What is a trust score and how is it computed?',
+    a: 'A trust score is a 0–1 rating assigned to every indexed skill. It is produced by Cognium Circle-IR, which scans each skill for known vulnerabilities, license problems, unsafe permissions, and prompt-injection patterns. Scores update continuously as new scans run and as usage signals arrive. Versions are ranked by trust × 0.7 + usage × 0.3, so the most reliable version surfaces first rather than simply the newest.',
+  },
+  {
+    q: 'What sources does Runics index?',
+    a: 'Runics aggregates skills from the MCP Registry, ClawHub, GitHub repositories, and a human-curated source. All are normalized into a single search index, so one query returns results across every ecosystem.',
+  },
+  {
+    q: 'How does the 3-tier intelligence search work?',
+    a: 'Queries are routed through three tiers by confidence. Tier 1 is a fast vector similarity search; if the top results are clearly relevant, they are returned immediately with sub-60ms p50 latency. Tier 2 adds a cross-encoder reranker for medium-confidence matches. Tier 3 invokes an LLM for deep search and composition detection when the query is complex or ambiguous. Every response includes the tier used, confidence label, and latency.',
+  },
+  {
+    q: 'Is the Runics API free?',
+    a: 'Yes. Search is free and does not require authentication. Send a POST request to https://api.runics.net/v1/search with a JSON body containing a query and a tenantId. Rate limits apply for abuse prevention but are not publicly enforced for ordinary use.',
+  },
+  {
+    q: 'What is composition detection?',
+    a: 'Composition detection identifies queries that require more than one skill. For example, the query "format my code and check for license issues" is automatically decomposed: Runics finds a formatting skill and a license-scanning skill, and suggests composing them. This is returned as a structured composition object in the API response.',
+  },
+]
+
+const faqJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqs.map(f => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a },
+  })),
+}
+---
+
+<Layout>
+  <!-- Nav -->
+  <nav class="fixed top-0 w-full z-50 border-b border-border-subtle bg-bg/80 backdrop-blur-xl" aria-label="Primary">
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-2.5" aria-label="Runics home">
+        <svg viewBox="0 0 32 32" fill="none" class="w-7 h-7" aria-hidden="true">
+          <path d="M8 10L16 6L24 10V16L16 26L8 16V10Z" stroke="#6ee7b7" stroke-width="1.5" fill="none"/>
+          <circle cx="16" cy="14" r="3" fill="#6ee7b7" opacity="0.8"/>
+        </svg>
+        <span class="text-text-primary font-semibold text-lg tracking-tight">Runics</span>
+      </a>
+      <div class="flex items-center gap-6">
+        <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="text-sm text-text-muted hover:text-text-secondary transition-colors">API Status</a>
+        <a href="#features" class="text-sm text-text-muted hover:text-text-secondary transition-colors">Features</a>
+        <a href="#faq" class="text-sm text-text-muted hover:text-text-secondary transition-colors">FAQ</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <main class="pt-14">
+    <section class="relative overflow-hidden">
+      <!-- Gradient bg -->
+      <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(110,231,183,0.08)_0%,transparent_60%)]"></div>
+
+      <div class="relative max-w-6xl mx-auto px-6 pt-28 pb-20 text-center">
+        <h1 class="text-5xl md:text-7xl font-bold tracking-tight leading-[1.08] animate-fade-up">
+          Every agent skill.<br/>
+          <span class="text-accent">Trust-scored.</span>
+        </h1>
+
+        <p class="mt-6 text-lg md:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed animate-fade-up-delay">
+          Semantic search across the entire agent skill ecosystem.
+          Security-scanned by Cognium. Ranked by trust and usage.
+        </p>
+
+        <!-- Search bar -->
+        <div class="mt-12 max-w-2xl mx-auto animate-fade-up-delay-2" role="search">
+          <label for="search-input" class="sr-only">Search Runics for agent skills</label>
+          <div class="relative group">
+            <div class="absolute -inset-0.5 bg-gradient-to-r from-accent/20 via-accent/5 to-accent/20 rounded-2xl blur-sm opacity-0 group-focus-within:opacity-100 transition-opacity duration-300"></div>
+            <div class="relative flex items-center bg-bg-card border border-border rounded-xl overflow-hidden">
+              <svg class="w-5 h-5 ml-5 text-text-muted shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+              </svg>
+              <input
+                id="search-input"
+                type="search"
+                name="q"
+                placeholder="Search skills... e.g. &quot;format code with prettier&quot;"
+                class="w-full py-4 px-4 bg-transparent text-text-primary placeholder:text-text-muted outline-none text-base"
+                autocomplete="off"
+                aria-label="Search agent skills by natural language"
+              />
+              <kbd class="hidden md:inline-flex items-center mr-4 px-2 py-0.5 rounded border border-border text-[11px] text-text-muted font-mono shrink-0" aria-label="Press slash to focus search">/</kbd>
+            </div>
+          </div>
+
+          <!-- Search results container -->
+          <div id="search-results" class="mt-3 hidden" role="region" aria-live="polite" aria-label="Search results"></div>
+        </div>
+
+        <!-- Example queries -->
+        <div class="mt-6 flex flex-wrap justify-center gap-2 animate-fade-up-delay-2">
+          {['web scraping', 'send email', 'database tools', 'image generation'].map(q => (
+            <button
+              class="search-example px-3 py-1.5 text-xs rounded-lg border border-border-subtle text-text-muted hover:text-text-secondary hover:border-border hover:bg-bg-card transition-all cursor-pointer"
+              data-query={q}
+            >
+              {q}
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats bar -->
+    <section class="border-y border-border-subtle bg-bg-elevated/50">
+      <div class="max-w-6xl mx-auto px-6 py-10 grid grid-cols-2 md:grid-cols-4 gap-8">
+        {[
+          { value: '15K+', label: 'Skills indexed' },
+          { value: '<60ms', label: 'Search latency (p50)' },
+          { value: '6', label: 'Skill sources' },
+          { value: '3-tier', label: 'Confidence routing' },
+        ].map(stat => (
+          <div class="text-center">
+            <div class="text-2xl md:text-3xl font-bold text-text-primary font-mono">{stat.value}</div>
+            <div class="mt-1 text-sm text-text-muted">{stat.label}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-24">
+      <div class="max-w-6xl mx-auto px-6">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Built for agents that need to <span class="text-accent">trust</span> their tools</h2>
+          <p class="mt-4 text-text-secondary max-w-xl mx-auto">Every skill is security-scanned, semantically indexed, and ranked by real usage signals.</p>
+        </div>
+
+        <div class="grid md:grid-cols-3 gap-5">
+          {[
+            {
+              title: 'Semantic Search',
+              desc: 'Natural language queries ranked by confidence, not keyword matching.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />`,
+            },
+            {
+              title: 'Trust Scores',
+              desc: 'Cognium Circle-IR scans every skill for vulnerabilities, license issues, and prompt injection.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />`,
+            },
+            {
+              title: '3-Tier Intelligence',
+              desc: 'Vector search, cross-encoder reranking, and LLM fallback -- escalates automatically by confidence.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />`,
+            },
+            {
+              title: 'Multi-Source',
+              desc: 'One search across MCP Registry, ClawHub, GitHub, and human-curated sources.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />`,
+            },
+            {
+              title: 'Version Ranking',
+              desc: 'Ranked by trust x 0.7 + usage x 0.3. Most reliable version surfaces first.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7.5L7.5 3m0 0L12 7.5M7.5 3v13.5m13.5-3L16.5 18m0 0L12 13.5m4.5 4.5V6" />`,
+            },
+            {
+              title: 'Composition Detection',
+              desc: 'Multi-skill queries auto-decomposed. "Format code and check licenses" finds both.',
+              icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.25 6.087c0-.355.186-.676.401-.959.221-.29.349-.634.349-1.003 0-1.036-1.007-1.875-2.25-1.875s-2.25.84-2.25 1.875c0 .369.128.713.349 1.003.215.283.401.604.401.959v0a.64.64 0 01-.657.643 48.39 48.39 0 01-4.163-.3c.186 1.613.546 3.16 1.058 4.62M16.5 15.75h-9m9 0a3 3 0 013 3V21h-12v-2.25a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 15.75v-3.375c0-.621.504-1.125 1.125-1.125h.872" />`,
+            },
+          ].map(feature => (
+            <div class="group p-6 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all duration-200">
+              <div class="w-10 h-10 rounded-lg bg-accent-glow flex items-center justify-center mb-4">
+                <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <Fragment set:html={feature.icon} />
+                </svg>
+              </div>
+              <h3 class="text-base font-semibold text-text-primary">{feature.title}</h3>
+              <p class="mt-2 text-sm text-text-secondary leading-relaxed">{feature.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-24 border-t border-border-subtle bg-bg-elevated/30">
+      <div class="max-w-3xl mx-auto px-6">
+        <div class="text-center mb-16">
+          <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Frequently asked questions</h2>
+          <p class="mt-4 text-text-secondary">What Runics is, how it works, and how to use it.</p>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          {faqs.map(item => (
+            <details class="group rounded-xl border border-border-subtle bg-bg-card hover:border-border transition-colors">
+              <summary class="cursor-pointer list-none p-5 flex items-start justify-between gap-4">
+                <h3 class="text-base font-semibold text-text-primary leading-snug">{item.q}</h3>
+                <svg class="w-5 h-5 shrink-0 text-text-muted transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 9l-7 7-7-7" />
+                </svg>
+              </summary>
+              <div class="px-5 pb-5 text-sm text-text-secondary leading-relaxed">{item.a}</div>
+            </details>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="py-24 border-t border-border-subtle">
+      <div class="max-w-6xl mx-auto px-6 text-center">
+        <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Start searching</h2>
+        <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <a href="#" onclick="document.getElementById('search-input').focus(); window.scrollTo({top: 0, behavior: 'smooth'}); return false;" class="px-6 py-3 rounded-xl bg-accent text-bg font-semibold text-sm hover:bg-accent-dim transition-colors">
+            Try a search
+          </a>
+          <a href="https://api.runics.net/health" target="_blank" class="px-6 py-3 rounded-xl border border-border text-text-secondary font-medium text-sm hover:text-text-primary hover:border-border transition-colors">
+            View API
+          </a>
+        </div>
+
+        <!-- curl example -->
+        <div class="mt-10 max-w-xl mx-auto">
+          <pre class="text-left p-5 rounded-xl bg-bg-card border border-border-subtle text-sm font-mono overflow-x-auto"><code class="text-text-secondary"><span class="text-text-muted">$</span> curl -X POST https://api.runics.net/v1/search \
+  -H <span class="text-accent">"Content-Type: application/json"</span> \
+  -d <span class="text-accent">'&#123;"query": "web scraping", "tenantId": "public"&#125;'</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-border-subtle py-10">
+      <div class="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-2 text-sm text-text-muted">
+          <svg viewBox="0 0 32 32" fill="none" class="w-5 h-5" aria-hidden="true">
+            <path d="M8 10L16 6L24 10V16L16 26L8 16V10Z" stroke="#6ee7b7" stroke-width="1.5" fill="none"/>
+            <circle cx="16" cy="14" r="3" fill="#6ee7b7" opacity="0.8"/>
+          </svg>
+          Runics by Cognium Labs
+        </div>
+        <nav class="flex items-center gap-6 text-sm text-text-muted" aria-label="Footer">
+          <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="hover:text-text-secondary transition-colors">API</a>
+          <a href="#faq" class="hover:text-text-secondary transition-colors">FAQ</a>
+          <span class="text-border-subtle" aria-hidden="true">|</span>
+          <span>Powered by Cloudflare Workers</span>
+        </nav>
+      </div>
+    </footer>
+  </main>
+
+  <!-- FAQ structured data -->
+  <script type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />
+
+  <!-- Search JS -->
+  <script>
+    const API = 'https://api.runics.net';
+    const input = document.getElementById('search-input') as HTMLInputElement;
+    const resultsEl = document.getElementById('search-results')!;
+    let debounceTimer: ReturnType<typeof setTimeout>;
+
+    // Keyboard shortcut
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== input) {
+        e.preventDefault();
+        input.focus();
+      }
+    });
+
+    // Example queries
+    document.querySelectorAll('.search-example').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const q = (btn as HTMLElement).dataset.query || '';
+        input.value = q;
+        doSearch(q);
+        input.focus();
+      });
+    });
+
+    input.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      const q = input.value.trim();
+      if (q.length < 2) {
+        resultsEl.classList.add('hidden');
+        resultsEl.innerHTML = '';
+        return;
+      }
+      debounceTimer = setTimeout(() => doSearch(q), 250);
+    });
+
+    async function doSearch(query: string) {
+      try {
+        const res = await fetch(`${API}/v1/search`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, tenantId: 'public', limit: 5 }),
+        });
+        const data = await res.json();
+        renderResults(data);
+      } catch {
+        resultsEl.classList.add('hidden');
+      }
+    }
+
+    function trustColor(score: number): string {
+      if (score >= 0.8) return 'text-green-400';
+      if (score >= 0.6) return 'text-yellow-400';
+      return 'text-red-400';
+    }
+
+    function renderResults(data: any) {
+      if (!data.results || data.results.length === 0) {
+        resultsEl.innerHTML = `<div class="p-4 rounded-xl border border-border-subtle bg-bg-card text-sm text-text-muted text-center">No results found. Try a different query.</div>`;
+        resultsEl.classList.remove('hidden');
+        return;
+      }
+
+      const html = data.results.map((r: any) => `
+        <div class="p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all cursor-default">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="font-semibold text-text-primary text-sm truncate">${r.name || r.slug}</span>
+                <span class="text-xs px-1.5 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono">${r.source || 'unknown'}</span>
+              </div>
+              <p class="mt-1 text-xs text-text-secondary line-clamp-2">${r.description || r.agentSummary || ''}</p>
+            </div>
+            <div class="shrink-0 text-right">
+              <div class="text-xs font-mono ${trustColor(r.trustScore || 0)}">${((r.trustScore || 0) * 100).toFixed(0)}%</div>
+              <div class="text-[10px] text-text-muted mt-0.5">${r.verificationTier || 'unverified'}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      resultsEl.innerHTML = `<div class="flex flex-col gap-2">${html}</div>
+        <div class="mt-2 text-center text-xs text-text-muted">
+          ${data.results.length} results &middot; ${data.confidence || 'unknown'} confidence &middot; tier ${data.meta?.tier || '?'} &middot; ${data.meta?.latencyMs || '?'}ms
+        </div>`;
+      resultsEl.classList.remove('hidden');
+    }
+  </script>
+</Layout>

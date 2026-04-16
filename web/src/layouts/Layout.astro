@@ -1,0 +1,118 @@
+---
+import '../styles/global.css'
+
+interface Props {
+  title?: string
+  description?: string
+  canonical?: string
+}
+
+const {
+  title = 'Runics — Semantic Skill Registry for AI Agents | Trust-scored, Security-scanned',
+  description = 'Semantic search across 15,000+ AI agent skills, ranked by security trust scores from Cognium Circle-IR. Aggregates MCP Registry, ClawHub, and GitHub. Free API, no auth required for search.',
+  canonical = 'https://runics.net/',
+} = Astro.props
+
+const siteUrl = 'https://runics.net'
+const ogImage = `${siteUrl}/og-image.png`
+
+const orgJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'Runics',
+  alternateName: 'Runics Search',
+  url: siteUrl,
+  logo: `${siteUrl}/favicon.svg`,
+  parentOrganization: { '@type': 'Organization', name: 'Cognium Labs' },
+  description: 'Semantic skill registry for AI agents. Every agent skill, trust-scored and security-scanned.',
+}
+
+const websiteJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: 'Runics',
+  url: siteUrl,
+  description,
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: { '@type': 'EntryPoint', urlTemplate: `${siteUrl}/?q={search_term_string}` },
+    'query-input': 'required name=search_term_string',
+  },
+}
+
+const softwareAppJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Runics',
+  applicationCategory: 'DeveloperApplication',
+  operatingSystem: 'Any (Cloud API)',
+  description: 'Semantic search API across 15,000+ AI agent skills, with trust scores, vulnerability scanning, and multi-source aggregation (MCP Registry, ClawHub, GitHub).',
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  url: siteUrl,
+  author: { '@type': 'Organization', name: 'Cognium Labs' },
+  featureList: [
+    'Semantic search over agent skills',
+    'Trust scores via Cognium Circle-IR',
+    'Vulnerability scanning',
+    '3-tier intelligence routing (vector, reranker, LLM)',
+    'Multi-source aggregation',
+    'Composition detection',
+    'Version ranking by trust and usage',
+  ],
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="keywords" content="agent skills, skill registry, MCP registry, ClawHub, semantic search, trust score, AI agent tools, Cognium, vulnerability scanning, agent tool discovery, LLM tools, MCP server directory" />
+    <meta name="author" content="Cognium Labs" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <meta name="theme-color" content="#0a0a0b" />
+    <link rel="canonical" href={canonical} />
+
+    <!-- Open Graph -->
+    <meta property="og:site_name" content="Runics" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Runics — semantic skill registry. Every agent skill, trust-scored." />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content="Runics — semantic skill registry. Every agent skill, trust-scored." />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- API preconnect (site calls api.runics.net on search) -->
+    <link rel="preconnect" href="https://api.runics.net" />
+    <link rel="dns-prefetch" href="https://api.runics.net" />
+
+    <!-- Structured data -->
+    <script type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
+    <script type="application/ld+json" set:html={JSON.stringify(websiteJsonLd)} />
+    <script type="application/ld+json" set:html={JSON.stringify(softwareAppJsonLd)} />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

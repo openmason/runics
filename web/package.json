@@ -1,0 +1,26 @@
+{
+  "name": "web",
+  "type": "module",
+  "version": "0.0.1",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "deploy": "astro build && CLOUDFLARE_ACCOUNT_ID=bb8e02ea0ca7c225d2fb62d24a9940be wrangler pages deploy dist/client --project-name runics-web --commit-dirty=true",
+    "astro": "astro",
+    "generate-types": "wrangler types"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^13.1.10",
+    "@tailwindcss/vite": "^4.2.2",
+    "astro": "^6.1.7",
+    "tailwindcss": "^4.2.2",
+    "wrangler": "^4.83.0"
+  },
+  "overrides": {
+    "vite": "^7"
+  }
+}
