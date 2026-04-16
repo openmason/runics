@@ -54,8 +54,11 @@ const faqJsonLd = {
         </svg>
         <span class="text-text-primary font-semibold text-lg tracking-tight">Runics</span>
       </a>
-      <div class="flex items-center gap-6">
-        <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="text-sm text-text-muted hover:text-text-secondary transition-colors">API Status</a>
+      <div class="flex items-center gap-4 sm:gap-6">
+        <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="text-sm text-text-muted hover:text-text-secondary transition-colors">
+          <span class="sm:hidden">Status</span>
+          <span class="hidden sm:inline">API Status</span>
+        </a>
         <a href="#features" class="text-sm text-text-muted hover:text-text-secondary transition-colors">Features</a>
         <a href="#faq" class="text-sm text-text-muted hover:text-text-secondary transition-colors">FAQ</a>
       </div>
@@ -68,13 +71,13 @@ const faqJsonLd = {
       <!-- Gradient bg -->
       <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(110,231,183,0.08)_0%,transparent_60%)]"></div>
 
-      <div class="relative max-w-6xl mx-auto px-6 pt-28 pb-20 text-center">
-        <h1 class="text-5xl md:text-7xl font-bold tracking-tight leading-[1.08] animate-fade-up">
+      <div class="relative max-w-6xl mx-auto px-6 pt-20 md:pt-28 pb-16 md:pb-20 text-center">
+        <h1 class="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight leading-[1.08] animate-fade-up">
           Every agent skill.<br/>
           <span class="text-accent">Trust-scored.</span>
         </h1>
 
-        <p class="mt-6 text-lg md:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed animate-fade-up-delay">
+        <p class="mt-6 text-base sm:text-lg md:text-xl text-text-secondary max-w-2xl mx-auto leading-relaxed animate-fade-up-delay">
           Semantic search across the entire agent skill ecosystem.
           Security-scanned by Cognium. Ranked by trust and usage.
         </p>
@@ -109,7 +112,7 @@ const faqJsonLd = {
         <div class="mt-6 flex flex-wrap justify-center gap-2 animate-fade-up-delay-2">
           {['web scraping', 'send email', 'database tools', 'image generation'].map(q => (
             <button
-              class="search-example px-3 py-1.5 text-xs rounded-lg border border-border-subtle text-text-muted hover:text-text-secondary hover:border-border hover:bg-bg-card transition-all cursor-pointer"
+              class="search-example px-3.5 py-2 text-xs rounded-lg border border-border-subtle text-text-muted hover:text-text-secondary hover:border-border hover:bg-bg-card transition-all cursor-pointer min-h-[36px]"
               data-query={q}
             >
               {q}
@@ -137,9 +140,9 @@ const faqJsonLd = {
     </section>
 
     <!-- Features -->
-    <section id="features" class="py-24">
+    <section id="features" class="py-16 md:py-24">
       <div class="max-w-6xl mx-auto px-6">
-        <div class="text-center mb-16">
+        <div class="text-center mb-12 md:mb-16">
           <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Built for agents that need to <span class="text-accent">trust</span> their tools</h2>
           <p class="mt-4 text-text-secondary max-w-xl mx-auto">Every skill is security-scanned, semantically indexed, and ranked by real usage signals.</p>
         </div>
@@ -192,9 +195,9 @@ const faqJsonLd = {
     </section>
 
     <!-- FAQ -->
-    <section id="faq" class="py-24 border-t border-border-subtle bg-bg-elevated/30">
+    <section id="faq" class="py-16 md:py-24 border-t border-border-subtle bg-bg-elevated/30">
       <div class="max-w-3xl mx-auto px-6">
-        <div class="text-center mb-16">
+        <div class="text-center mb-12 md:mb-16">
           <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Frequently asked questions</h2>
           <p class="mt-4 text-text-secondary">What Runics is, how it works, and how to use it.</p>
         </div>
@@ -216,7 +219,7 @@ const faqJsonLd = {
     </section>
 
     <!-- CTA -->
-    <section class="py-24 border-t border-border-subtle">
+    <section class="py-16 md:py-24 border-t border-border-subtle">
       <div class="max-w-6xl mx-auto px-6 text-center">
         <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Start searching</h2>
         <div class="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">

@@ -23,10 +23,21 @@ html {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Reset iOS tap highlight for dark theme */
+a,
+button,
+summary,
+[role="button"] {
+  -webkit-tap-highlight-color: rgba(110, 231, 183, 0.15);
 }
 
 ::selection {
@@ -57,4 +68,20 @@ body {
 .animate-fade-up-delay-2 {
   animation: fade-up 0.6s ease-out 0.3s forwards;
   opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-fade-up-delay,
+  .animate-fade-up-delay-2 {
+    opacity: 1;
+  }
 }
