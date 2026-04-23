@@ -475,6 +475,7 @@ export interface Env {
 
   // Trust-score ranking boost
   TRUST_BOOST_WEIGHT?: string; // default "0.3" — multiplicative boost on fusedScore
+  CANDIDATE_POOL_MULTIPLIER?: string; // default "3" — fetch N× candidates before trust-boost pagination
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

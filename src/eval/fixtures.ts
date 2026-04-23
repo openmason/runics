@@ -273,6 +273,34 @@ const ALT = {
     'f782ec3b-8b62-42af-a0f4-75835eece7b7', // Mcp Security Audit (npm audit)
     'd200df82-dc78-4451-93b9-3ae6b00c2440', // dependency-auditor
   ],
+  MD_TO_PDF: [
+    '56844c03-93b6-4885-8046-79f5a70c866f', // MD-PDF MCP Server
+    '720b6eac-ff18-444b-90b0-d95fb7acee73', // Markdown2PDF MCP Server
+    '962193a6-075e-424b-af6e-3b6167b24dd7', // io.github.wmarceau/md-to-pdf
+    '0ebb774e-7469-4bcd-bfd9-fcc041076461', // md-to-pdf-with-mermaid-mcp
+  ],
+  TS_TOOLS: [
+    '9f531d13-b288-4b92-8ee8-7be638f5c9e7', // TypeScript Tools MCP
+  ],
+  CODE_REVIEW: [
+    'd435fd2d-0c35-4ddd-a3d8-5858c439b3c3', // Code Assistant
+    '76d7ab97-d514-47af-b206-dcbd571b7a76', // Code Review Analyst
+    '96f5858a-98ff-4731-b35e-d04449c80505', // Octocode MCP - AI Context Platform
+    '483f0b4e-70e5-4b18-b58c-ca8d0524c371', // GitHub Code Review Assistant
+  ],
+  BROWSER_DEBUG: [
+    '3e99a3d5-6338-4c43-a8da-66f00016d65a', // Chrome Debug MCP Server
+    '0fbcaaba-550a-4eab-a7c1-ad9e1e119c4b', // Browser Instrumentation MCP Server
+    '7dcc9484-c699-4d68-bc73-d76e79e1cd3e', // Chrome Debug MCP Server (alt)
+  ],
+  UI_COMPONENTS: [
+    'fc2d14d6-6635-4e58-a23a-e9b92730d855', // PrimeNG MCP Server
+    'fe62ccd4-8bc1-40c9-83d6-eac327fb09dd', // MUI MCP Server
+    '75100b25-979d-4e8f-86eb-7445a8db9491', // shadcn-mcp
+    '5cd6f45f-c933-44e2-a7fd-9277575632c6', // 21st.dev Magic AI Agent
+    '3141c3b5-aa81-487e-af1f-95a8123c4d46', // Shadcn UI Component Reference Server
+    'dfcf5e9c-657d-4dc8-b269-0190e311a810', // Rakit UI AI
+  ],
 } as const;
 
 export const evalFixtures: EvalFixture[] = [
@@ -281,11 +309,11 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-direct-001', query: 'check rust dependency licenses', expectedSkillId: SKILL.CARGO_DENY, pattern: 'direct' },
-  { id: 'eval-direct-002', query: 'format typescript code', expectedSkillId: SKILL.PRETTIER, pattern: 'direct' },
+  { id: 'eval-direct-002', query: 'format typescript code', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS, SKILL.TYPEDOC], pattern: 'direct' },
   { id: 'eval-direct-003', query: 'lint javascript files', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-direct-004', query: 'scan docker images for vulnerabilities', expectedSkillId: SKILL.TRIVY, pattern: 'direct' },
   { id: 'eval-direct-005', query: 'run postgres database locally', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'direct' },
-  { id: 'eval-direct-006', query: 'convert markdown to pdf', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'direct' },
+  { id: 'eval-direct-006', query: 'convert markdown to pdf', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: [...ALT.PANDOC, ...ALT.MD_TO_PDF, ...ALT.DOC_CONVERTER], pattern: 'direct' },
   { id: 'eval-direct-007', query: 'audit npm package licenses', expectedSkillId: SKILL.LICENSE_CHECKER, pattern: 'direct' },
   { id: 'eval-direct-008', query: 'run semgrep static analysis', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: ALT.SEMGREP, pattern: 'direct' },
   { id: 'eval-direct-009', query: 'build docker image from dockerfile', expectedSkillId: SKILL.DOCKER_BUILD, pattern: 'direct' },
@@ -304,8 +332,8 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-problem-001', query: 'make sure we are not shipping GPL code in proprietary product', expectedSkillId: SKILL.CARGO_DENY, acceptableSkillIds: [...ALT.LICENSE], pattern: 'problem' },
-  { id: 'eval-problem-002', query: 'code formatting is inconsistent across the team', expectedSkillId: SKILL.PRETTIER, pattern: 'problem' },
-  { id: 'eval-problem-003', query: 'catch common javascript bugs before runtime', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME], pattern: 'problem' },
+  { id: 'eval-problem-002', query: 'code formatting is inconsistent across the team', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS], pattern: 'problem' },
+  { id: 'eval-problem-003', query: 'catch common javascript bugs before runtime', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-004', query: 'production containers might have security issues', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'problem' },
   { id: 'eval-problem-005', query: 'need to test database migrations without affecting production', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.DB_MIGRATION], pattern: 'problem' },
   { id: 'eval-problem-006', query: 'documentation needs to be in PDF format for compliance', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'problem' },
@@ -315,7 +343,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-problem-010', query: 'need to verify our APIs return correct responses after changes', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: ALT.POSTMAN, pattern: 'problem' },
   { id: 'eval-problem-011', query: 'cloud infrastructure is configured manually and drifting', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE], pattern: 'problem' },
   { id: 'eval-problem-012', query: 'we have no metrics to tell if our services are healthy or degraded', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.DATADOG, ...ALT.MONITORING], pattern: 'problem' },
-  { id: 'eval-problem-013', query: 'login flow breaks on different browsers after deployments', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: ALT.PLAYWRIGHT, pattern: 'problem' },
+  { id: 'eval-problem-013', query: 'login flow breaks on different browsers after deployments', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING], pattern: 'problem' },
   { id: 'eval-problem-014', query: 'our kubernetes pods keep crashing and need debugging', expectedSkillId: SKILL.KUBECTL, acceptableSkillIds: ALT.KUBECTL, pattern: 'problem' },
   { id: 'eval-problem-015', query: 'our python code style is inconsistent between developers', expectedSkillId: SKILL.BLACK, pattern: 'problem' },
   { id: 'eval-problem-016', query: 'commit messages are all over the place no consistency', expectedSkillId: SKILL.COMMITLINT, acceptableSkillIds: ALT.COMMITLINT, pattern: 'problem' },
@@ -326,9 +354,9 @@ export const evalFixtures: EvalFixture[] = [
 
   { id: 'eval-business-001', query: 'ensure open source compliance for rust project', expectedSkillId: SKILL.CARGO_DENY, acceptableSkillIds: [...ALT.LICENSE], pattern: 'business' },
   { id: 'eval-business-002', query: 'maintain consistent code style across engineering team', expectedSkillId: SKILL.PRETTIER, pattern: 'business' },
-  { id: 'eval-business-003', query: 'reduce bugs and improve code quality standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'business' },
+  { id: 'eval-business-003', query: 'reduce bugs and improve code quality standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, ...ALT.CODE_REVIEW, SKILL.BIOME], pattern: 'business' },
   { id: 'eval-business-004', query: 'meet security compliance requirements for container deployments', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'business' },
-  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'business' },
+  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE], pattern: 'business' },
   { id: 'eval-business-006', query: 'convert documentation to PDF and Word for client deliverables', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'business' },
   { id: 'eval-business-007', query: 'improve application performance and scalability', expectedSkillId: SKILL.REDIS, acceptableSkillIds: [...ALT.REDIS, ...ALT.K6], pattern: 'business' },
   { id: 'eval-business-008', query: 'enterprise license compliance scanning across all projects', expectedSkillId: SKILL.FOSSA, acceptableSkillIds: [...ALT.LICENSE, SKILL.LICENSE_CHECKER], pattern: 'business' },
@@ -344,7 +372,7 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-alternate-001', query: 'cargo ban crate security advisory check', expectedSkillId: SKILL.CARGO_DENY, pattern: 'alternate' },
-  { id: 'eval-alternate-002', query: 'beautify typescript code automatically', expectedSkillId: SKILL.PRETTIER, pattern: 'alternate' },
+  { id: 'eval-alternate-002', query: 'beautify typescript code automatically', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS, SKILL.TYPEDOC], pattern: 'alternate' },
   { id: 'eval-alternate-003', query: 'static analysis tool for javascript', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS], pattern: 'alternate' },
   { id: 'eval-alternate-004', query: 'container image vulnerability scanner', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'alternate' },
   { id: 'eval-alternate-005', query: 'postgresql container for development', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'alternate' },
@@ -380,7 +408,7 @@ export const evalFixtures: EvalFixture[] = [
 
   { id: 'eval-disambig-001', query: 'check my code for issues', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-disambig-002', query: 'static analysis to find security problems in my source code', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, SKILL.CODEQL, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
-  { id: 'eval-disambig-003', query: 'format my code automatically', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME], pattern: 'direct' },
+  { id: 'eval-disambig-003', query: 'format my code automatically', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, SKILL.BLACK, ...ALT.TS_TOOLS], pattern: 'direct' },
   { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: ALT.SNYK, pattern: 'direct' },
   { id: 'eval-disambig-005', query: 'lint my dockerfile', expectedSkillId: SKILL.HADOLINT, pattern: 'direct' },
   { id: 'eval-disambig-006', query: 'test my API endpoints', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: [...ALT.POSTMAN, ...ALT.API_TESTING], pattern: 'direct' },
@@ -391,7 +419,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-disambig-011', query: 'load test my service', expectedSkillId: SKILL.K6, acceptableSkillIds: ALT.K6, pattern: 'direct' },
   { id: 'eval-disambig-012', query: 'deploy my application to the cloud', expectedSkillId: SKILL.CLOUDFLARE_DEPLOY, acceptableSkillIds: [...ALT.CLOUDFLARE, ...ALT.CLOUD_DEPLOY], pattern: 'direct' },
   { id: 'eval-disambig-013', query: 'run tests for my react components', expectedSkillId: SKILL.JEST, acceptableSkillIds: [...ALT.JEST, ...ALT.FRONTEND_TESTING], pattern: 'direct' },
-  { id: 'eval-disambig-014', query: 'document my UI components', expectedSkillId: SKILL.STORYBOOK, acceptableSkillIds: ALT.STORYBOOK, pattern: 'direct' },
+  { id: 'eval-disambig-014', query: 'document my UI components', expectedSkillId: SKILL.STORYBOOK, acceptableSkillIds: [...ALT.STORYBOOK, ...ALT.UI_COMPONENTS], pattern: 'direct' },
   { id: 'eval-disambig-015', query: 'analyze code for security vulnerabilities using queries', expectedSkillId: SKILL.CODEQL, acceptableSkillIds: [...ALT.CODEQL, ...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
 ];
 

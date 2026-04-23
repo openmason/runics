@@ -40,6 +40,7 @@ export class PgVectorProvider implements SearchProvider {
   private versionTrustWeight: number;
   private versionUsageWeight: number;
   private trustBoostWeight: number;
+  private candidatePoolMultiplier: number;
 
   constructor(connectionString: string, env: Env) {
     // Connect directly to Neon (NOT through Hyperdrive)
@@ -54,6 +55,7 @@ export class PgVectorProvider implements SearchProvider {
     this.versionTrustWeight = parseFloat(env.VERSION_TRUST_WEIGHT || '0.7');
     this.versionUsageWeight = parseFloat(env.VERSION_USAGE_WEIGHT || '0.3');
     this.trustBoostWeight = parseFloat(env.TRUST_BOOST_WEIGHT || '0.3');
+    this.candidatePoolMultiplier = parseInt(env.CANDIDATE_POOL_MULTIPLIER || '3', 10);
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -118,40 +120,44 @@ export class PgVectorProvider implements SearchProvider {
     const offset = options?.offset ?? 0;
     const includeMatchText = options?.includeMatchText ?? false;
 
+    // Widen candidate pool so trust boost can rescue high-trust skills
+    const poolSize = (limit + offset) * this.candidatePoolMultiplier;
+
     // Start vector and full-text searches in parallel
     const vectorSearchStart = Date.now();
-    const vectorResults = await this.vectorSearch(embedding, filters, limit + offset);
+    const vectorResults = await this.vectorSearch(embedding, filters, poolSize);
     const vectorSearchMs = Date.now() - vectorSearchStart;
 
     const fullTextSearchStart = Date.now();
-    const fullTextResults = await this.fullTextSearch(query, filters, limit + offset);
+    const fullTextResults = await this.fullTextSearch(query, filters, poolSize);
     const fullTextSearchMs = Date.now() - fullTextSearchStart;
 
     // Merge and fuse scores
     const fusedResults = this.fuseScores(vectorResults, fullTextResults);
 
-    // Apply pagination
-    const paginatedResults = fusedResults.slice(offset, offset + limit);
-
-    // Fetch full skill metadata (raw scores, no trust boost yet)
-    const { scoredSkills, trustScores } = await this.enrichWithSkillMetadata(
-      paginatedResults,
+    // Enrich the wider pool with trust scores for boosting
+    const { scoredSkills: poolSkills, trustScores } = await this.enrichWithSkillMetadata(
+      fusedResults,
       includeMatchText
     );
 
     // Compute confidence signal BEFORE trust boost (thresholds calibrated for raw scores)
-    const confidence = this.computeConfidence(scoredSkills);
+    // Use only the top `limit` raw-scored results for confidence assessment
+    const confidence = this.computeConfidence(poolSkills.slice(0, limit));
 
-    // Apply trust-score boost AFTER confidence assessment
+    // Apply trust-score boost AFTER confidence assessment but BEFORE pagination
     // boosted = fusedScore × (1 + weight × (trustScore - 0.5))
     if (this.trustBoostWeight > 0) {
-      for (const skill of scoredSkills) {
+      for (const skill of poolSkills) {
         const ts = trustScores.get(skill.skillId) ?? 0.5;
         skill.fusedScore *= 1 + this.trustBoostWeight * (ts - 0.5);
       }
       // Re-sort by boosted fusedScore
-      scoredSkills.sort((a, b) => b.fusedScore - a.fusedScore);
+      poolSkills.sort((a, b) => b.fusedScore - a.fusedScore);
     }
+
+    // Apply pagination AFTER trust boost
+    const scoredSkills = poolSkills.slice(offset, offset + limit);
 
     const totalLatencyMs = Date.now() - startTime;
 
