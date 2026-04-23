@@ -144,6 +144,13 @@ const ALT = {
     '4a63f6e4-a670-4294-ba6a-62cafe3edb45', // mcp-k8s
     'fd07949e-89f1-4830-bda5-c535e7fe1ea6', // K8s MCP
     'b5ce29da-5ca7-49b5-8d66-4dc4e53a0d92', // mcp-server-kubernetes
+    '3cfa9108-723e-451a-a507-909f7ad5c3e0', // K8s Doctor MCP
+    '9ad31284-99c1-4228-9097-99835b82b14e', // Kubernetes MCP Server
+    'b4eb3589-1491-44cc-80e8-923815523410', // kube-MCP
+    'fe7ee2ee-aa5d-4955-9c6b-bd93f338a3cb', // kubernetes-mcp
+    '37d45443-157a-44c2-b1b9-e2b299186eca', // k8s-interactive-mcp
+    'b7b599e5-b73e-41f3-a59b-8ff3baf765ed', // kube-lint-mcp
+    'facd248d-9341-4732-bb73-799c3032e137', // Rootcause (K8s crash debugging)
   ],
   TRIVY: [
     '49202c54-6431-4e13-8ecb-9ef633e41812', // Trivy (glama)
@@ -228,6 +235,10 @@ const ALT = {
     '88258393-d923-4d93-8c8b-a4762294912c', // code-quality (complexity, duplicates, naming)
     '9e0761bf-92ed-4d95-bf1a-288c10f85429', // Bug Detector
     '85ee5b6f-d2a6-4a66-8c0b-117e71bbc748', // mcp-sonarqube (code quality CI)
+    'f355c2ce-e3cb-46fd-94bd-88e615989ba1', // CodeSherlock (code analysis)
+    '022ce744-d7a1-49f2-a153-72223cceeb7b', // nextscan (Next.js scanner)
+    '977c8d70-3ecf-4237-a492-30f155692078', // vet (code vetting)
+    'b1745fe7-0304-4055-a8a1-b6c300f3604b', // Apiiro Guardian Agent (code security)
   ],
   CLOUD_DEPLOY: [
     '6452601e-81c9-4712-863d-5b43607f359b', // heroku-mcp-server

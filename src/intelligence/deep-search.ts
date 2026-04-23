@@ -112,11 +112,13 @@ export class DeepSearch {
   async expandAndReSearch(
     query: string,
     initialResult: SearchResult,
-    filters: SearchFilters
+    filters: SearchFilters,
+    preGeneratedQueries?: string[]
   ): Promise<SearchResult> {
     try {
-      // Generate alternate queries via LLM
-      const alternateQueries = await this.generateAlternateQueries(query);
+      // Use pre-generated alternate queries if available (from parallel T2 pipeline),
+      // otherwise generate them now
+      const alternateQueries = preGeneratedQueries ?? await this.generateAlternateQueries(query);
 
       if (alternateQueries.length === 0) {
         return initialResult;
@@ -260,7 +262,7 @@ export class DeepSearch {
   // Private Helpers
   // ──────────────────────────────────────────────────────────────────────────
 
-  private async generateAlternateQueries(query: string): Promise<string[]> {
+  async generateAlternateQueries(query: string): Promise<string[]> {
     const { result: queries } = await this.circuitBreaker.execute(
       async () => {
         const response = await this.env.AI.run(
@@ -270,7 +272,7 @@ export class DeepSearch {
               { role: 'system', content: QUERY_EXPANSION_PROMPT },
               { role: 'user', content: query },
             ],
-            max_tokens: 200,
+            max_tokens: 100,
           }
         );
 

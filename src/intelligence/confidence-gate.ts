@@ -145,23 +145,36 @@ export class ConfidenceGate {
     // Assess BEFORE reranking — confidence thresholds are calibrated for bi-encoder scores
     const assessedTier = this.assessConfidence(searchResult);
 
-    // ── 5b. Cross-Encoder Reranking (optional) ──
-    // Reranker only reorders results; confidence tier is already determined
+    // If circuit breaker is open, force Tier 1 (skip LLM calls)
+    const degraded = this.circuitBreaker.isOpen && assessedTier > 1;
+    const tier = degraded ? 1 : assessedTier;
+
+    // ── 5b. Parallel: Reranking + LLM Query Expansion ──
+    // For T2+, start LLM query expansion in parallel with reranking since
+    // they're independent — reranking reorders initial results while LLM
+    // generates alternate query phrasings. Saves ~200-300ms on T2.
     let reranked = false;
-    if (this.rerankerEnabled && searchResult.results.length > 1) {
-      const rerankerResult = await this.reranker.rerank(
-        query,
-        searchResult.results
-      );
+    let preGeneratedQueries: string[] | undefined;
+
+    if (tier >= 2 && this.deepSearchEnabled && this.rerankerEnabled && searchResult.results.length > 1) {
+      // Run reranking + LLM expansion in parallel
+      const [rerankerResult, altQueries] = await Promise.all([
+        this.reranker.rerank(query, searchResult.results),
+        this.deepSearch.generateAlternateQueries(query).catch(() => [] as string[]),
+      ]);
+      if (rerankerResult.applied) {
+        searchResult.results = rerankerResult.results;
+        reranked = true;
+      }
+      preGeneratedQueries = altQueries;
+    } else if (this.rerankerEnabled && searchResult.results.length > 1) {
+      // T1: just rerank, no LLM expansion needed
+      const rerankerResult = await this.reranker.rerank(query, searchResult.results);
       if (rerankerResult.applied) {
         searchResult.results = rerankerResult.results;
         reranked = true;
       }
     }
-
-    // If circuit breaker is open, force Tier 1 (skip LLM calls)
-    const degraded = this.circuitBreaker.isOpen && assessedTier > 1;
-    const tier = degraded ? 1 : assessedTier;
 
     // ── 6. Route by Tier ──
     let response: FindSkillResponse;
@@ -185,7 +198,8 @@ export class ConfidenceGate {
           filters,
           startTime,
           ctx,
-          reranked
+          reranked,
+          preGeneratedQueries
         );
         break;
 
@@ -305,17 +319,18 @@ export class ConfidenceGate {
     filters: SearchFilters,
     startTime: number,
     ctx: ExecutionContext,
-    reranked: boolean = false
+    reranked: boolean = false,
+    preGeneratedQueries?: string[]
   ): Promise<FindSkillResponse> {
     // Synchronous LLM expansion: generate alternate queries, re-search, merge
-    // This adds ~200-500ms latency but significantly improves recall for
-    // business/colloquial queries that need terminology translation
+    // Pre-generated queries from parallel reranking+LLM step skip the LLM call
     if (this.deepSearchEnabled) {
       try {
         const enrichedResult = await this.deepSearch.expandAndReSearch(
           query,
           result,
-          filters
+          filters,
+          preGeneratedQueries
         );
 
         // If enrichment produced different/better results, use them
