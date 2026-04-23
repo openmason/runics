@@ -61,8 +61,14 @@ export async function handleEmbedQueue(
       };
 
       // 3. Content safety check
-      const isSafe = await embedPipeline.checkContentSafety(skill);
-      if (!isSafe) {
+      const safetyResult = await embedPipeline.checkContentSafety(skill);
+      if ('error' in safetyResult) {
+        // Transient error (Workers AI timeout/rate limit) — retry, don't mark unsafe
+        console.warn(`[EMBED-QUEUE] Skill ${skillId} safety check errored, will retry`);
+        message.retry();
+        continue;
+      }
+      if (!safetyResult.safe) {
         console.warn(`[EMBED-QUEUE] Skill ${skillId} failed content safety, marking unsafe`);
         await pool.query(
           'UPDATE skills SET content_safety_passed = false, updated_at = NOW() WHERE id = $1',

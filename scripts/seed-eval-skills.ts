@@ -36,7 +36,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -66,7 +66,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -97,7 +97,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -128,7 +128,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['container', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -159,7 +159,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['container', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -190,7 +190,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -223,7 +223,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: {
       type: 'function',
       function: {
@@ -260,7 +260,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'license-checker', description: 'Audit npm package licenses' } },
   },
   {
@@ -278,7 +278,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'fossa', description: 'Enterprise license compliance scanning' } },
   },
 
@@ -298,7 +298,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'biome', description: 'Format and lint JS/TS code' } },
   },
   {
@@ -316,7 +316,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'black', description: 'Format Python code' } },
   },
 
@@ -336,7 +336,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'semgrep', description: 'Static analysis across languages' } },
   },
   {
@@ -354,7 +354,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'snyk', description: 'Scan dependencies for vulnerabilities' } },
   },
   {
@@ -372,7 +372,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'codeql', description: 'Semantic code security analysis' } },
   },
 
@@ -392,7 +392,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['container'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'docker-build', description: 'Build Docker images' } },
   },
   {
@@ -410,7 +410,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.8,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'dockerfile-lint', description: 'Lint Dockerfiles' } },
   },
   {
@@ -428,7 +428,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'hadolint', description: 'Lint Dockerfiles with shell analysis' } },
   },
 
@@ -448,7 +448,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['network'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'postman', description: 'Run API test collections' } },
   },
   {
@@ -466,7 +466,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['network'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'httpie', description: 'HTTP client for API testing' } },
   },
   {
@@ -484,7 +484,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.8,
     capabilitiesRequired: ['network', 'filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'rest-client', description: 'Run HTTP request files' } },
   },
 
@@ -504,7 +504,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['network', 'filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'terraform', description: 'Manage infrastructure as code' } },
   },
   {
@@ -522,7 +522,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'kubectl', description: 'Manage Kubernetes clusters' } },
   },
   {
@@ -540,7 +540,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['network'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'cloudflare-deploy', description: 'Deploy to Cloudflare' } },
   },
 
@@ -560,7 +560,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['network', 'container'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'prometheus', description: 'Collect metrics and alerting' } },
   },
   {
@@ -578,7 +578,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['network', 'container'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'grafana', description: 'Create monitoring dashboards' } },
   },
   {
@@ -596,7 +596,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'datadog', description: 'APM and monitoring platform' } },
   },
 
@@ -616,7 +616,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['container', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'mysql', description: 'Run MySQL database container' } },
   },
   {
@@ -634,7 +634,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['container', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'mongodb', description: 'Run MongoDB container' } },
   },
   {
@@ -652,7 +652,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem', 'network'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'drizzle-migrate', description: 'Run database migrations' } },
   },
 
@@ -672,7 +672,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'git-hooks', description: 'Manage Git hooks' } },
   },
   {
@@ -690,7 +690,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'commitlint', description: 'Validate commit messages' } },
   },
   {
@@ -708,7 +708,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem', 'network'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'semantic-release', description: 'Automated versioning and publishing' } },
   },
 
@@ -728,7 +728,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'typedoc', description: 'Generate TypeScript API docs' } },
   },
   {
@@ -746,7 +746,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['filesystem', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'storybook', description: 'Document and test UI components' } },
   },
   {
@@ -764,7 +764,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.85,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'swagger-codegen', description: 'Generate API clients from OpenAPI' } },
   },
 
@@ -784,7 +784,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'jest', description: 'Run JavaScript/TypeScript tests' } },
   },
   {
@@ -802,7 +802,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['container', 'network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'playwright', description: 'Browser automation and E2E testing' } },
   },
   {
@@ -820,7 +820,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['network'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'k6', description: 'Load test APIs and websites' } },
   },
 
@@ -840,7 +840,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.95,
     capabilitiesRequired: ['filesystem'],
     executionLayer: 'container',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'clippy', description: 'Lint Rust code' } },
   },
   {
@@ -858,7 +858,7 @@ const TEST_SKILLS: SkillInput[] = [
     trustScore: 0.9,
     capabilitiesRequired: ['network', 'filesystem'],
     executionLayer: 'worker',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     schemaJson: { type: 'function', function: { name: 'dependabot', description: 'Automate dependency updates' } },
   },
 ];
@@ -872,7 +872,7 @@ function parseArgs() {
 
   const options = {
     endpoint: 'http://localhost:8787',
-    tenantId: 'eval-tenant',
+    tenantId: 'default',
     adminKey: process.env.ADMIN_API_KEY || '',
   };
 
@@ -914,7 +914,7 @@ Usage:
 
 Options:
   -e, --endpoint <url>    API endpoint (default: http://localhost:8787)
-  -t, --tenant <id>       Tenant ID (default: eval-tenant)
+  -t, --tenant <id>       Tenant ID (default: default)
   -h, --help              Show this help message
 
 Examples:

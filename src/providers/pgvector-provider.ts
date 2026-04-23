@@ -39,6 +39,7 @@ export class PgVectorProvider implements SearchProvider {
   private fullTextWeight: number;
   private versionTrustWeight: number;
   private versionUsageWeight: number;
+  private trustBoostWeight: number;
 
   constructor(connectionString: string, env: Env) {
     // Connect directly to Neon (NOT through Hyperdrive)
@@ -52,6 +53,7 @@ export class PgVectorProvider implements SearchProvider {
     this.fullTextWeight = parseFloat(env.FULLTEXT_WEIGHT || '0.3');
     this.versionTrustWeight = parseFloat(env.VERSION_TRUST_WEIGHT || '0.7');
     this.versionUsageWeight = parseFloat(env.VERSION_USAGE_WEIGHT || '0.3');
+    this.trustBoostWeight = parseFloat(env.TRUST_BOOST_WEIGHT || '0.3');
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -131,14 +133,25 @@ export class PgVectorProvider implements SearchProvider {
     // Apply pagination
     const paginatedResults = fusedResults.slice(offset, offset + limit);
 
-    // Fetch full skill metadata
-    const scoredSkills = await this.enrichWithSkillMetadata(
+    // Fetch full skill metadata (raw scores, no trust boost yet)
+    const { scoredSkills, trustScores } = await this.enrichWithSkillMetadata(
       paginatedResults,
       includeMatchText
     );
 
-    // Compute confidence signal
+    // Compute confidence signal BEFORE trust boost (thresholds calibrated for raw scores)
     const confidence = this.computeConfidence(scoredSkills);
+
+    // Apply trust-score boost AFTER confidence assessment
+    // boosted = fusedScore × (1 + weight × (trustScore - 0.5))
+    if (this.trustBoostWeight > 0) {
+      for (const skill of scoredSkills) {
+        const ts = trustScores.get(skill.skillId) ?? 0.5;
+        skill.fusedScore *= 1 + this.trustBoostWeight * (ts - 0.5);
+      }
+      // Re-sort by boosted fusedScore
+      scoredSkills.sort((a, b) => b.fusedScore - a.fusedScore);
+    }
 
     const totalLatencyMs = Date.now() - startTime;
 
@@ -408,9 +421,9 @@ export class PgVectorProvider implements SearchProvider {
       keywordHits: number;
     }>,
     includeMatchText: boolean
-  ): Promise<ScoredSkill[]> {
+  ): Promise<{ scoredSkills: ScoredSkill[]; trustScores: Map<string, number> }> {
     if (fusedResults.length === 0) {
-      return [];
+      return { scoredSkills: [], trustScores: new Map() };
     }
 
     const skillIds = fusedResults.map((r) => r.skillId);
@@ -457,8 +470,15 @@ export class PgVectorProvider implements SearchProvider {
       ])
     );
 
+    // Build trust score lookup for post-confidence boost
+    const trustScores = new Map<string, number>();
+    for (const [id, skill] of skillMap) {
+      trustScores.set(id, skill.trustScore || 0.5);
+    }
+
     // Merge with fused scores
-    return fusedResults
+    // Note: trust boost is applied AFTER confidence computation in search()
+    const scoredSkills = fusedResults
       .map((fr) => {
         const skill = skillMap.get(fr.skillId);
         if (!skill) return null;
@@ -478,6 +498,8 @@ export class PgVectorProvider implements SearchProvider {
         return scoredSkill;
       })
       .filter((s): s is ScoredSkill => s !== null);
+
+    return { scoredSkills, trustScores };
   }
 
   // ────────────────────────────────────────────────────────────────────────────

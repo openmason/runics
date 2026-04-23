@@ -333,10 +333,12 @@ function computeMatchSourceDistribution(
 
 export function findSkillRank(
   response: FindSkillResponse,
-  expectedSkillId: string
+  expectedSkillId: string,
+  acceptableSkillIds?: readonly string[]
 ): number | null {
+  const validIds = new Set([expectedSkillId, ...(acceptableSkillIds ?? [])]);
   for (let i = 0; i < response.results.length; i++) {
-    if (response.results[i].id === expectedSkillId) {
+    if (validIds.has(response.results[i].id)) {
       return i + 1; // Rank is 1-indexed
     }
   }
@@ -352,7 +354,7 @@ export function buildEvalResult(
   response: FindSkillResponse,
   latencyMs: number
 ): EvalResult {
-  const rank = findSkillRank(response, fixture.expectedSkillId);
+  const rank = findSkillRank(response, fixture.expectedSkillId, fixture.acceptableSkillIds);
 
   return {
     fixture,

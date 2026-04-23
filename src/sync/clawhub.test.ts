@@ -18,108 +18,60 @@ describe('ClawHubSync', () => {
   });
 
   describe('normalize', () => {
-    it('should normalize a ClawHub skill', () => {
+    it('should normalize a parsed entry', () => {
       const raw = {
         slug: 'my-cool-skill',
-        displayName: 'My Cool Skill',
-        summary: 'A useful skill for doing things',
-        version: '1.2.0',
-        hasCode: true,
-        hasBins: false,
-        virusTotalFlagged: false,
+        authorSlug: 'steipete-my-cool-skill',
+        description: 'A useful skill for doing things',
+        sourceUrl: 'https://clawskills.sh/skills/steipete-my-cool-skill',
+        category: 'coding-agents-and-ides',
       };
 
       const result = sync.normalize(raw);
 
-      expect(result.name).toBe('My Cool Skill');
-      expect(result.slug).toBe('my-cool-skill');
+      expect(result.name).toBe('my-cool-skill');
+      expect(result.slug).toBe('steipete-my-cool-skill');
       expect(result.description).toBe('A useful skill for doing things');
-      expect(result.version).toBe('1.2.0');
       expect(result.source).toBe('clawhub');
       expect(result.trustScore).toBe(0.6);
-      expect(result.sourceUrl).toBe('https://clawhub.ai/skills/my-cool-skill');
-    });
-
-    it('should reduce trust score for VirusTotal flagged skills', () => {
-      const raw = {
-        slug: 'flagged-skill',
-        displayName: 'Flagged Skill',
-        summary: 'Suspicious skill',
-        virusTotalFlagged: true,
-      };
-
-      const result = sync.normalize(raw);
-      expect(result.trustScore).toBe(0.3);
-    });
-
-    it('should infer instructions layer for SKILL.md-only skills', () => {
-      const raw = {
-        slug: 'instructions-only',
-        summary: 'Text-only skill',
-        hasCode: false,
-        skillMd: '# My Skill\nDo the thing',
-      };
-
-      const result = sync.normalize(raw);
+      expect(result.sourceUrl).toBe('https://clawskills.sh/skills/steipete-my-cool-skill');
       expect(result.executionLayer).toBe('instructions');
+      expect(result.runtimeEnv).toBe('llm');
     });
 
-    it('should infer container layer for skills with binaries', () => {
+    it('should use slug when authorSlug is empty', () => {
       const raw = {
-        slug: 'binary-skill',
-        summary: 'Needs native binaries',
-        hasBins: true,
+        slug: 'orphan-skill',
+        authorSlug: '',
+        description: 'No author in URL',
+        sourceUrl: 'https://clawskills.sh/skills/orphan-skill',
+        category: 'cli-utilities',
       };
 
       const result = sync.normalize(raw);
-      expect(result.executionLayer).toBe('container');
-      expect(result.capabilitiesRequired).toContain('native-binaries');
+      expect(result.slug).toBe('orphan-skill');
     });
 
-    it('should infer container layer for browser capabilities', () => {
+    it('should set all expected fields', () => {
       const raw = {
-        slug: 'browser-skill',
-        summary: 'Needs browser',
-        capabilities: ['browser'],
+        slug: 'test-skill',
+        authorSlug: 'author-test-skill',
+        description: 'Test description',
+        sourceUrl: 'https://clawskills.sh/skills/author-test-skill',
+        category: 'ai-and-llms',
       };
 
       const result = sync.normalize(raw);
-      expect(result.executionLayer).toBe('container');
+      expect(result.capabilitiesRequired).toEqual([]);
+      expect(result.sourceHash).toBe('');
     });
+  });
 
-    it('should default to worker execution layer', () => {
-      const raw = {
-        slug: 'simple-skill',
-        summary: 'Simple function',
-      };
-
-      const result = sync.normalize(raw);
-      expect(result.executionLayer).toBe('worker');
-    });
-
-    it('should use slug as name when displayName is missing', () => {
-      const raw = {
-        slug: 'unnamed-skill',
-        summary: 'No display name',
-      };
-
-      const result = sync.normalize(raw);
-      expect(result.name).toBe('unnamed-skill');
-    });
-
-    it('should fall back through description sources', () => {
-      // summary > description > skillMdExcerpt > empty
-      const raw1 = { slug: 'a', summary: 'summary text' };
-      expect(sync.normalize(raw1).description).toBe('summary text');
-
-      const raw2 = { slug: 'b', description: 'desc text' };
-      expect(sync.normalize(raw2).description).toBe('desc text');
-
-      const raw3 = { slug: 'c', skillMdExcerpt: 'excerpt text' };
-      expect(sync.normalize(raw3).description).toBe('excerpt text');
-
-      const raw4 = { slug: 'd' };
-      expect(sync.normalize(raw4).description).toBe('');
+  describe('fetchBatch', () => {
+    it('should return empty for out-of-range cursor', async () => {
+      const result = await sync.fetchBatch('999');
+      expect(result.skills).toEqual([]);
+      expect(result.nextCursor).toBeUndefined();
     });
   });
 });

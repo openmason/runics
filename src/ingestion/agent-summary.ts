@@ -22,11 +22,16 @@ Start with "Use this tool when you need to..."
 2-3 sentences max. Return only the description, no preamble or explanation.`;
 
 export async function generateAgentSummary(env: Env, skill: SkillInput): Promise<string> {
+  // Include schema/tool definitions when available for richer summaries
+  const schemaInfo = skill.schemaJson
+    ? `\nTools/Schema: ${JSON.stringify(skill.schemaJson).slice(0, 500)}`
+    : '';
+
   const userContent = `Name: ${skill.name}
 Description: ${skill.description}
 Tags: ${skill.tags.join(', ')}
 Category: ${skill.category ?? 'general'}
-Capabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`;
+Capabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}${schemaInfo}`;
 
   try {
     const response = await env.AI.run(env.LLM_MODEL as any, {

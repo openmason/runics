@@ -89,7 +89,7 @@ function truncate(content: string, maxBytes: number): string {
   return content.slice(0, maxBytes) + '\n... [truncated]';
 }
 
-function buildInlineFiles(skill: SkillRow): Record<string, string> {
+export function buildInlineFiles(skill: SkillRow): Record<string, string> {
   const files: Record<string, string> = {};
 
   // SKILL.md — the primary LLM instructions document

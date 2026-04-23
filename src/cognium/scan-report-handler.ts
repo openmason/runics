@@ -116,8 +116,11 @@ export async function applyScanReport(
   // Prefer Circle-IR's trust score when available (more accurate — considers full analysis context);
   // fall back to local computation for backward compat.
   // API v1.8.0: trust_score is 0–100; normalize to 0–1 for DB storage.
-  const trustScore = (skillResult?.trust_score != null)
-    ? Math.max(0.0, Math.min(1.0, skillResult.trust_score / 100))
+  // Exception: metadata-only scans produce unreliable Circle-IR scores (e.g. 1/100 = 0.01)
+  // because there's no code to analyze — use local scoring which factors in source provenance.
+  const useCircleIRScore = skillResult?.trust_score != null && coverage !== 'metadata-only';
+  const trustScore = useCircleIRScore
+    ? Math.max(0.0, Math.min(1.0, skillResult!.trust_score / 100))
     : computeTrustScore(skill, findings);
   const newStatus = deriveStatus(worstSeverity);
   const tier = deriveTier(worstSeverity, trustScore, coverage);

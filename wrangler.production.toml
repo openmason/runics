@@ -14,6 +14,7 @@ name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
 account_id = "bb8e02ea0ca7c225d2fb62d24a9940be"  # cognium account (has runics.net zone)
+workers_dev = true  # Enables runics.cognium.workers.dev (admin endpoints, bypasses public guard)
 
 # Custom domain — api.runics.net DNS proxied through Cloudflare
 routes = [
@@ -68,6 +69,14 @@ queue = "runics-cognium-poll-v2"
 binding = "SKILL_EVENTS"
 queue = "runics-skill-events"
 
+[[queues.producers]]
+binding = "ANALYSIS_QUEUE"
+queue = "runics-analysis-submit"
+
+[[queues.producers]]
+binding = "ANALYSIS_POLL_QUEUE"
+queue = "runics-analysis-poll"
+
 # ── Queue Consumers ──────────────────────────────────────────────────────────
 
 [[queues.consumers]]
@@ -88,6 +97,20 @@ max_batch_size = 5
 max_batch_timeout = 60
 max_retries = 0
 dead_letter_queue = "cognium-poll-dlq"
+
+[[queues.consumers]]
+queue = "runics-analysis-submit"
+max_batch_size = 2
+max_batch_timeout = 60
+max_retries = 2
+dead_letter_queue = "analysis-dlq"
+
+[[queues.consumers]]
+queue = "runics-analysis-poll"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 0
+dead_letter_queue = "analysis-poll-dlq"
 
 # ── Cron ─────────────────────────────────────────────────────────────────────
 
@@ -140,6 +163,7 @@ COGNIUM_ENABLED = "false"             # Hard kill switch — set to "true" to re
 COGNIUM_URL = "https://circle.cognium.net"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"
+ANALYSIS_ENABLED = "true"               # Kill switch for analysis queue processing
 # Secrets (set after first deploy):
 #   wrangler secret put ADMIN_API_KEY -c wrangler.production.toml
 #   wrangler secret put COGNIUM_API_KEY -c wrangler.production.toml
@@ -149,10 +173,17 @@ COGNIUM_MAX_POLL_ATTEMPTS = "12"
 VERSION_TRUST_WEIGHT = "0.7"
 VERSION_USAGE_WEIGHT = "0.3"
 
+# Trust-score ranking boost (multiplicative on fusedScore)
+TRUST_BOOST_WEIGHT = "0.3"
+
 # ── Sync Pipelines ───────────────────────────────────────────────────────────
 SYNC_MCP_ENABLED = "true"
 SYNC_CLAWHUB_ENABLED = "true"
 SYNC_GITHUB_ENABLED = "true"
+SYNC_GLAMA_ENABLED = "true"
+SYNC_SMITHERY_ENABLED = "true"
+SYNC_PULSEMCP_ENABLED = "false"          # Blocked by Cloudflare — disabled until resolved
+SYNC_OPENCLAW_ENABLED = "true"
 
 # ── Scan Backpressure ────────────────────────────────────────────────────────
 COGNIUM_FAST_BATCH_SIZE = "10"
@@ -191,6 +222,10 @@ COGNIUM_MAX_INFLIGHT = "20"
 #      wrangler queues create runics-cognium-poll-v2
 #      wrangler queues create cognium-dlq
 #      wrangler queues create cognium-poll-dlq
+#      wrangler queues create runics-analysis-submit
+#      wrangler queues create runics-analysis-poll
+#      wrangler queues create analysis-dlq
+#      wrangler queues create analysis-poll-dlq
 #
 # 7. Add DNS for custom domain:
 #      → Cloudflare dashboard → runics.net zone → DNS

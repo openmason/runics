@@ -19,9 +19,15 @@ import { publishRoutes } from './publish/handler';
 import { McpRegistrySync } from './sync/mcp-registry';
 import { ClawHubSync } from './sync/clawhub';
 import { GitHubSync } from './sync/github';
+import { GlamaSync } from './sync/glama';
+import { SmitherySync } from './sync/smithery';
+import { PulseMCPSync } from './sync/pulsemcp';
+import { OpenClawSync } from './sync/openclaw';
 import { handleEmbedQueue } from './queues/embed-consumer';
 import { handleCogniumSubmitQueue } from './cognium/submit-consumer';
 import { handleCogniumPollQueue } from './cognium/poll-consumer';
+import { handleAnalysisSubmitQueue } from './cognium/analysis-submit-consumer';
+import { handleAnalysisPollQueue } from './cognium/analysis-poll-consumer';
 // Composition & Social layer (v4)
 import { forkSkill, NotFoundError } from './composition/fork';
 import { copySkill } from './composition/copy';
@@ -58,6 +64,9 @@ import type {
   EmbedQueueMessage,
   CogniumSubmitMessage,
   CogniumPollMessage,
+  AnalysisEndpoint,
+  AnalysisSubmitMessage,
+  AnalysisPollMessage,
   InvocationBatch,
   LeaderboardFilters,
 } from './types';
@@ -778,6 +787,10 @@ app.get('/v1/skills/:slug', async (c) => {
         s.human_star_count, s.human_fork_count, s.agent_invocation_count,
         s.runtime_env, s.visibility, s.environment_variables,
         s.cognium_scanned_at, s.content_safety_passed,
+        s.quality_score, s.quality_tier, s.quality_results, s.quality_analyzed_at,
+        s.trust_score_v2, s.trust_tier, s.trust_results, s.trust_analyzed_at,
+        s.understand_results, s.understand_analyzed_at,
+        s.spec_alignment_score, s.spec_gaps, s.spec_analyzed_at,
         s.created_at, s.updated_at, s.published_at
       FROM skills s
       LEFT JOIN skills rs ON rs.id = s.replacement_skill_id
@@ -845,6 +858,19 @@ app.get('/v1/skills/:slug', async (c) => {
       cogniumScanned: !!row.cognium_scanned_at,
       cogniumScannedAt: row.cognium_scanned_at?.toISOString() ?? null,
       contentSafetyPassed: row.content_safety_passed ?? null,
+      qualityScore: row.quality_score ?? null,
+      qualityTier: row.quality_tier ?? null,
+      qualityResults: row.quality_results ?? null,
+      qualityAnalyzedAt: row.quality_analyzed_at?.toISOString() ?? null,
+      trustScoreV2: row.trust_score_v2 ?? null,
+      trustTier: row.trust_tier ?? null,
+      trustResults: row.trust_results ?? null,
+      trustAnalyzedAt: row.trust_analyzed_at?.toISOString() ?? null,
+      understandResults: row.understand_results ?? null,
+      understandAnalyzedAt: row.understand_analyzed_at?.toISOString() ?? null,
+      specAlignmentScore: row.spec_alignment_score ?? null,
+      specGaps: row.spec_gaps ?? null,
+      specAnalyzedAt: row.spec_analyzed_at?.toISOString() ?? null,
       createdAt: row.created_at?.toISOString() ?? null,
       updatedAt: row.updated_at?.toISOString() ?? null,
       publishedAt: row.published_at?.toISOString() ?? null,
@@ -1753,6 +1779,202 @@ app.get('/v1/admin/scan-preview', async (c) => {
   }
 });
 
+// Admin: run extended analysis (quality, trust, understand, spec-diff) for a skill
+app.post('/v1/admin/analyze/:skillId', async (c) => {
+  const skillId = c.req.param('skillId');
+  try {
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const skillRes = await pool.query(
+      `SELECT id, slug, version, name, description, source, status,
+              execution_layer AS "executionLayer",
+              skill_md AS "skillMd",
+              r2_bundle_key AS "r2BundleKey",
+              root_source AS "rootSource", skill_type AS "skillType",
+              source_url AS "sourceUrl",
+              repository_url AS "repositoryUrl",
+              schema_json AS "schemaJson",
+              capabilities_required AS "capabilitiesRequired",
+              agent_summary AS "agentSummary",
+              changelog::text AS "changelog"
+       FROM skills WHERE id = $1`, [skillId]
+    );
+    if (skillRes.rows.length === 0) return c.json({ error: 'Skill not found' }, 404);
+    const skill = skillRes.rows[0];
+
+    // Queue mode: enqueue for async processing instead of inline
+    const mode = c.req.query('mode') ?? 'inline';
+    if (mode === 'queue') {
+      await c.env.ANALYSIS_QUEUE.send({
+        skillId,
+        priority: 'high',
+        timestamp: Date.now(),
+      } as AnalysisSubmitMessage);
+      return c.json({ success: true, mode: 'queue', skillId, slug: skill.slug });
+    }
+
+    const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
+    const apiKey = c.env.COGNIUM_API_KEY ?? '';
+    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+
+    const { buildAnalysisRequests } = await import('./cognium/analysis-request-builder');
+    const requests = buildAnalysisRequests(skill);
+
+    // Submit all 4 endpoints in parallel
+    const endpoints = [
+      { key: 'quality', path: '/api/quality', body: requests.quality },
+      { key: 'trust', path: '/api/trust', body: requests.trust },
+      { key: 'understand', path: '/api/understand', body: requests.understand },
+      { key: 'specDiff', path: '/api/spec-diff', body: requests.specDiff },
+    ] as const;
+
+    const submitResults = await Promise.allSettled(
+      endpoints.map(async (ep) => {
+        const res = await fetch(`${cogniumUrl}${ep.path}`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(ep.body),
+        });
+        if (!res.ok) throw new Error(`${ep.path} submit failed: ${res.status}`);
+        const { job_id } = await res.json() as { job_id: string };
+        return { key: ep.key, jobId: job_id, path: ep.path };
+      })
+    );
+
+    const jobs: Record<string, { jobId: string; path: string }> = {};
+    const errors: Record<string, string> = {};
+    for (const r of submitResults) {
+      if (r.status === 'fulfilled') {
+        jobs[r.value.key] = { jobId: r.value.jobId, path: r.value.path };
+      } else {
+        const key = endpoints[submitResults.indexOf(r)].key;
+        errors[key] = r.reason?.message ?? 'Unknown submit error';
+      }
+    }
+
+    if (Object.keys(jobs).length === 0) {
+      return c.json({ error: 'All submissions failed', errors, skillId }, 502);
+    }
+
+    // Poll all submitted jobs (max 30 × 4s = 120s)
+    const results: Record<string, any> = {};
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 4000));
+      const pendingKeys = Object.keys(jobs).filter(k => !results[k] && !errors[k]);
+      if (pendingKeys.length === 0) break;
+
+      await Promise.allSettled(
+        pendingKeys.map(async (key) => {
+          const { jobId, path } = jobs[key];
+          const statusRes = await fetch(`${cogniumUrl}${path}/${jobId}/status`, {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+          });
+          if (!statusRes.ok) return;
+          const status = await statusRes.json() as { status: string };
+          if (status.status === 'completed') {
+            const resultRes = await fetch(`${cogniumUrl}${path}/${jobId}/results`, {
+              headers: { 'Authorization': `Bearer ${apiKey}` },
+            });
+            if (resultRes.ok) {
+              results[key] = await resultRes.json();
+            } else {
+              errors[key] = `Results fetch failed: ${resultRes.status}`;
+            }
+          } else if (status.status === 'failed' || status.status === 'cancelled') {
+            errors[key] = `Job ${status.status}`;
+          }
+        })
+      );
+    }
+
+    // Mark timed-out jobs
+    for (const key of Object.keys(jobs)) {
+      if (!results[key] && !errors[key]) {
+        errors[key] = 'Timed out (120s)';
+      }
+    }
+
+    // Apply collected results to DB
+    const { applyAnalysisResults } = await import('./cognium/analysis-report-handler');
+    await applyAnalysisResults(pool, skillId, {
+      quality: results.quality ?? null,
+      trust: results.trust ?? null,
+      understand: results.understand ?? null,
+      specDiff: results.specDiff ?? null,
+    });
+
+    return c.json({
+      success: true,
+      skillId,
+      slug: skill.slug,
+      completed: Object.keys(results),
+      errors: Object.keys(errors).length > 0 ? errors : undefined,
+      quality: results.quality ? { score: results.quality.score, tier: results.quality.tier } : null,
+      trust: results.trust ? { score: results.trust.score, tier: results.trust.tier } : null,
+      understand: results.understand ? { modules: results.understand.modules?.length ?? 0, functions: results.understand.functions?.length ?? 0 } : null,
+      specDiff: results.specDiff ? { alignmentScore: results.specDiff.alignmentScore, gaps: results.specDiff.gaps?.length ?? 0 } : null,
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message, skillId }, 500);
+  }
+});
+
+// Admin: batch-enqueue skills for analysis via queue pipeline
+app.post('/v1/admin/analyze-batch', async (c) => {
+  try {
+    const body = await c.req.json() as {
+      skillIds?: string[];
+      source?: string;
+      limit?: number;
+      endpoints?: AnalysisEndpoint[];
+    };
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    let skillIds: string[];
+
+    if (body.skillIds && body.skillIds.length > 0) {
+      skillIds = body.skillIds.slice(0, 500);
+    } else if (body.source) {
+      const limit = Math.min(body.limit ?? 100, 500);
+      const res = await pool.query(
+        `SELECT id FROM skills WHERE source = $1 AND quality_analyzed_at IS NULL ORDER BY created_at DESC LIMIT $2`,
+        [body.source, limit]
+      );
+      skillIds = res.rows.map((r: { id: string }) => r.id);
+    } else {
+      return c.json({ error: 'Provide skillIds or source' }, 400);
+    }
+
+    if (skillIds.length === 0) {
+      return c.json({ success: true, enqueued: 0, endpoints: body.endpoints ?? ['quality', 'trust', 'understand', 'specDiff'] });
+    }
+
+    // Send in batches of 25 with 200ms delay between batches
+    const CHUNK_SIZE = 25;
+    for (let i = 0; i < skillIds.length; i += CHUNK_SIZE) {
+      const chunk = skillIds.slice(i, i + CHUNK_SIZE);
+      await c.env.ANALYSIS_QUEUE.sendBatch(
+        chunk.map((skillId) => ({
+          body: {
+            skillId,
+            endpoints: body.endpoints,
+            priority: 'normal' as const,
+            timestamp: Date.now(),
+          } as AnalysisSubmitMessage,
+        }))
+      );
+      if (i + CHUNK_SIZE < skillIds.length) {
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    const endpoints = body.endpoints ?? ['quality', 'trust', 'understand', 'specDiff'];
+    return c.json({ success: true, enqueued: skillIds.length, endpoints });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: clear stale in-flight jobs
 app.post('/v1/admin/clear-stale', async (c) => {
   try {
@@ -1773,7 +1995,7 @@ app.post('/v1/admin/clear-stale', async (c) => {
 app.get('/v1/admin/skill-inventory', async (c) => {
   try {
     const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
-    const [total, bySource, byStatus, byContent, byScanStatus, failureReasons] = await Promise.all([
+    const [total, bySource, byStatus, byContent, byScanStatus, failureReasons, embeddingCoverage] = await Promise.all([
       pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE status = 'published'`),
       pool.query(`SELECT source, count(*)::int AS cnt FROM skills WHERE status = 'published' GROUP BY source ORDER BY cnt DESC`),
       pool.query(`SELECT status, count(*)::int AS cnt FROM skills GROUP BY status ORDER BY cnt DESC`),
@@ -1802,6 +2024,13 @@ app.get('/v1/admin/skill-inventory', async (c) => {
       GROUP BY scan_failure_reason
       ORDER BY cnt DESC
       LIMIT 20`),
+      pool.query(`SELECT
+        count(DISTINCT s.id)::int AS total_published,
+        count(DISTINCT se.skill_id)::int AS has_embedding,
+        (count(DISTINCT s.id) - count(DISTINCT se.skill_id))::int AS missing_embedding
+      FROM skills s
+      LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+      WHERE s.status = 'published' AND s.content_safety_passed = true`),
     ]);
     return c.json({
       totalPublished: total.rows[0].cnt,
@@ -1810,6 +2039,155 @@ app.get('/v1/admin/skill-inventory', async (c) => {
       content: byContent.rows[0],
       scanStatus: byScanStatus.rows[0],
       failureReasons: Object.fromEntries(failureReasons.rows.map((r: any) => [r.reason, r.cnt])),
+      embeddings: embeddingCoverage.rows[0],
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: bulk embed skills missing embeddings
+app.post('/v1/admin/embed-backfill', async (c) => {
+  try {
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '200', 10), 500);
+    const source = c.req.query('source');
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const embedPipeline = new EmbedPipeline(c.env);
+    const provider = new PgVectorProvider(c.env.NEON_CONNECTION_STRING, c.env);
+    const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';
+
+    const params: unknown[] = [];
+    let paramIdx = 1;
+    let sourceFilter = '';
+    if (source) {
+      sourceFilter = `AND s.source = $${paramIdx++}`;
+      params.push(source);
+    }
+    params.push(limit);
+    const result = await pool.query(
+      `SELECT s.id, s.name, s.slug, s.version, s.source, s.description,
+              s.agent_summary, s.tags, s.category, s.schema_json,
+              s.trust_score, s.capabilities_required, s.execution_layer, s.tenant_id
+       FROM skills s
+       LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+       WHERE se.skill_id IS NULL
+       AND s.content_safety_passed = true
+       AND s.status = 'published'
+       ${sourceFilter}
+       LIMIT $${paramIdx}`,
+      params
+    );
+
+    let embedded = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    for (const row of result.rows) {
+      try {
+        const skill: SkillInput = {
+          id: row.id, name: row.name, slug: row.slug,
+          version: row.version, source: row.source,
+          description: row.description ?? '',
+          agentSummary: row.agent_summary,
+          tags: row.tags ?? [], category: row.category,
+          schemaJson: row.schema_json,
+          trustScore: parseFloat(row.trust_score ?? '0.5'),
+          capabilitiesRequired: row.capabilities_required ?? [],
+          executionLayer: row.execution_layer,
+          tenantId: row.tenant_id ?? 'default',
+        };
+        const embeddings = useMultiVector
+          ? await embedPipeline.processSkillMultiVector(skill)
+          : await embedPipeline.processSkill(skill);
+        skill.agentSummary = embeddings.agentSummary.text;
+        await provider.index(skill, embeddings);
+        embedded++;
+      } catch (e: any) {
+        failed++;
+        if (errors.length < 5) errors.push(`${row.slug}: ${e.message}`);
+      }
+    }
+
+    // Count remaining
+    const remaining = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills s
+       LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+       WHERE se.skill_id IS NULL AND s.content_safety_passed = true AND s.status = 'published'`
+    );
+
+    return c.json({
+      embedded,
+      failed,
+      remaining: remaining.rows[0].cnt,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: cross-source deduplication analysis
+app.get('/v1/admin/dedup-analysis', async (c) => {
+  try {
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+
+    const [byRepoUrl, byName, summary] = await Promise.all([
+      // Skills sharing the same repository_url across different sources
+      pool.query(
+        `SELECT repository_url, array_agg(DISTINCT source) AS sources,
+                count(*)::int AS cnt, min(name) AS sample_name
+         FROM skills
+         WHERE repository_url IS NOT NULL AND status = 'published'
+         GROUP BY repository_url
+         HAVING count(DISTINCT source) > 1
+         ORDER BY cnt DESC
+         LIMIT $1`,
+        [limit]
+      ),
+      // Skills with exact same name across different sources
+      pool.query(
+        `SELECT lower(name) AS name_lower, array_agg(DISTINCT source) AS sources,
+                count(*)::int AS cnt
+         FROM skills
+         WHERE status = 'published'
+         GROUP BY lower(name)
+         HAVING count(DISTINCT source) > 1
+         ORDER BY cnt DESC
+         LIMIT $1`,
+        [limit]
+      ),
+      // Summary: total dupes by overlap type
+      pool.query(
+        `SELECT
+           (SELECT count(*)::int FROM (
+             SELECT repository_url FROM skills
+             WHERE repository_url IS NOT NULL AND status = 'published'
+             GROUP BY repository_url HAVING count(DISTINCT source) > 1
+           ) t) AS repo_url_overlaps,
+           (SELECT count(*)::int FROM (
+             SELECT lower(name) FROM skills
+             WHERE status = 'published'
+             GROUP BY lower(name) HAVING count(DISTINCT source) > 1
+           ) t) AS name_overlaps`
+      ),
+    ]);
+
+    return c.json({
+      summary: {
+        repoUrlOverlaps: summary.rows[0].repo_url_overlaps,
+        nameOverlaps: summary.rows[0].name_overlaps,
+      },
+      byRepoUrl: byRepoUrl.rows.map((r: any) => ({
+        repositoryUrl: r.repository_url,
+        sources: r.sources,
+        count: r.cnt,
+        sampleName: r.sample_name,
+      })),
+      byName: byName.rows.map((r: any) => ({
+        name: r.name_lower,
+        sources: r.sources,
+        count: r.cnt,
+      })),
     });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
@@ -2098,6 +2476,286 @@ app.post('/v1/admin/sync-clawhub', async (c) => {
   }
 });
 
+// Admin: sync Glama registry
+app.post('/v1/admin/sync-glama', async (c) => {
+  try {
+    const maxPages = Math.min(parseInt(c.req.query('pages') ?? '50', 10), 500);
+    const cursorKey = 'sync:glama:backfill-cursor';
+    const reset = c.req.query('reset') === 'true';
+
+    if (reset) {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+      return c.json({ message: 'Glama cursor reset. Next call starts from the beginning.' });
+    }
+
+    const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const sync = new GlamaSync(c.env);
+    const r = await sync.run({ maxPages, startCursor: savedCursor });
+
+    if (r.lastCursor) {
+      await c.env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+    } else {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+    }
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const totalResult = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills WHERE source = 'glama'`
+    );
+
+    return c.json({
+      synced: r.synced, skipped: r.skipped, errors: r.errors,
+      durationMs: r.durationMs, pagesProcessed: maxPages,
+      complete: !r.lastCursor, totalSkills: totalResult.rows[0].cnt,
+      message: r.lastCursor
+        ? `Processed ${maxPages} pages. More pages available — call again to continue.`
+        : 'All pages processed. Backfill complete.',
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: sync Smithery registry
+app.post('/v1/admin/sync-smithery', async (c) => {
+  try {
+    const maxPages = Math.min(parseInt(c.req.query('pages') ?? '30', 10), 100);
+    const cursorKey = 'sync:smithery:backfill-cursor';
+    const reset = c.req.query('reset') === 'true';
+
+    if (reset) {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+      return c.json({ message: 'Smithery cursor reset. Next call starts from the beginning.' });
+    }
+
+    const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const sync = new SmitherySync(c.env);
+    const r = await sync.run({ maxPages, startCursor: savedCursor });
+
+    if (r.lastCursor) {
+      await c.env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+    } else {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+    }
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const totalResult = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills WHERE source = 'smithery'`
+    );
+
+    return c.json({
+      synced: r.synced, skipped: r.skipped, errors: r.errors,
+      durationMs: r.durationMs, pagesProcessed: maxPages,
+      complete: !r.lastCursor, totalSkills: totalResult.rows[0].cnt,
+      message: r.lastCursor
+        ? `Processed ${maxPages} pages. More pages available — call again to continue.`
+        : 'All pages processed. Backfill complete.',
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: sync PulseMCP directory (disabled by default — Cloudflare-blocked)
+app.post('/v1/admin/sync-pulsemcp', async (c) => {
+  try {
+    const maxPages = Math.min(parseInt(c.req.query('pages') ?? '30', 10), 100);
+    const cursorKey = 'sync:pulsemcp:backfill-cursor';
+    const reset = c.req.query('reset') === 'true';
+
+    if (reset) {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+      return c.json({ message: 'PulseMCP cursor reset. Next call starts from the beginning.' });
+    }
+
+    const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const sync = new PulseMCPSync(c.env);
+    const r = await sync.run({ maxPages, startCursor: savedCursor });
+
+    if (r.lastCursor) {
+      await c.env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+    } else {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+    }
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const totalResult = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills WHERE source = 'pulsemcp'`
+    );
+
+    return c.json({
+      synced: r.synced, skipped: r.skipped, errors: r.errors,
+      durationMs: r.durationMs, pagesProcessed: maxPages,
+      complete: !r.lastCursor, totalSkills: totalResult.rows[0].cnt,
+      message: r.lastCursor
+        ? `Processed ${maxPages} pages. More pages available — call again to continue.`
+        : 'All pages processed. Backfill complete.',
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: sync OpenClaw skills repo (full repo, paginated by offset)
+app.post('/v1/admin/sync-openclaw', async (c) => {
+  try {
+    const maxPages = Math.min(parseInt(c.req.query('pages') ?? '30', 10), 500);
+    const cursorKey = 'sync:openclaw:backfill-cursor';
+    const reset = c.req.query('reset') === 'true';
+
+    if (reset) {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+      return c.json({ message: 'OpenClaw cursor reset. Next call starts from the beginning.' });
+    }
+
+    const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const sync = new OpenClawSync(c.env);
+    const r = await sync.run({ maxPages, startCursor: savedCursor });
+
+    if (r.lastCursor) {
+      await c.env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+    } else {
+      await c.env.SEARCH_CACHE.delete(cursorKey);
+    }
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const totalResult = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills WHERE source = 'openclaw'`
+    );
+
+    return c.json({
+      synced: r.synced, skipped: r.skipped, errors: r.errors,
+      durationMs: r.durationMs, pagesProcessed: maxPages,
+      complete: !r.lastCursor, totalSkills: totalResult.rows[0].cnt,
+      message: r.lastCursor
+        ? `Processed ${maxPages} pages. More pages available — call again to continue.`
+        : 'All pages processed. Backfill complete.',
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: regenerate agent summaries (force LLM re-generation + re-embed)
+app.post('/v1/admin/regenerate-summaries', async (c) => {
+  try {
+    const source = c.req.query('source');
+    const ids = c.req.query('ids');
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+    const dryRun = c.req.query('dry_run') === 'true';
+
+    if (!source && !ids) {
+      return c.json({ error: 'Provide ?source= or ?ids= parameter' }, 400);
+    }
+
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const embedPipeline = new EmbedPipeline(c.env);
+    const provider = new PgVectorProvider(c.env.NEON_CONNECTION_STRING, c.env);
+    const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';
+
+    // Build query based on filters
+    const params: unknown[] = [];
+    let paramIdx = 1;
+    const conditions: string[] = ["s.status = 'published'"];
+
+    if (ids) {
+      const idList = ids.split(',').map((id) => id.trim()).filter(Boolean);
+      conditions.push(`s.id = ANY($${paramIdx++})`);
+      params.push(idList);
+    }
+    if (source) {
+      conditions.push(`s.source = $${paramIdx++}`);
+      params.push(source);
+    }
+
+    params.push(limit);
+    const result = await pool.query(
+      `SELECT s.id, s.name, s.slug, s.version, s.source, s.description,
+              s.agent_summary, s.tags, s.category, s.schema_json,
+              s.trust_score, s.capabilities_required, s.execution_layer,
+              s.tenant_id, s.skill_md
+       FROM skills s
+       WHERE ${conditions.join(' AND ')}
+       LIMIT $${paramIdx}`,
+      params
+    );
+
+    const results: Array<{
+      id: string;
+      name: string;
+      oldSummary: string | null;
+      newSummary: string;
+    }> = [];
+    let regenerated = 0;
+    let failed = 0;
+
+    for (const row of result.rows) {
+      try {
+        const skill: SkillInput = {
+          id: row.id, name: row.name, slug: row.slug,
+          version: row.version, source: row.source,
+          description: row.description ?? '',
+          tags: row.tags ?? [], category: row.category,
+          schemaJson: row.schema_json,
+          trustScore: parseFloat(row.trust_score ?? '0.5'),
+          capabilitiesRequired: row.capabilities_required ?? [],
+          executionLayer: row.execution_layer,
+          tenantId: row.tenant_id ?? 'default',
+        };
+
+        // Force LLM regeneration (pass no agentSummary so it generates fresh)
+        const newSummary = await (await import('./ingestion/agent-summary')).generateAgentSummary(c.env, skill);
+
+        if (dryRun) {
+          results.push({
+            id: row.id, name: row.name,
+            oldSummary: row.agent_summary, newSummary,
+          });
+          regenerated++;
+          continue;
+        }
+
+        // Update agent_summary in DB
+        await pool.query(
+          'UPDATE skills SET agent_summary = $1, updated_at = NOW() WHERE id = $2',
+          [newSummary, row.id]
+        );
+
+        // Delete old embeddings
+        await pool.query('DELETE FROM skill_embeddings WHERE skill_id = $1', [row.id]);
+
+        // Re-embed with the new summary
+        skill.agentSummary = newSummary;
+        const embeddings = useMultiVector
+          ? await embedPipeline.processSkillMultiVector(skill)
+          : await embedPipeline.processSkill(skill);
+        await provider.index(skill, embeddings);
+
+        results.push({
+          id: row.id, name: row.name,
+          oldSummary: row.agent_summary, newSummary,
+        });
+        regenerated++;
+      } catch (e: any) {
+        failed++;
+        results.push({
+          id: row.id, name: row.name,
+          oldSummary: row.agent_summary,
+          newSummary: `ERROR: ${e.message}`,
+        });
+      }
+    }
+
+    return c.json({
+      regenerated, failed, dryRun,
+      total: result.rows.length,
+      results: results.slice(0, 20), // Cap output to avoid huge responses
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // ──────────────────────────────────────────────────────────────────────────────
 // 404 Handler
 // ──────────────────────────────────────────────────────────────────────────────
@@ -2226,7 +2884,7 @@ export default {
                LEFT JOIN skill_embeddings se ON s.id = se.skill_id
                WHERE se.skill_id IS NULL
                AND s.content_safety_passed = true
-               LIMIT 30`
+               LIMIT 100`
             );
             let embedded = 0;
             for (const row of result.rows) {
@@ -2590,6 +3248,88 @@ export default {
           )
       );
     }
+
+    // Every 10 minutes: Glama sync (paginated — 30 pages per invocation with persistent cursor)
+    if (minute % 10 === 0 && env.SYNC_GLAMA_ENABLED !== 'false') {
+      ctx.waitUntil(
+        (async () => {
+          const cursorKey = 'sync:glama:cursor';
+          const savedCursor = await env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+          const sync = new GlamaSync(env);
+          const r = await sync.run({ maxPages: 30, startCursor: savedCursor });
+
+          if (r.lastCursor) {
+            await env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+          } else {
+            await env.SEARCH_CACHE.delete(cursorKey);
+          }
+
+          console.log(
+            `[CRON] Glama sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}` +
+            (r.lastCursor ? ' (more pages pending)' : ' (complete)')
+          );
+        })().catch((e: Error) =>
+          console.error('[CRON] Glama sync failed:', e.message)
+        )
+      );
+    }
+
+    // Every 15 minutes: Smithery sync
+    if (minute % 15 === 0 && env.SYNC_SMITHERY_ENABLED !== 'false') {
+      ctx.waitUntil(
+        new SmitherySync(env)
+          .run()
+          .then((r) =>
+            console.log(
+              `[CRON] Smithery sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
+            )
+          )
+          .catch((e: Error) =>
+            console.error('[CRON] Smithery sync failed:', e.message)
+          )
+      );
+    }
+
+    // Every 15 minutes: PulseMCP sync (disabled by default — Cloudflare-blocked)
+    if (minute % 15 === 0 && env.SYNC_PULSEMCP_ENABLED === 'true') {
+      ctx.waitUntil(
+        new PulseMCPSync(env)
+          .run()
+          .then((r) =>
+            console.log(
+              `[CRON] PulseMCP sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
+            )
+          )
+          .catch((e: Error) =>
+            console.error('[CRON] PulseMCP sync failed:', e.message)
+          )
+      );
+    }
+
+    // Every 10 minutes (offset by 2): OpenClaw full repo sync (paginated — 50 skills per page)
+    if (minute % 10 === 2 && env.SYNC_OPENCLAW_ENABLED !== 'false') {
+      ctx.waitUntil(
+        (async () => {
+          const cursorKey = 'sync:openclaw:cursor';
+          const savedCursor = await env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+          const sync = new OpenClawSync(env);
+          const r = await sync.run({ maxPages: 20, startCursor: savedCursor });
+
+          if (r.lastCursor) {
+            await env.SEARCH_CACHE.put(cursorKey, r.lastCursor, { expirationTtl: 86400 });
+          } else {
+            await env.SEARCH_CACHE.delete(cursorKey);
+          }
+
+          console.log(
+            `[CRON] OpenClaw sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}` +
+            (r.lastCursor ? ' (more pages pending)' : ' (complete)')
+          );
+        })().catch((e: Error) =>
+          console.error('[CRON] OpenClaw sync failed:', e.message)
+        )
+      );
+    }
   },
 
   async queue(
@@ -2615,6 +3355,18 @@ export default {
       case 'runics-cognium-poll-v2':
         await handleCogniumPollQueue(
           batch as MessageBatch<CogniumPollMessage>,
+          env
+        );
+        break;
+      case 'runics-analysis-submit':
+        await handleAnalysisSubmitQueue(
+          batch as MessageBatch<AnalysisSubmitMessage>,
+          env
+        );
+        break;
+      case 'runics-analysis-poll':
+        await handleAnalysisPollQueue(
+          batch as MessageBatch<AnalysisPollMessage>,
           env
         );
         break;

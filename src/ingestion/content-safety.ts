@@ -10,11 +10,17 @@
 
 import type { Env, SkillInput } from '../types';
 
-export async function checkContentSafety(env: Env, skill: SkillInput): Promise<boolean> {
+export type SafetyResult = { safe: boolean } | { error: true };
+
+/**
+ * Check content safety using Llama Guard 3.
+ * Returns { safe: true/false } for definitive results, or { error: true } on transient failure.
+ * Callers should NOT permanently mark skills unsafe on { error: true } — retry later instead.
+ */
+export async function checkContentSafety(env: Env, skill: SkillInput): Promise<SafetyResult> {
   // Allow disabling content safety for development/testing
   if (env.DISABLE_CONTENT_SAFETY === 'true') {
-    console.log('⚠️  Content safety check disabled (DISABLE_CONTENT_SAFETY=true)');
-    return true;
+    return { safe: true };
   }
 
   const textToCheck = [
@@ -45,10 +51,10 @@ export async function checkContentSafety(env: Env, skill: SkillInput): Promise<b
       console.warn(`[SAFETY] Content flagged as unsafe for skill ${skill.id}: ${response}`);
     }
 
-    return isSafe;
+    return { safe: isSafe };
   } catch (error) {
-    console.error('[SAFETY] Content safety check error:', error);
-    // Fail closed: if safety check errors, mark as unsafe
-    return false;
+    console.error('[SAFETY] Content safety check error (transient, will retry):', error);
+    // Return error signal — callers should retry, not permanently mark unsafe
+    return { error: true };
   }
 }

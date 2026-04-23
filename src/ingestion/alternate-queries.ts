@@ -11,24 +11,32 @@
 
 import type { Env, SkillInput } from '../types';
 
-const ALTERNATE_QUERY_PROMPT = `You generate search queries that developers or AI agents would use to find this skill. Think about:
+function buildAlternateQueryPrompt(name: string): string {
+  return `You generate 5 search queries that developers or AI agents would use to find the tool "${name}".
 
-1. DIRECT: How someone who knows exactly what they want would ask
-2. PROBLEM-BASED: How someone describing their problem (not the solution) would ask
-3. BUSINESS LANGUAGE: How a non-technical person or PM would describe the need
-4. ALTERNATE TERMINOLOGY: Different words for the same concept
-5. COMPOSITION: When this skill would be part of a larger workflow
+Generate EXACTLY ONE query for each of these strategies, in this order:
 
-Return exactly 5 queries as a JSON array of strings. Each query 4-10 words. No explanations, just the JSON array.
+1. DIRECT — how someone who already knows about "${name}" would phrase the search
+2. PROBLEM — the underlying problem the user faces, in their own words (no tool names)
+3. BUSINESS — how a non-technical manager or PM would describe the need (no tool names)
+4. ALTERNATE — a different phrasing or synonym with "${name}" in it for disambiguation
+5. COMPOSITION — a larger workflow or pipeline that "${name}" fits into
 
-Example:
-["check rust dependency licenses", "are my crate dependencies safe to ship", "ensure open source compliance rust project", "cargo ban crate security advisory check", "rust supply chain security audit pipeline"]`;
+Hard requirements:
+- Queries #1 and #4 MUST include the tool name "${name}" (or an obvious variant like removing dashes)
+- Queries #2 and #3 MUST NOT include the tool name — they are semantic/problem phrasings
+- Each query is 4-10 words, lowercase, no quotes
+- Return ONLY a JSON array of 5 strings. No prose, no code fences.
+
+Example for a tool named "cargo-deny":
+["check rust dependency licenses with cargo-deny", "shipping GPL code in proprietary rust binary", "ensure open source compliance for rust project", "cargo-deny security advisory scanner", "rust supply chain security audit pipeline"]`;
+}
 
 export async function generateAlternateQueries(env: Env, skill: SkillInput): Promise<string[]> {
   try {
     const response = await env.AI.run(env.LLM_MODEL as any, {
       messages: [
-        { role: 'system', content: ALTERNATE_QUERY_PROMPT },
+        { role: 'system', content: buildAlternateQueryPrompt(skill.name) },
         {
           role: 'user',
           content: `Name: ${skill.name}\nAgent summary: ${skill.agentSummary ?? skill.description}\nTags: ${skill.tags.join(', ')}\nCategory: ${skill.category ?? 'general'}\nCapabilities: ${skill.capabilitiesRequired?.join(', ') ?? 'none'}`,

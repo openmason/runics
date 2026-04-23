@@ -18,6 +18,25 @@ export interface CogniumPollMessage {
   attempt: number;
 }
 
+// ─── Analysis Queue Messages ────────────────────────────────────────────────
+
+export type AnalysisEndpoint = 'quality' | 'trust' | 'understand' | 'specDiff';
+
+export interface AnalysisSubmitMessage {
+  skillId: string;
+  endpoints?: AnalysisEndpoint[];  // defaults to all 4
+  priority: 'normal' | 'high';
+  timestamp: number;
+}
+
+export interface AnalysisPollMessage {
+  skillId: string;
+  endpoint: AnalysisEndpoint;
+  jobId: string;
+  apiPath: string;  // e.g. '/api/quality'
+  attempt: number;
+}
+
 // v5.4: Skill lifecycle events emitted to SKILL_EVENTS queue for Cortex consumption
 export interface SkillEventMessage {
   type: 'skill.revoked' | 'skill.vulnerable';
@@ -77,6 +96,7 @@ export interface CircleIRSkillAnalyzeRequest {
     enable_enrichment?: boolean;
     enable_llm_verification?: boolean;
     max_files?: number;
+    fast_mode?: boolean;
   };
   llm_config?: LLMConfig;
 }
@@ -231,22 +251,22 @@ export interface TrustRequest {
   branch?: string;
   bundle_url?: string; // v1.13.1 — downloads and extracts zip
   files?: Record<string, string>;
-  skill_context?: {    // v1.13.1 — metadata stored on job
+  skill_context?: {    // v1.13.2 — metadata stored on job
     name?: string;
-    source_registry?: string;
-    version?: string;
-    author?: string;
     description?: string;
+    source_registry?: string;
+    source_url?: string;       // v1.13.2
+    execution_layer?: string;  // v1.13.2
   };
   disabledPasses?: string[];
   trustDisabledPasses?: string[];
 }
 
 export interface TrustPassResult {
-  name: string;
+  pass: string; // v1.19.2 — spec now matches actual API key
   score: number; // 0–100
-  findings: Array<{ severity: string; message: string; file?: string; line?: number }>;
-  duration_ms: number;
+  findings: Array<{ pass: string; ruleId?: string; severity?: string; message: string; file?: string; line?: number; location?: { file?: string; line?: number } }>;
+  durationMs: number;
 }
 
 export interface TrustResultResponse {
@@ -257,23 +277,27 @@ export interface TrustResultResponse {
   passResults: TrustPassResult[];
   categoryScores: Record<string, number>;
   artifacts: Record<string, unknown>;
-  duration_ms: number;
+  durationMs: number; // v1.19.2 — spec now matches actual API key (was duration_ms in older spec)
 }
 
 // ─── Quality Score API (POST /api/quality) ───────────────────────────────────
-// 5 passes: EXCELLENT (85+) GOOD (70-84) FAIR (50-69) POOR (<50)
+// 5 passes: EXCELLENT (85+) GOOD (60-84) FAIR (40-59) POOR (<40)
 
 export type QualityTier = 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR';
 
 export interface QualityRequest {
   path?: string;
+  repo_url?: string;   // v1.19.0
+  branch?: string;
+  bundle_url?: string; // v1.19.0
   files?: Record<string, string>;
 }
 
 export interface QualityPassResult {
-  name: string; // code-complexity | test-coverage | documentation-coverage | maintainability-index | performance-patterns
+  pass: string; // code-complexity | test-coverage | documentation-coverage | maintainability-index | performance-patterns
   score: number; // 0–100
-  findings: Array<{ severity: string; message: string }>;
+  weight: number; // pass weight in aggregate score
+  findings: Array<{ severity?: string; message: string }>;
 }
 
 export interface QualityResultResponse {
@@ -282,13 +306,16 @@ export interface QualityResultResponse {
   score: number; // 0–100
   tier: QualityTier;
   passResults: QualityPassResult[];
-  duration_ms: number;
+  totalDurationMs: number; // v1.19.2 — was duration_ms in older spec
 }
 
 // ─── Semantic Understanding API (POST /api/understand) ───────────────────────
 
 export interface UnderstandRequest {
   path?: string;
+  repo_url?: string;   // v1.19.0
+  branch?: string;
+  bundle_url?: string; // v1.19.0
   files?: Record<string, string>;
 }
 
@@ -320,8 +347,11 @@ export interface UnderstandResultResponse {
 
 export interface SpecDiffRequest {
   path?: string;
-  specDir?: string;
+  repo_url?: string;   // v1.19.0
+  branch?: string;
+  bundle_url?: string; // v1.19.0
   files?: Record<string, string>;
+  specDir?: string;
 }
 
 export interface SpecDiffResultResponse {
@@ -341,6 +371,9 @@ export interface SpecDiffResultResponse {
 
 export interface ClusterRequest {
   path?: string;
+  repo_url?: string;   // v1.19.0
+  branch?: string;
+  bundle_url?: string; // v1.19.0
   files?: Record<string, string>;
   llm?: boolean;
 }
@@ -351,6 +384,80 @@ export interface ClusterResultResponse {
   components: Array<{ name: string; files: string[]; role: string }>;
   clusters: Array<{ name: string; components: string[]; description: string }>;
   features: Array<{ name: string; description: string; components: string[] }>;
+  duration_ms: number;
+}
+
+// ─── Secrets Detection API (POST /api/secrets — v1.19.0) ─────────────────────
+
+export interface SecretsRequest {
+  path?: string;
+  repo_url?: string;
+  branch?: string;
+  bundle_url?: string;
+  files?: Record<string, string>;
+}
+
+export interface SecretsResultResponse {
+  job_id: string;
+  status: string;
+  secrets: Array<{
+    type: string;
+    severity: string;
+    file: string;
+    line: number;
+    match: string;
+    context: string;
+  }>;
+  total: number;
+  duration_ms: number;
+}
+
+// ─── Metrics API (POST /api/metrics — v1.19.0) ──────────────────────────────
+
+export interface MetricsRequest {
+  path?: string;
+  repo_url?: string;
+  branch?: string;
+  bundle_url?: string;
+  files?: Record<string, string>;
+}
+
+export interface MetricsResultResponse {
+  job_id: string;
+  status: string;
+  files: Array<{ file: string; metrics: Record<string, number> }>;
+  summary: { total_files: number; avg_mi: number; avg_cqi: number };
+  duration_ms: number;
+}
+
+// ─── Generate Spec API (POST /api/generate-spec — v1.19.0) ──────────────────
+
+export interface GenerateSpecRequest {
+  path?: string;
+  repo_url?: string;
+  branch?: string;
+  bundle_url?: string;
+  files?: Record<string, string>;
+  specModel?: string;
+  overwrite?: boolean;
+  generateDesign?: boolean;
+  generatePrinciples?: boolean;
+  generateTasks?: boolean;
+  enableDesignLLM?: boolean;
+  enablePrinciplesLLM?: boolean;
+  enableTasksLLM?: boolean;
+  returnContent?: boolean;
+}
+
+export interface GenerateSpecResultResponse {
+  job_id: string;
+  status: string;
+  specs: Array<{ featureName: string; outputPath: string; specContent: string }>;
+  totalSpecs: number;
+  designGenerated: boolean;
+  principlesGenerated: boolean;
+  tasksGenerated: boolean;
+  timestamp: string;
   duration_ms: number;
 }
 

@@ -11,7 +11,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { Env, SkillInput, EmbeddingSet } from '../types';
-import { checkContentSafety } from './content-safety';
+import { checkContentSafety, type SafetyResult } from './content-safety';
 import { generateAgentSummary } from './agent-summary';
 import { generateAlternateQueries } from './alternate-queries';
 
@@ -39,7 +39,7 @@ export class EmbedPipeline {
   // Content Safety Check (delegates to content-safety.ts)
   // ────────────────────────────────────────────────────────────────────────────
 
-  async checkContentSafety(skill: SkillInput): Promise<boolean> {
+  async checkContentSafety(skill: SkillInput): Promise<SafetyResult> {
     return checkContentSafety(this.env, skill);
   }
 

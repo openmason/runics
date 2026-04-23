@@ -93,6 +93,7 @@ COGNIUM_ENABLED = "false"             # Hard kill switch — set to "true" to re
 COGNIUM_URL = "https://circle.cognium.net"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"
+ANALYSIS_ENABLED = "false"              # Kill switch for analysis queue processing
 # COGNIUM_API_KEY set via: wrangler secret put COGNIUM_API_KEY
 # ACTIVEPIECES_WEBHOOK_URL set via: wrangler secret put ACTIVEPIECES_WEBHOOK_URL
 
@@ -100,10 +101,19 @@ COGNIUM_MAX_POLL_ATTEMPTS = "12"
 VERSION_TRUST_WEIGHT = "0.7"
 VERSION_USAGE_WEIGHT = "0.3"
 
+# Trust-score ranking boost (multiplicative on fusedScore)
+TRUST_BOOST_WEIGHT = "0.3"
+
 # Phase 5: Sync pipeline config
-SYNC_MCP_ENABLED = "true"
-SYNC_CLAWHUB_ENABLED = "true"
-SYNC_GITHUB_ENABLED = "true"
+# Staging is for ad-hoc testing only — disable automated sync to avoid churn.
+# Production enables these in wrangler.production.toml.
+SYNC_MCP_ENABLED = "false"
+SYNC_CLAWHUB_ENABLED = "false"
+SYNC_GITHUB_ENABLED = "false"
+SYNC_GLAMA_ENABLED = "false"
+SYNC_SMITHERY_ENABLED = "false"
+SYNC_PULSEMCP_ENABLED = "false"
+SYNC_OPENCLAW_ENABLED = "false"
 
 # R2 bucket for skill code bundles
 [[r2_buckets]]
@@ -127,6 +137,14 @@ queue = "runics-cognium-poll-v2"
 binding = "SKILL_EVENTS"
 queue = "runics-skill-events"
 
+[[queues.producers]]
+binding = "ANALYSIS_QUEUE"
+queue = "runics-analysis-submit"
+
+[[queues.producers]]
+binding = "ANALYSIS_POLL_QUEUE"
+queue = "runics-analysis-poll"
+
 # Queue consumers
 [[queues.consumers]]
 queue = "runics-embed"
@@ -146,6 +164,20 @@ max_batch_size = 5
 max_batch_timeout = 60
 max_retries = 0
 dead_letter_queue = "cognium-poll-dlq"
+
+[[queues.consumers]]
+queue = "runics-analysis-submit"
+max_batch_size = 2
+max_batch_timeout = 60
+max_retries = 2
+dead_letter_queue = "analysis-dlq"
+
+[[queues.consumers]]
+queue = "runics-analysis-poll"
+max_batch_size = 5
+max_batch_timeout = 60
+max_retries = 0
+dead_letter_queue = "analysis-poll-dlq"
 
 # Cron triggers: every minute for scan poll drain, includes hourly mat view refresh
 [triggers]

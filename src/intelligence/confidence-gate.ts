@@ -593,6 +593,37 @@ export class ConfidenceGate {
       });
     }
 
-    return results;
+    return this.deduplicateByName(results);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Search-Time Dedup (Cross-Source)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private deduplicateByName(results: SkillResult[]): SkillResult[] {
+    const seen = new Map<string, number>(); // normalized name → index in deduped
+    const deduped: SkillResult[] = [];
+
+    for (const result of results) {
+      const key = result.name.toLowerCase().trim();
+      const existingIdx = seen.get(key);
+
+      if (existingIdx === undefined) {
+        seen.set(key, deduped.length);
+        deduped.push(result);
+      } else {
+        // Keep the one with higher score; if tied, prefer higher trustScore
+        const existing = deduped[existingIdx];
+        if (
+          result.score > existing.score ||
+          (result.score === existing.score &&
+            result.trustScore > existing.trustScore)
+        ) {
+          deduped[existingIdx] = result;
+        }
+      }
+    }
+
+    return deduped;
   }
 }

@@ -180,6 +180,12 @@ export interface SkillResult {
   errorRate?: number;
   tags?: string[];
   cooccursWith?: { skillId: string; slug: string; compositionCount: number }[];
+
+  // Extended analysis (optional, from Circle-IR dedicated endpoints)
+  qualityScore?: number;
+  qualityTier?: string;
+  trustTier?: string;
+  specAlignmentScore?: number;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -363,6 +369,7 @@ export interface EvalFixture {
   id: string;
   query: string;
   expectedSkillId: string;
+  acceptableSkillIds?: readonly string[]; // Additional IDs that count as correct (e.g., duplicates from other sources)
   pattern: 'direct' | 'problem' | 'business' | 'alternate' | 'composition';
 }
 
@@ -431,16 +438,23 @@ export interface Env {
   COGNIUM_QUEUE: Queue;
   COGNIUM_POLL_QUEUE: Queue; // v5.0: poll queue for async job flow
   SKILL_EVENTS?: Queue;       // v5.4: skill revocation/vulnerability events for Cortex
-  COGNIUM_JOBS: KVNamespace; // v5.0: job state KV namespace
+  ANALYSIS_QUEUE: Queue;      // v5.4: analysis submit queue (quality/trust/understand/spec-diff)
+  ANALYSIS_POLL_QUEUE: Queue; // v5.4: analysis poll queue
+  COGNIUM_JOBS: KVNamespace; // v5.0: job state KV namespace (also used for analysis jobs)
   R2_BUCKET: R2Bucket;
   NEON_CONNECTION_STRING: string;
   GITHUB_TOKEN?: string;
   SYNC_MCP_ENABLED?: string; // default "true"
   SYNC_CLAWHUB_ENABLED?: string; // default "true"
   SYNC_GITHUB_ENABLED?: string; // default "true"
+  SYNC_GLAMA_ENABLED?: string; // default "true"
+  SYNC_SMITHERY_ENABLED?: string; // default "true"
+  SYNC_PULSEMCP_ENABLED?: string; // default "false" (Cloudflare-blocked)
+  SYNC_OPENCLAW_ENABLED?: string; // default "true"
 
   // v5.0: Cognium client configuration
   COGNIUM_ENABLED?: string;         // default "true" — set to "false" to halt all cron + queue cognium scanning
+  ANALYSIS_ENABLED?: string;        // default "true" — set to "false" to halt analysis queue processing
   COGNIUM_URL?: string; // default "https://circle.cognium.net"
   COGNIUM_API_KEY?: string;
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"
@@ -458,6 +472,9 @@ export interface Env {
   // v5.0: Version ranking weights
   VERSION_TRUST_WEIGHT?: string; // default "0.7"
   VERSION_USAGE_WEIGHT?: string; // default "0.3"
+
+  // Trust-score ranking boost
+  TRUST_BOOST_WEIGHT?: string; // default "0.3" — multiplicative boost on fusedScore
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -513,6 +530,9 @@ export interface CogniumPollMessage {
   jobId: string;
   attempt: number;
 }
+
+// v5.4: Analysis queue messages (re-exported from cognium/types)
+export type { AnalysisEndpoint, AnalysisSubmitMessage, AnalysisPollMessage } from './cognium/types';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Composition & Social Layer Types (v4)

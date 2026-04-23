@@ -47,7 +47,7 @@ export const skills = pgTable(
     trustScore: numeric('trust_score', { precision: 3, scale: 2 }).default('0.5'),
     capabilitiesRequired: text('capabilities_required').array(),
     executionLayer: text('execution_layer').notNull(),
-    contentSafetyPassed: boolean('content_safety_passed'),
+    contentSafetyPassed: boolean('content_safety_passed').default(true),
     tags: text('tags').array(),
     category: text('category'),
     // Phase 5: Sync pipeline columns
@@ -142,6 +142,20 @@ export const skills = pgTable(
     environmentVariables: text('environment_variables').array(),
     // v5.4: DAG workflow definition for composite skills
     workflowDefinition: jsonb('workflow_definition'),
+    // v5.4: Circle-IR extended analysis columns
+    qualityScore: real('quality_score'),
+    qualityTier: text('quality_tier'),
+    qualityResults: jsonb('quality_results'),
+    qualityAnalyzedAt: timestamp('quality_analyzed_at'),
+    trustScoreV2: real('trust_score_v2'),
+    trustTier: text('trust_tier'),
+    trustResults: jsonb('trust_results'),
+    trustAnalyzedAt: timestamp('trust_analyzed_at'),
+    understandResults: jsonb('understand_results'),
+    understandAnalyzedAt: timestamp('understand_analyzed_at'),
+    specAlignmentScore: real('spec_alignment_score'),
+    specGaps: jsonb('spec_gaps'),
+    specAnalyzedAt: timestamp('spec_analyzed_at'),
   },
   (table) => ({
     trustScoreIdx: index('idx_skills_trust_score').on(table.trustScore),
