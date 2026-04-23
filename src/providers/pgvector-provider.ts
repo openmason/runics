@@ -132,32 +132,29 @@ export class PgVectorProvider implements SearchProvider {
     const fullTextResults = await this.fullTextSearch(query, filters, poolSize);
     const fullTextSearchMs = Date.now() - fullTextSearchStart;
 
-    // Merge and fuse scores
+    // Merge and fuse scores (trust_score flows through from vector search)
     const fusedResults = this.fuseScores(vectorResults, fullTextResults);
 
-    // Enrich the wider pool with trust scores for boosting
-    const { scoredSkills: poolSkills, trustScores } = await this.enrichWithSkillMetadata(
-      fusedResults,
+    // Apply trust-score boost on fused results BEFORE pagination
+    // Trust scores are already available from the vector search SQL (no extra round-trip)
+    if (this.trustBoostWeight > 0) {
+      for (const fr of fusedResults) {
+        fr.fusedScore *= 1 + this.trustBoostWeight * (fr.trustScore - 0.5);
+      }
+      fusedResults.sort((a, b) => b.fusedScore - a.fusedScore);
+    }
+
+    // Paginate AFTER trust boost
+    const paginatedResults = fusedResults.slice(offset, offset + limit);
+
+    // Only enrich the final page with full skill metadata (single DB round-trip for ~10 skills)
+    const { scoredSkills, trustScores } = await this.enrichWithSkillMetadata(
+      paginatedResults,
       includeMatchText
     );
 
-    // Compute confidence signal BEFORE trust boost (thresholds calibrated for raw scores)
-    // Use only the top `limit` raw-scored results for confidence assessment
-    const confidence = this.computeConfidence(poolSkills.slice(0, limit));
-
-    // Apply trust-score boost AFTER confidence assessment but BEFORE pagination
-    // boosted = fusedScore × (1 + weight × (trustScore - 0.5))
-    if (this.trustBoostWeight > 0) {
-      for (const skill of poolSkills) {
-        const ts = trustScores.get(skill.skillId) ?? 0.5;
-        skill.fusedScore *= 1 + this.trustBoostWeight * (ts - 0.5);
-      }
-      // Re-sort by boosted fusedScore
-      poolSkills.sort((a, b) => b.fusedScore - a.fusedScore);
-    }
-
-    // Apply pagination AFTER trust boost
-    const scoredSkills = poolSkills.slice(offset, offset + limit);
+    // Compute confidence on the final results (raw fused scores already include trust boost)
+    const confidence = this.computeConfidence(scoredSkills);
 
     const totalLatencyMs = Date.now() - startTime;
 
@@ -183,7 +180,7 @@ export class PgVectorProvider implements SearchProvider {
     embedding: number[],
     filters: SearchFilters,
     limit: number
-  ): Promise<Array<{ skillId: string; score: number; matchSource: string; matchText: string }>> {
+  ): Promise<Array<{ skillId: string; score: number; matchSource: string; matchText: string; trustScore: number }>> {
     const embeddingStr = `[${embedding.join(',')}]`;
 
     // Build WHERE clause — include tenant's own + public ('default') embeddings
@@ -237,13 +234,14 @@ export class PgVectorProvider implements SearchProvider {
     // v5.0: Version ranking — best version per slug using trust×weight + min(run_count/100, usage_weight)
     // DISTINCT ON (slug) picks the version with highest version_rank per slug
     const sql = `
-      SELECT skill_id, score, match_source, match_text
+      SELECT skill_id, score, match_source, match_text, trust_score
       FROM (
         SELECT DISTINCT ON (s.slug)
           se.skill_id,
           1 - (se.embedding <=> $2::vector) AS score,
           se.source AS match_source,
           se.source_text AS match_text,
+          COALESCE(s.trust_score, 0.5) AS trust_score,
           (COALESCE(s.trust_score, 0.5) * ${this.versionTrustWeight}
            + LEAST(COALESCE(s.run_count, 0)::float / 100.0, ${this.versionUsageWeight})) AS version_rank
         FROM skill_embeddings se
@@ -262,6 +260,7 @@ export class PgVectorProvider implements SearchProvider {
       score: row.score,
       matchSource: row.match_source,
       matchText: row.match_text,
+      trustScore: parseFloat(row.trust_score) || 0.5,
     }));
   }
 
@@ -374,7 +373,7 @@ export class PgVectorProvider implements SearchProvider {
   // ────────────────────────────────────────────────────────────────────────────
 
   private fuseScores(
-    vectorResults: Array<{ skillId: string; score: number; matchSource: string; matchText: string }>,
+    vectorResults: Array<{ skillId: string; score: number; matchSource: string; matchText: string; trustScore: number }>,
     fullTextResults: Array<{ skillId: string; score: number; keywordHits: number }>
   ): Array<{
     skillId: string;
@@ -384,6 +383,7 @@ export class PgVectorProvider implements SearchProvider {
     matchSource: string;
     matchText: string;
     keywordHits: number;
+    trustScore: number;
   }> {
     // Create lookup map for full-text results
     const fullTextMap = new Map(
@@ -405,6 +405,7 @@ export class PgVectorProvider implements SearchProvider {
         matchSource: vr.matchSource,
         matchText: vr.matchText,
         keywordHits: ft?.keywordHits ?? 0,
+        trustScore: vr.trustScore,
       };
     });
 
@@ -425,6 +426,7 @@ export class PgVectorProvider implements SearchProvider {
       matchSource: string;
       matchText: string;
       keywordHits: number;
+      trustScore: number;
     }>,
     includeMatchText: boolean
   ): Promise<{ scoredSkills: ScoredSkill[]; trustScores: Map<string, number> }> {
