@@ -2125,6 +2125,51 @@ app.post('/v1/admin/embed-backfill', async (c) => {
   }
 });
 
+// Admin: queue-based backfill — enqueues skills missing embeddings to EMBED_QUEUE
+app.post('/v1/admin/embed-queue-backfill', async (c) => {
+  try {
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
+    const source = c.req.query('source');
+    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+
+    const params: unknown[] = [];
+    let paramIdx = 1;
+    let sourceFilter = '';
+    if (source) {
+      sourceFilter = `AND s.source = $${paramIdx++}`;
+      params.push(source);
+    }
+    params.push(limit);
+
+    const result = await pool.query(
+      `SELECT s.id FROM skills s
+       LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+       WHERE se.skill_id IS NULL
+       AND s.content_safety_passed = true
+       AND s.status = 'published'
+       ${sourceFilter}
+       LIMIT $${paramIdx}`,
+      params
+    );
+
+    let queued = 0;
+    for (const row of result.rows) {
+      await c.env.EMBED_QUEUE.send({ skillId: row.id, action: 'embed', source: 'backfill' });
+      queued++;
+    }
+
+    const remaining = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills s
+       LEFT JOIN skill_embeddings se ON s.id = se.skill_id
+       WHERE se.skill_id IS NULL AND s.content_safety_passed = true AND s.status = 'published'`
+    );
+
+    return c.json({ queued, remaining: remaining.rows[0].cnt - queued });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: cross-source deduplication analysis
 app.get('/v1/admin/dedup-analysis', async (c) => {
   try {

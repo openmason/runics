@@ -69,9 +69,9 @@ export async function handleEmbedQueue(
         continue;
       }
       if (!safetyResult.safe) {
-        console.warn(`[EMBED-QUEUE] Skill ${skillId} failed content safety, marking unsafe`);
+        console.warn(`[EMBED-QUEUE] Skill ${skillId} failed content safety, revoking`);
         await pool.query(
-          'UPDATE skills SET content_safety_passed = false, updated_at = NOW() WHERE id = $1',
+          `UPDATE skills SET content_safety_passed = false, status = 'revoked', updated_at = NOW() WHERE id = $1`,
           [skillId]
         );
         message.ack();
