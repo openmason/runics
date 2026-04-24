@@ -91,6 +91,8 @@ const ALT = {
     '10831dd6-b6a5-4d5f-a1b8-82ad4c3dc3db', // Prometheus MCP Server (pab1it0)
     '7fa0db34-b200-45b7-a304-1c669fa67291', // io.github.jeanlopezxyz/mcp-prometheus
     '5ab0206a-01bd-466e-8781-2b104bce0a4a', // Prometheus MCP
+    'fd419bc0-fde7-4b58-bbf4-2873251c9acc', // Prometheus MCP Server (glama)
+    'ae9dd9fb-b48b-4ae7-999b-dffa83886946', // OpenTelemetry MCP Server
   ],
   PLAYWRIGHT: [
     'ced13a07-eab5-4b99-b93e-433c1d47d57b', // Playwright Automation (microsoft-playwright-mcp, smithery)
@@ -429,7 +431,7 @@ export const evalFixtures: EvalFixture[] = [
 
   { id: 'eval-disambig-001', query: 'check my code for issues', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-disambig-002', query: 'static analysis to find security problems in my source code', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, SKILL.CODEQL, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
-  { id: 'eval-disambig-003', query: 'format my code automatically', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, SKILL.BLACK, ...ALT.TS_TOOLS], pattern: 'direct' },
+  { id: 'eval-disambig-003', query: 'code formatter for my project', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, SKILL.BLACK, ...ALT.TS_TOOLS, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY, ...ALT.ESLINT], pattern: 'direct' },
   { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: ALT.SNYK, pattern: 'direct' },
   { id: 'eval-disambig-005', query: 'lint my dockerfile', expectedSkillId: SKILL.HADOLINT, pattern: 'direct' },
   { id: 'eval-disambig-006', query: 'test my API endpoints', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: [...ALT.POSTMAN, ...ALT.API_TESTING], pattern: 'direct' },

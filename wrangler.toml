@@ -105,6 +105,8 @@ VERSION_USAGE_WEIGHT = "0.3"
 TRUST_BOOST_WEIGHT = "0.3"
 # Candidate pool multiplier — fetch N× candidates before trust-boost pagination
 CANDIDATE_POOL_MULTIPLIER = "3"
+# Name-match boost — boost results whose name matches query tokens
+NAME_BOOST_WEIGHT = "0.15"
 
 # Phase 5: Sync pipeline config
 # Staging is for ad-hoc testing only — disable automated sync to avoid churn.

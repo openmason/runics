@@ -294,7 +294,7 @@ export class ConfidenceGate {
     degraded: boolean = false,
     reranked: boolean = false
   ): Promise<FindSkillResponse> {
-    const skillResults = await this.buildSkillResults(result.results);
+    const skillResults = await this.buildSkillResults(result.results, query);
 
     return {
       results: skillResults,
@@ -335,7 +335,7 @@ export class ConfidenceGate {
 
         // If enrichment produced different/better results, use them
         if (enrichedResult.results.length > 0) {
-          const skillResults = await this.buildSkillResults(enrichedResult.results);
+          const skillResults = await this.buildSkillResults(enrichedResult.results, query);
           return {
             results: skillResults,
             confidence: 'medium',
@@ -357,7 +357,7 @@ export class ConfidenceGate {
     }
 
     // Fallback: return unenriched results
-    const skillResults = await this.buildSkillResults(result.results);
+    const skillResults = await this.buildSkillResults(result.results, query);
     return {
       results: skillResults,
       confidence: 'medium',
@@ -384,7 +384,7 @@ export class ConfidenceGate {
   ): Promise<FindSkillResponse> {
     if (!this.deepSearchEnabled) {
       // Deep search disabled — return raw results
-      const skillResults = await this.buildSkillResults(result.results);
+      const skillResults = await this.buildSkillResults(result.results, query);
       return {
         results: skillResults,
         confidence: 'low_enriched',
@@ -423,7 +423,8 @@ export class ConfidenceGate {
     }
 
     const skillResults = await this.buildSkillResults(
-      deepResult.result.results
+      deepResult.result.results,
+      query
     );
 
     const confidence: FindSkillResponse['confidence'] = deepResult.noMatch
@@ -471,7 +472,7 @@ export class ConfidenceGate {
     );
 
     // Build enriched response
-    const skillResults = await this.buildSkillResults(enrichedResult.results);
+    const skillResults = await this.buildSkillResults(enrichedResult.results, query);
 
     const enrichedResponse: FindSkillResponse = {
       results: skillResults,
@@ -504,7 +505,8 @@ export class ConfidenceGate {
   // ──────────────────────────────────────────────────────────────────────────
 
   private async buildSkillResults(
-    scoredSkills: ScoredSkill[]
+    scoredSkills: ScoredSkill[],
+    query?: string
   ): Promise<SkillResult[]> {
     if (scoredSkills.length === 0) {
       return [];
@@ -606,6 +608,28 @@ export class ConfidenceGate {
         matchSource: ss.matchSource,
         matchText: ss.matchText,
       });
+    }
+
+    // Name-match boost: if query tokens appear in the skill name, boost score
+    // This corrects reranker misrankings where a generic tool outranks a named match
+    if (query && results.length > 1) {
+      const nameBoostWeight = parseFloat(this.env.NAME_BOOST_WEIGHT || '0.15');
+      if (nameBoostWeight > 0) {
+        const queryTokens = query
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((t) => t.length >= 3);
+
+        for (const result of results) {
+          const nameLower = result.name.toLowerCase();
+          const matchCount = queryTokens.filter((t) => nameLower.includes(t)).length;
+          if (matchCount > 0) {
+            const overlap = matchCount / queryTokens.length;
+            result.score *= 1 + nameBoostWeight * overlap;
+          }
+        }
+        results.sort((a, b) => b.score - a.score);
+      }
     }
 
     return this.deduplicateByName(results);
