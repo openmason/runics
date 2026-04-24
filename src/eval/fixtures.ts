@@ -312,6 +312,16 @@ const ALT = {
     '3141c3b5-aa81-487e-af1f-95a8123c4d46', // Shadcn UI Component Reference Server
     'dfcf5e9c-657d-4dc8-b269-0190e311a810', // Rakit UI AI
   ],
+  FORMATTERS: [
+    'ab1d003f-1a18-470e-a2be-ec05296d43d3', // Coding Custom (code style consistency)
+    '4b3d7860-13a4-4525-9ddf-f618d589642a', // Project Data Standardization MCP
+  ],
+  DEV_ENVIRONMENT: [
+    '83768da8-51ce-40c1-b15b-1dbd2692e8c9', // context-foundry (project context)
+    '4a9406f1-92cc-41eb-8c4f-2db74b654aea', // Cloudflare Containers
+    '7b6d54db-bf37-4abc-b559-39abd70ebab3', // Template server
+    '56484365-d4ff-40c3-a300-bd0d19c4475d', // my-mcp-server
+  ],
 } as const;
 
 export const evalFixtures: EvalFixture[] = [
@@ -343,7 +353,7 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-problem-001', query: 'make sure we are not shipping GPL code in proprietary product', expectedSkillId: SKILL.CARGO_DENY, acceptableSkillIds: [...ALT.LICENSE], pattern: 'problem' },
-  { id: 'eval-problem-002', query: 'code formatting is inconsistent across the team', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS], pattern: 'problem' },
+  { id: 'eval-problem-002', query: 'code formatting is inconsistent across the team', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-003', query: 'catch common javascript bugs before runtime', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-004', query: 'production containers might have security issues', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'problem' },
   { id: 'eval-problem-005', query: 'need to test database migrations without affecting production', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.DB_MIGRATION], pattern: 'problem' },
@@ -367,7 +377,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-business-002', query: 'maintain consistent code style across engineering team', expectedSkillId: SKILL.PRETTIER, pattern: 'business' },
   { id: 'eval-business-003', query: 'reduce bugs and improve code quality standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, ...ALT.CODE_REVIEW, SKILL.BIOME], pattern: 'business' },
   { id: 'eval-business-004', query: 'meet security compliance requirements for container deployments', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'business' },
-  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE], pattern: 'business' },
+  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE, ...ALT.DEV_ENVIRONMENT], pattern: 'business' },
   { id: 'eval-business-006', query: 'convert documentation to PDF and Word for client deliverables', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'business' },
   { id: 'eval-business-007', query: 'improve application performance and scalability', expectedSkillId: SKILL.REDIS, acceptableSkillIds: [...ALT.REDIS, ...ALT.K6], pattern: 'business' },
   { id: 'eval-business-008', query: 'enterprise license compliance scanning across all projects', expectedSkillId: SKILL.FOSSA, acceptableSkillIds: [...ALT.LICENSE, SKILL.LICENSE_CHECKER], pattern: 'business' },

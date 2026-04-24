@@ -107,7 +107,7 @@ const tests: PerfTest[] = [
   {
     name: 'skill-lookup',
     method: 'GET',
-    path: '/v1/skills/skills-public',
+    path: '/v1/skills/docker-postgres',
     sloP95Ms: 400,
     validate: (status) => status === 200,
   },

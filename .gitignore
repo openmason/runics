@@ -30,3 +30,6 @@ npm-debug.log*
 # Temporary files
 *.tmp
 .temp/
+
+# Frontend (separate project)
+web/
