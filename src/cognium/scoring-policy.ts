@@ -25,6 +25,21 @@ export const BASE_TRUST: Record<string, number> = {
   'human-distilled': 0.50,
 };
 
+// Maximum trust ceiling per source — prevents Circle-IR perfect scores (100/100)
+// from inflating unvetted tools to trust=1.0. Only seed/editorial skills exceed these.
+export const MAX_TRUST: Record<string, number> = {
+  'mcp-registry':    0.85,
+  'smithery':        0.75,
+  'clawhub':         0.70,
+  'glama':           0.70,
+  'github':          0.65,
+  'openclaw':        0.65,
+  'manual':          0.70,
+  'forge':           0.50,
+  'human-distilled': 0.60,
+  'pulsemcp':        0.65,
+};
+
 // Trust impact per finding category
 const TRUST_IMPACT: Record<string, number> = {
   // SAST findings
@@ -40,6 +55,15 @@ const TRUST_IMPACT: Record<string, number> = {
   CRITICAL_CAPABILITY_MISMATCH: -0.25,
   HIGH_CAPABILITY_MISMATCH:     -0.15,
 };
+
+/**
+ * Cap a trust score by the source provenance ceiling.
+ * Seed/editorial skills (already above the cap) are left unchanged.
+ */
+export function capTrustBySource(trustScore: number, source: string): number {
+  const cap = MAX_TRUST[source] ?? 0.60;
+  return Math.min(trustScore, cap);
+}
 
 export function computeTrustScore(skill: SkillRow, findings: ScanFinding[]): number {
   const originSource = skill.rootSource ?? skill.source;

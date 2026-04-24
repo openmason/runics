@@ -269,18 +269,19 @@ describe('applyScanReport', () => {
     expect(triggerNotification).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'skill-1' }), 'vulnerable', 'CWE-89');
   });
 
-  it('should use Circle-IR trust_score when skillResult is available', async () => {
+  it('should use Circle-IR trust_score when skillResult is available (capped by source)', async () => {
     const client = mockClient();
     const pool = mockPool(client);
     const skill = makeSkill({ source: 'github' });
     // v1.8.0: trust_score is 0–100; API returns 74, we store 0.74
+    // But github cap is 0.65, so final score is capped
     const skillResult = { trust_score: 74, verdict: 'TRUSTED' as const } as any;
 
     await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
 
     const updateCall = client.query.mock.calls[1];
-    // Should use Circle-IR's 0.74, not local computation (0.55 github base)
-    expect(updateCall[1][0]).toBe(0.74);
+    // Circle-IR gives 0.74 but github cap is 0.65
+    expect(updateCall[1][0]).toBe(0.65);
   });
 
   it('should fall back to local trust score when skillResult is null', async () => {
@@ -295,17 +296,19 @@ describe('applyScanReport', () => {
     expect(updateCall[1][0]).toBe(0.55);
   });
 
-  it('should clamp Circle-IR trust_score to [0.0, 1.0]', async () => {
+  it('should clamp Circle-IR trust_score to [0.0, 1.0] then cap by source', async () => {
     const client = mockClient();
     const pool = mockPool(client);
-    const skill = makeSkill();
+    const skill = makeSkill(); // default source: github
     // v1.8.0: trust_score 0–100; value > 100 should clamp to 1.0
+    // Then capped by github ceiling (0.65)
     const skillResult = { trust_score: 150, verdict: 'TRUSTED' as const } as any;
 
     await applyScanReport(mockEnv(), pool, skill, [], makeJob(), skillResult);
 
     const updateCall = client.query.mock.calls[1];
-    expect(updateCall[1][0]).toBe(1.0);
+    // Clamped to 1.0, then capped to 0.65 (github ceiling)
+    expect(updateCall[1][0]).toBe(0.65);
   });
 
   it('should clear scan_failure_reason on successful scan (normal path)', async () => {

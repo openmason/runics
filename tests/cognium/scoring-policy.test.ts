@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeTrustScore,
+  capTrustBySource,
   deriveStatus,
   deriveTier,
   buildRemediationMessage,
   BASE_TRUST,
+  MAX_TRUST,
 } from '../../src/cognium/scoring-policy';
 import type { ScanFinding, SkillRow } from '../../src/cognium/types';
 
@@ -414,5 +416,35 @@ describe('buildRemediationMessage', () => {
     expect(lines[0]).toBe('HIGH finding: CWE-89');
     expect(lines[1]).toBe('Phase: sast');
     expect(lines[2]).toBe('Fix: Use parameterized queries');
+  });
+});
+
+describe('capTrustBySource', () => {
+  it('should cap GitHub trust at 0.65', () => {
+    expect(capTrustBySource(1.0, 'github')).toBe(MAX_TRUST['github']);
+    expect(capTrustBySource(0.65, 'github')).toBe(0.65);
+    expect(capTrustBySource(0.50, 'github')).toBe(0.50);
+  });
+
+  it('should cap mcp-registry trust at 0.85', () => {
+    expect(capTrustBySource(1.0, 'mcp-registry')).toBe(MAX_TRUST['mcp-registry']);
+    expect(capTrustBySource(0.80, 'mcp-registry')).toBe(0.80);
+  });
+
+  it('should cap glama trust at 0.70', () => {
+    expect(capTrustBySource(0.90, 'glama')).toBe(MAX_TRUST['glama']);
+  });
+
+  it('should cap smithery trust at 0.75', () => {
+    expect(capTrustBySource(0.90, 'smithery')).toBe(MAX_TRUST['smithery']);
+  });
+
+  it('should not raise scores below the cap', () => {
+    expect(capTrustBySource(0.30, 'github')).toBe(0.30);
+    expect(capTrustBySource(0.50, 'mcp-registry')).toBe(0.50);
+  });
+
+  it('should default to 0.60 cap for unknown sources', () => {
+    expect(capTrustBySource(1.0, 'unknown-source')).toBe(0.60);
   });
 });

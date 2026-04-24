@@ -14,7 +14,7 @@ import { Pool } from '@neondatabase/serverless';
 import type { Env } from '../types';
 import type { ScanFinding, SkillRow, CircleIRJobStatus, CircleIRSkillResult } from './types';
 import { deriveWorstSeverity, isContentUnsafe } from './finding-mapper';
-import { computeTrustScore, deriveStatus, deriveTier, buildRemediationMessage } from './scoring-policy';
+import { computeTrustScore, capTrustBySource, deriveStatus, deriveTier, buildRemediationMessage } from './scoring-policy';
 import { cascadeStatusToComposites, repairCompositeStatus } from './composite-cascade';
 import { triggerNotification } from './notification-trigger';
 import { isGitHubRepoUrl } from '../sync/utils';
@@ -119,9 +119,12 @@ export async function applyScanReport(
   // Exception: metadata-only scans produce unreliable Circle-IR scores (e.g. 1/100 = 0.01)
   // because there's no code to analyze — use local scoring which factors in source provenance.
   const useCircleIRScore = skillResult?.trust_score != null && coverage !== 'metadata-only';
-  const trustScore = useCircleIRScore
+  const originSource = skill.rootSource ?? skill.source;
+  const rawTrustScore = useCircleIRScore
     ? Math.max(0.0, Math.min(1.0, skillResult!.trust_score / 100))
     : computeTrustScore(skill, findings);
+  // Cap by source provenance ceiling so clean scans don't inflate unvetted tools
+  const trustScore = capTrustBySource(rawTrustScore, originSource);
   const newStatus = deriveStatus(worstSeverity);
   const tier = deriveTier(worstSeverity, trustScore, coverage);
   const worstFinding = findings.find(f => f.severity === worstSeverity);
