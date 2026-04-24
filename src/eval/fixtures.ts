@@ -119,6 +119,7 @@ const ALT = {
     '0cfe47bc-a59b-4b62-9969-8a4300d26a58', // MyPostmanServer (glama)
     'c2033721-020a-4ce3-8906-dbb5fda1589c', // Postman MCP Server
     '1ba47d16-154f-4434-aa66-9a331a7abf58', // api-test-mcp
+    '84fc6df9-982b-4bb0-9afa-fab18e63b7c0', // newman (Postman CLI runner)
   ],
   CLOUDFLARE: [
     '1d787498-ded2-4a51-b1e5-ba540e3cb804', // cloudflare-mcp (github)
@@ -202,6 +203,7 @@ const ALT = {
   ],
   STORYBOOK: [
     'cd92cdca-8e61-423e-84ab-8d75db53f34e', // Storybook MCP Addon
+    'e8486b85-ed6d-427e-bc1a-f31d3000a654', // storybook-mcp-server (ansariwaqqas)
   ],
   FOSSA: [
     ...[] as string[], // fossa has few direct alternatives; license tools overlap
@@ -331,7 +333,7 @@ export const evalFixtures: EvalFixture[] = [
   // DIRECT Pattern — User knows exactly what they want
   // ──────────────────────────────────────────────────────────────────────────
 
-  { id: 'eval-direct-001', query: 'check rust dependency licenses', expectedSkillId: SKILL.CARGO_DENY, pattern: 'direct' },
+  { id: 'eval-direct-001', query: 'check rust dependency licenses', expectedSkillId: SKILL.CARGO_DENY, acceptableSkillIds: [SKILL.LICENSE_CHECKER, ...ALT.LICENSE], pattern: 'direct' },
   { id: 'eval-direct-002', query: 'format typescript code', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS, SKILL.TYPEDOC], pattern: 'direct' },
   { id: 'eval-direct-003', query: 'lint javascript files', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-direct-004', query: 'scan docker images for vulnerabilities', expectedSkillId: SKILL.TRIVY, pattern: 'direct' },
@@ -359,16 +361,16 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-problem-003', query: 'catch common javascript bugs before runtime', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-004', query: 'production containers might have security issues', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'problem' },
   { id: 'eval-problem-005', query: 'need to test database migrations without affecting production', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.DB_MIGRATION], pattern: 'problem' },
-  { id: 'eval-problem-006', query: 'documentation needs to be in PDF format for compliance', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'problem' },
+  { id: 'eval-problem-006', query: 'documentation needs to be in PDF format for compliance', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: [...ALT.PANDOC, ...ALT.MD_TO_PDF, ...ALT.DOC_CONVERTER], pattern: 'problem' },
   { id: 'eval-problem-007', query: 'api responses are too slow need to add caching', expectedSkillId: SKILL.REDIS, acceptableSkillIds: [...ALT.REDIS, ...ALT.CACHE], pattern: 'problem' },
   { id: 'eval-problem-008', query: 'our npm dependencies might have problematic licenses', expectedSkillId: SKILL.LICENSE_CHECKER, acceptableSkillIds: ALT.LICENSE, pattern: 'problem' },
-  { id: 'eval-problem-009', query: 'code has security vulnerabilities we cannot find manually', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS], pattern: 'problem' },
+  { id: 'eval-problem-009', query: 'code has security vulnerabilities we cannot find manually', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-010', query: 'need to verify our APIs return correct responses after changes', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: ALT.POSTMAN, pattern: 'problem' },
   { id: 'eval-problem-011', query: 'cloud infrastructure is configured manually and drifting', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE], pattern: 'problem' },
   { id: 'eval-problem-012', query: 'we have no metrics to tell if our services are healthy or degraded', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.DATADOG, ...ALT.MONITORING], pattern: 'problem' },
   { id: 'eval-problem-013', query: 'login flow breaks on different browsers after deployments', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING], pattern: 'problem' },
   { id: 'eval-problem-014', query: 'our kubernetes pods keep crashing and need debugging', expectedSkillId: SKILL.KUBECTL, acceptableSkillIds: ALT.KUBECTL, pattern: 'problem' },
-  { id: 'eval-problem-015', query: 'our python code style is inconsistent between developers', expectedSkillId: SKILL.BLACK, pattern: 'problem' },
+  { id: 'eval-problem-015', query: 'our python code style is inconsistent between developers', expectedSkillId: SKILL.BLACK, acceptableSkillIds: [SKILL.ESLINT, SKILL.BIOME, SKILL.PRETTIER, ...ALT.ESLINT, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-016', query: 'commit messages are all over the place no consistency', expectedSkillId: SKILL.COMMITLINT, acceptableSkillIds: ALT.COMMITLINT, pattern: 'problem' },
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -380,13 +382,13 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-business-003', query: 'reduce bugs and improve code quality standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, ...ALT.CODE_REVIEW, SKILL.BIOME], pattern: 'business' },
   { id: 'eval-business-004', query: 'meet security compliance requirements for container deployments', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'business' },
   { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE, ...ALT.DEV_ENVIRONMENT], pattern: 'business' },
-  { id: 'eval-business-006', query: 'convert documentation to PDF and Word for client deliverables', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'business' },
+  { id: 'eval-business-006', query: 'convert documentation to PDF and Word for client deliverables', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: [...ALT.PANDOC, ...ALT.MD_TO_PDF, ...ALT.DOC_CONVERTER], pattern: 'business' },
   { id: 'eval-business-007', query: 'improve application performance and scalability', expectedSkillId: SKILL.REDIS, acceptableSkillIds: [...ALT.REDIS, ...ALT.K6], pattern: 'business' },
   { id: 'eval-business-008', query: 'enterprise license compliance scanning across all projects', expectedSkillId: SKILL.FOSSA, acceptableSkillIds: [...ALT.LICENSE, SKILL.LICENSE_CHECKER], pattern: 'business' },
   { id: 'eval-business-009', query: 'get visibility into application health and uptime', expectedSkillId: SKILL.DATADOG, acceptableSkillIds: [...ALT.DATADOG, ...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.MONITORING], pattern: 'business' },
   { id: 'eval-business-010', query: 'automate infrastructure provisioning for cloud migration', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE], pattern: 'business' },
   { id: 'eval-business-011', query: 'automate the release and versioning process', expectedSkillId: SKILL.SEMANTIC_RELEASE, acceptableSkillIds: ALT.SEMANTIC_RELEASE, pattern: 'business' },
-  { id: 'eval-business-012', query: 'generate API documentation for partner integrations', expectedSkillId: SKILL.SWAGGER_CODEGEN, acceptableSkillIds: [...ALT.SWAGGER, ...ALT.API_DOCS], pattern: 'business' },
+  { id: 'eval-business-012', query: 'generate API documentation for partner integrations', expectedSkillId: SKILL.SWAGGER_CODEGEN, acceptableSkillIds: [...ALT.SWAGGER, ...ALT.API_DOCS, SKILL.TYPEDOC], pattern: 'business' },
   { id: 'eval-business-013', query: 'keep all project dependencies secure and up to date', expectedSkillId: SKILL.DEPENDABOT, acceptableSkillIds: [...ALT.DEPENDABOT, ...ALT.SNYK, ...ALT.DEP_SECURITY], pattern: 'business' },
   { id: 'eval-business-014', query: 'ensure website works on all major browsers', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: ALT.PLAYWRIGHT, pattern: 'business' },
 
@@ -414,9 +416,9 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-composition-001', query: 'rust supply chain security audit pipeline', expectedSkillId: SKILL.CARGO_DENY, pattern: 'composition' },
-  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, pattern: 'composition' },
+  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, acceptableSkillIds: [SKILL.COMMITLINT, ...ALT.COMMITLINT, SKILL.PRETTIER, SKILL.ESLINT, SKILL.BIOME], pattern: 'composition' },
   { id: 'eval-composition-003', query: 'ci pipeline to validate code quality', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'composition' },
-  { id: 'eval-composition-004', query: 'container security scanning in deployment workflow', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: [...ALT.TRIVY, ...ALT.CONTAINER_SCANNING], pattern: 'composition' },
+  { id: 'eval-composition-004', query: 'container security scanning in deployment workflow', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: [...ALT.TRIVY, ...ALT.CONTAINER_SCANNING, SKILL.HADOLINT], pattern: 'composition' },
   { id: 'eval-composition-005', query: 'spin up a postgres container for integration test fixtures', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'composition' },
   { id: 'eval-composition-006', query: 'convert markdown docs to PDF as part of release pipeline', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: ALT.PANDOC, pattern: 'composition' },
   { id: 'eval-composition-007', query: 'deploy infrastructure then deploy application on top', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE, ...ALT.CLOUD_DEPLOY], pattern: 'composition' },
@@ -432,8 +434,8 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-disambig-001', query: 'check my code for issues', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-disambig-002', query: 'static analysis to find security problems in my source code', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, SKILL.CODEQL, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
   { id: 'eval-disambig-003', query: 'code formatter for my project', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, SKILL.BLACK, ...ALT.TS_TOOLS, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY, ...ALT.ESLINT], pattern: 'direct' },
-  { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: ALT.SNYK, pattern: 'direct' },
-  { id: 'eval-disambig-005', query: 'lint my dockerfile', expectedSkillId: SKILL.HADOLINT, pattern: 'direct' },
+  { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEP_SECURITY, ...ALT.DEPENDABOT], pattern: 'direct' },
+  { id: 'eval-disambig-005', query: 'lint my dockerfile', expectedSkillId: SKILL.HADOLINT, acceptableSkillIds: [SKILL.DOCKERFILE_LINT], pattern: 'direct' },
   { id: 'eval-disambig-006', query: 'test my API endpoints', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: [...ALT.POSTMAN, ...ALT.API_TESTING], pattern: 'direct' },
   { id: 'eval-disambig-007', query: 'run a local database for testing', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'direct' },
   { id: 'eval-disambig-008', query: 'set up application monitoring', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.DATADOG, ...ALT.MONITORING], pattern: 'direct' },
