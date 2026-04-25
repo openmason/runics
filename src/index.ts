@@ -2227,6 +2227,168 @@ app.get('/v1/admin/dedup-analysis', async (c) => {
   }
 });
 
+// ── Admin: cross-source deduplication by repository_url ──────────────────────
+app.post('/v1/admin/dedup-repo-url', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const execute = c.req.query('execute') === 'true';
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 1000);
+
+    // Single CTE: partition by repository_url, rank by source priority then freshness.
+    // Only process groups where every member is status='published' (idempotent).
+    const analysisSql = `
+      WITH source_ranked AS (
+        SELECT
+          id, slug, source, repository_url, trust_score, status, updated_at, name,
+          CASE source
+            WHEN 'mcp-registry' THEN 1
+            WHEN 'smithery'     THEN 2
+            WHEN 'pulsemcp'     THEN 3
+            WHEN 'glama'        THEN 4
+            WHEN 'clawhub'      THEN 5
+            WHEN 'openclaw'     THEN 6
+            WHEN 'github'       THEN 7
+            ELSE 8
+          END AS source_priority,
+          ROW_NUMBER() OVER (
+            PARTITION BY repository_url
+            ORDER BY
+              CASE source
+                WHEN 'mcp-registry' THEN 1
+                WHEN 'smithery'     THEN 2
+                WHEN 'pulsemcp'     THEN 3
+                WHEN 'glama'        THEN 4
+                WHEN 'clawhub'      THEN 5
+                WHEN 'openclaw'     THEN 6
+                WHEN 'github'       THEN 7
+                ELSE 8
+              END ASC,
+              updated_at DESC NULLS LAST
+          ) AS rn,
+          COUNT(*) OVER (PARTITION BY repository_url) AS group_size
+        FROM skills
+        WHERE repository_url IS NOT NULL
+          AND status = 'published'
+      ),
+      eligible_groups AS (
+        SELECT DISTINCT repository_url
+        FROM source_ranked
+        WHERE group_size = (
+          SELECT COUNT(*)
+          FROM skills s2
+          WHERE s2.repository_url = source_ranked.repository_url
+        )
+        AND group_size > 1
+      ),
+      ranked AS (
+        SELECT sr.*
+        FROM source_ranked sr
+        INNER JOIN eligible_groups eg ON eg.repository_url = sr.repository_url
+      )
+      SELECT
+        id, slug, source, repository_url, trust_score, name,
+        rn, group_size,
+        CASE WHEN rn = 1 THEN 'winner' ELSE 'deprecate' END AS action
+      FROM ranked
+      ORDER BY repository_url, rn
+      LIMIT $1`;
+
+    const analysis = await pool.query(analysisSql, [limit * 10]);
+
+    // Group results by repository_url
+    const groups: Array<{
+      repositoryUrl: string;
+      winner: { id: string; slug: string; source: string; trustScore: string; name: string };
+      toDeprecate: Array<{ id: string; slug: string; source: string; trustScore: string; name: string }>;
+    }> = [];
+    const groupIndex = new Map<string, number>();
+
+    for (const row of analysis.rows as any[]) {
+      const key = row.repository_url;
+      let idx = groupIndex.get(key);
+      if (idx === undefined) {
+        idx = groups.length;
+        groupIndex.set(key, idx);
+        groups.push({ repositoryUrl: key, winner: null as any, toDeprecate: [] });
+      }
+      const entry = {
+        id: row.id,
+        slug: row.slug,
+        source: row.source,
+        trustScore: row.trust_score,
+        name: row.name,
+      };
+      if (row.action === 'winner') {
+        groups[idx].winner = entry;
+      } else {
+        groups[idx].toDeprecate.push(entry);
+      }
+    }
+
+    // Apply the limit to groups
+    const limitedGroups = groups.slice(0, limit);
+    const totalToDeprecate = limitedGroups.reduce((sum, g) => sum + g.toDeprecate.length, 0);
+
+    // Execute if requested
+    if (execute && limitedGroups.length > 0) {
+      const updates: Array<{ loserId: string; winnerId: string; loserSlug: string }> = [];
+      for (const g of limitedGroups) {
+        for (const loser of g.toDeprecate) {
+          updates.push({ loserId: loser.id, winnerId: g.winner.id, loserSlug: loser.slug });
+        }
+      }
+
+      if (updates.length > 0) {
+        // Single UPDATE using a VALUES CTE — no N+1
+        const valuesClauses: string[] = [];
+        const params: any[] = [];
+        for (let i = 0; i < updates.length; i++) {
+          const offset = i * 2;
+          valuesClauses.push(`($${offset + 1}::uuid, $${offset + 2}::uuid)`);
+          params.push(updates[i].loserId, updates[i].winnerId);
+        }
+
+        const updateSql = `
+          WITH dedup_pairs(loser_id, winner_id) AS (
+            VALUES ${valuesClauses.join(', ')}
+          )
+          UPDATE skills s
+          SET
+            status = 'deprecated',
+            deprecated_at = NOW(),
+            deprecated_reason = 'Superseded by cross-source dedup',
+            replacement_skill_id = dp.winner_id,
+            updated_at = NOW()
+          FROM dedup_pairs dp
+          WHERE s.id = dp.loser_id
+            AND s.status = 'published'`;
+
+        await pool.query(updateSql, params);
+
+        // Cache invalidation: add deprecated slugs to revoked set
+        const cache = new SearchCache(c.env.SEARCH_CACHE, parseInt(c.env.CACHE_TTL_SECONDS || '120'));
+        for (const u of updates) {
+          await cache.addRevokedSlug(u.loserSlug);
+        }
+      }
+    }
+
+    return c.json({
+      mode: execute ? 'execute' : 'dry-run',
+      groupsProcessed: limitedGroups.length,
+      skillsDeprecated: totalToDeprecate,
+      skillsKept: limitedGroups.length,
+      groups: limitedGroups.slice(0, 50).map(g => ({
+        repositoryUrl: g.repositoryUrl,
+        winner: g.winner,
+        deprecated: g.toDeprecate,
+      })),
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 app.post('/v1/admin/backfill', async (c) => {
   try {
     const mode = c.req.query('mode') ?? 'queue';
