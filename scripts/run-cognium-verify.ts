@@ -135,8 +135,8 @@ async function discoverSkills(endpoint: string): Promise<DiscoveredSkills> {
 
   if (dbUrl) {
     try {
-      const { Pool } = await import('@neondatabase/serverless');
-      const pool = new Pool({ connectionString: dbUrl });
+      const pg = await import('pg');
+      const pool = new pg.default.Pool({ connectionString: dbUrl });
       const result = await pool.query(
         `SELECT DISTINCT ON (source) id, slug, source FROM skills
          WHERE status = 'published' AND source IN ('github', 'mcp-registry', 'clawhub')

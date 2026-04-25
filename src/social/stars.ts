@@ -1,4 +1,4 @@
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 
 const DAILY_STAR_LIMIT = 200;
 

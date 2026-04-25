@@ -19,7 +19,7 @@ Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 - Cloudflare Workers AI for embeddings (bge-small-en-v1.5), reranking, and LLM fallback
 - Cloudflare KV for caching
 - Hyperdrive for Postgres connection pooling
-- @neondatabase/serverless for the Postgres driver (NOT pg — standard pg doesn't work in Workers)
+- pg (node-postgres) for the Postgres driver via Hyperdrive connection pooling
 - Drizzle ORM for schema/migrations
 
 ## Key Principles

@@ -1,4 +1,4 @@
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import type { CoOccurrenceResult } from '../types';
 
 export async function getCoOccurrence(

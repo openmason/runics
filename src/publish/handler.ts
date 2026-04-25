@@ -14,7 +14,8 @@
 
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import {
   publishSkillSchema,
   updateSkillSchema,
@@ -40,7 +41,7 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
     return c.json({ error: dagCheck.error, details: dagCheck.details }, 400);
   }
 
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await pool.query(
@@ -147,7 +148,7 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
 publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
   const skillId = c.req.param('id');
   const input = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     // v5.2: Only draft skills are editable — fork to modify published skills
@@ -270,7 +271,7 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
 publishRoutes.put('/:id/trust', zValidator('json', attestationUpdateSchema), async (c) => {
   const skillId = c.req.param('id');
   const body = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     // Content safety is an absolute gate
@@ -347,7 +348,7 @@ publishRoutes.put('/:id/trust', zValidator('json', attestationUpdateSchema), asy
 publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async (c) => {
   const skillId = c.req.param('id');
   const { status, reason, replacementSkillId } = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     // Status transition guard: owner can only toggle between published ↔ deprecated.
@@ -417,7 +418,7 @@ publishRoutes.put('/:id/bundle', async (c) => {
 
     await c.env.R2_BUCKET.put(key, body);
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     await pool.query(
       'UPDATE skills SET r2_bundle_key = $1, updated_at = NOW() WHERE id = $2',
       [key, skillId]
@@ -439,7 +440,7 @@ publishRoutes.put('/:id/bundle', async (c) => {
 
 publishRoutes.post('/:id/publish', async (c) => {
   const skillId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     // Fetch the skill

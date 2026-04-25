@@ -1,4 +1,4 @@
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import { nanoid } from 'nanoid';
 import type { ForkResult, Env } from '../types';
 import { BASE_TRUST } from '../cognium/scoring-policy';

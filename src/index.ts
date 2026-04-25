@@ -4,7 +4,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from './db/connection';
 import { PgVectorProvider } from './providers/pgvector-provider';
 import { EmbedPipeline } from './ingestion/embed-pipeline';
 import { SearchCache } from './cache/kv-cache';
@@ -16,18 +16,8 @@ import { rateLimiter } from './middleware/rate-limiter';
 import { adminAuth } from './middleware/admin-auth';
 import { publicGuard } from './middleware/public-guard';
 import { publishRoutes } from './publish/handler';
-import { McpRegistrySync } from './sync/mcp-registry';
-import { ClawHubSync } from './sync/clawhub';
-import { GitHubSync } from './sync/github';
-import { GlamaSync } from './sync/glama';
-import { SmitherySync } from './sync/smithery';
-import { PulseMCPSync } from './sync/pulsemcp';
-import { OpenClawSync } from './sync/openclaw';
-import { handleEmbedQueue } from './queues/embed-consumer';
-import { handleCogniumSubmitQueue } from './cognium/submit-consumer';
-import { handleCogniumPollQueue } from './cognium/poll-consumer';
-import { handleAnalysisSubmitQueue } from './cognium/analysis-submit-consumer';
-import { handleAnalysisPollQueue } from './cognium/analysis-poll-consumer';
+// Sync adapters + queue consumers are lazy-loaded via dynamic import()
+// to avoid parsing their modules on search-path cold starts.
 // Composition & Social layer (v4)
 import { forkSkill, NotFoundError } from './composition/fork';
 import { copySkill } from './composition/copy';
@@ -88,11 +78,9 @@ app.use('*', publicGuard());
 // ──────────────────────────────────────────────────────────────────────────────
 
 function initComponents(env: Env) {
-  // Connect directly to Neon using @neondatabase/serverless (bypasses Hyperdrive)
-  const connectionString = env.NEON_CONNECTION_STRING;
-  const pool = new Pool({ connectionString });
+  const pool = createPool(env);
 
-  const provider = new PgVectorProvider(connectionString, env);
+  const provider = new PgVectorProvider(env);
   const embedPipeline = new EmbedPipeline(env);
   const cache = new SearchCache(
     env.SEARCH_CACHE,
@@ -336,7 +324,7 @@ app.delete('/v1/skills/:skillId', async (c) => {
   try {
     const skillId = c.req.param('skillId');
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const skillResult = await pool.query(
       `SELECT id, status FROM skills WHERE id = $1`,
       [skillId]
@@ -451,7 +439,7 @@ app.get('/v1/analytics/tier3-patterns', async (c) => {
 
 app.get('/v1/analytics/revoked-impact', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const [revokedResult, searchImpact] = await Promise.all([
       pool.query(
         `SELECT count(*)::int AS cnt,
@@ -485,7 +473,7 @@ app.get('/v1/analytics/revoked-impact', async (c) => {
 
 app.get('/v1/analytics/vulnerable-usage', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const [vulnerableResult, searchImpact] = await Promise.all([
       pool.query(
         `SELECT count(*)::int AS cnt,
@@ -713,7 +701,7 @@ app.get('/v1/eval/compare', async (c) => {
 
 app.get('/v1/skills/:slug/versions', async (c) => {
   const slug = c.req.param('slug');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await pool.query(
@@ -768,7 +756,7 @@ app.get('/v1/skills/:slug/versions', async (c) => {
 
 app.get('/v1/skills/:slug', async (c) => {
   const slug = c.req.param('slug');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await pool.query(
@@ -897,7 +885,7 @@ app.route('/v1/skills', publishRoutes);
 app.post('/v1/skills/:id/fork', zValidator('json', forkInputSchema), async (c) => {
   const sourceId = c.req.param('id');
   const { authorId, authorType } = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await forkSkill(sourceId, authorId, authorType, pool, c.env);
@@ -912,7 +900,7 @@ app.post('/v1/skills/:id/fork', zValidator('json', forkInputSchema), async (c) =
 app.post('/v1/skills/:id/copy', zValidator('json', copyInputSchema), async (c) => {
   const sourceId = c.req.param('id');
   const { authorId, authorType } = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await copySkill(sourceId, authorId, authorType, pool, c.env);
@@ -927,7 +915,7 @@ app.post('/v1/skills/:id/copy', zValidator('json', copyInputSchema), async (c) =
 app.post('/v1/skills/:id/extend', zValidator('json', extendInputSchema), async (c) => {
   const compositionId = c.req.param('id');
   const { authorId, authorType, steps } = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await extendComposition(
@@ -944,7 +932,7 @@ app.post('/v1/skills/:id/extend', zValidator('json', extendInputSchema), async (
 
 app.post('/v1/compositions', zValidator('json', compositionInputSchema), async (c) => {
   const input = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await createComposition(input, pool, c.env);
@@ -958,7 +946,7 @@ app.post('/v1/compositions', zValidator('json', compositionInputSchema), async (
 
 app.get('/v1/compositions/:id', async (c) => {
   const compositionId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const skill = await pool.query(
@@ -997,7 +985,7 @@ app.get('/v1/compositions/:id', async (c) => {
 
 app.put('/v1/compositions/:id/steps', async (c) => {
   const compositionId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const body = await c.req.json();
@@ -1042,7 +1030,7 @@ app.put('/v1/compositions/:id/steps', async (c) => {
 
 app.post('/v1/compositions/:id/publish', async (c) => {
   const compositionId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await publishComposition(compositionId, pool);
@@ -1061,7 +1049,7 @@ app.post('/v1/compositions/:id/publish', async (c) => {
 
 app.get('/v1/skills/:id/lineage', async (c) => {
   const skillId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const ancestry = await getAncestry(skillId, pool);
     return c.json({ ancestry });
@@ -1073,7 +1061,7 @@ app.get('/v1/skills/:id/lineage', async (c) => {
 
 app.get('/v1/skills/:id/forks', async (c) => {
   const skillId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const forks = await getForks(skillId, pool);
     return c.json({ forks });
@@ -1085,7 +1073,7 @@ app.get('/v1/skills/:id/forks', async (c) => {
 
 app.get('/v1/skills/:id/dependents', async (c) => {
   const skillId = c.req.param('id');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const dependents = await getDependents(skillId, pool);
     return c.json({ dependents });
@@ -1106,7 +1094,7 @@ const starInputSchema = z.object({
 app.post('/v1/skills/:id/star', zValidator('json', starInputSchema), async (c) => {
   const skillId = c.req.param('id');
   const { userId } = c.req.valid('json');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await starSkill(skillId, userId, pool);
@@ -1123,7 +1111,7 @@ app.delete('/v1/skills/:id/star', async (c) => {
   const body = await c.req.json();
   const userId = body.userId;
   if (!userId) return c.json({ error: 'userId required' }, 400);
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await unstarSkill(skillId, userId, pool);
@@ -1137,7 +1125,7 @@ app.delete('/v1/skills/:id/star', async (c) => {
 app.get('/v1/skills/:id/stars', async (c) => {
   const skillId = c.req.param('id');
   const userId = c.req.query('userId') || null;
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await getStarStatus(skillId, userId, pool);
@@ -1165,7 +1153,7 @@ const invocationBatchSchema = z.object({
 
 app.post('/v1/invocations', zValidator('json', invocationBatchSchema), async (c) => {
   const batch = c.req.valid('json') as InvocationBatch;
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   // Non-blocking: wrap in waitUntil
   c.executionCtx.waitUntil(
@@ -1180,7 +1168,7 @@ app.post('/v1/invocations', zValidator('json', invocationBatchSchema), async (c)
 app.get('/v1/skills/:id/cooccurrence', async (c) => {
   const skillId = c.req.param('id');
   const limit = parseInt(c.req.query('limit') || '5');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const results = await getCoOccurrence(skillId, limit, pool);
@@ -1198,7 +1186,7 @@ app.get('/v1/skills/:id/cooccurrence', async (c) => {
 app.get('/v1/skills/:slug/:version', async (c) => {
   const slug = c.req.param('slug');
   const version = c.req.param('version');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await pool.query(
@@ -1308,7 +1296,7 @@ function parseLeaderboardFilters(c: any): LeaderboardFilters {
 }
 
 app.get('/v1/leaderboards/human', async (c) => {
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const results = await getHumanLeaderboard(parseLeaderboardFilters(c), pool);
     return c.json({ leaderboard: results });
@@ -1319,7 +1307,7 @@ app.get('/v1/leaderboards/human', async (c) => {
 });
 
 app.get('/v1/leaderboards/agents', async (c) => {
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const results = await getAgentLeaderboard(parseLeaderboardFilters(c), pool);
     return c.json({ leaderboard: results });
@@ -1330,7 +1318,7 @@ app.get('/v1/leaderboards/agents', async (c) => {
 });
 
 app.get('/v1/leaderboards/trending', async (c) => {
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const results = await getTrendingLeaderboard(parseLeaderboardFilters(c), pool);
     return c.json({ leaderboard: results });
@@ -1341,7 +1329,7 @@ app.get('/v1/leaderboards/trending', async (c) => {
 });
 
 app.get('/v1/leaderboards/most-composed', async (c) => {
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const results = await getMostComposedLeaderboard(parseLeaderboardFilters(c), pool);
     return c.json({ leaderboard: results });
@@ -1352,7 +1340,7 @@ app.get('/v1/leaderboards/most-composed', async (c) => {
 });
 
 app.get('/v1/leaderboards/most-forked', async (c) => {
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
   try {
     const results = await getMostForkedLeaderboard(parseLeaderboardFilters(c), pool);
     return c.json({ leaderboard: results });
@@ -1376,7 +1364,7 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
   const skillId = c.req.param('skillId');
   const mode = c.req.query('mode') ?? 'inline'; // 'inline' (direct) or 'queue' (async)
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
 
     // Fetch skill
     const skillRes = await pool.query(
@@ -1492,7 +1480,7 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
   if (!jobId) return c.json({ error: 'Missing job_id query parameter' }, 400);
 
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
     const apiKey = c.env.COGNIUM_API_KEY ?? '';
     const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
@@ -1558,7 +1546,7 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
 app.post('/v1/admin/scan-test/:skillId', async (c) => {
   const skillId = c.req.param('skillId');
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const skillRes = await pool.query(
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
@@ -1614,7 +1602,7 @@ app.post('/v1/admin/scan-test/:skillId', async (c) => {
 // mode=inline: direct inline scan + poll (limited to small batches by CF subrequest limits)
 app.get('/v1/admin/scan-stats', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
 
     const [statusBreakdown, tierBreakdown, sourceBreakdown, trustDistribution, trustHistogram, topFindings, scanCoverage] = await Promise.all([
       pool.query(`SELECT status, count(*)::int AS cnt FROM skills WHERE cognium_scanned_at IS NOT NULL GROUP BY status ORDER BY cnt DESC`),
@@ -1691,7 +1679,7 @@ app.get('/v1/admin/scan-preview', async (c) => {
   try {
     const slug = c.req.query('slug');
     const source = c.req.query('source');
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
 
     let query: string;
@@ -1783,7 +1771,7 @@ app.get('/v1/admin/scan-preview', async (c) => {
 app.post('/v1/admin/analyze/:skillId', async (c) => {
   const skillId = c.req.param('skillId');
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const skillRes = await pool.query(
       `SELECT id, slug, version, name, description, source, status,
               execution_layer AS "executionLayer",
@@ -1929,7 +1917,7 @@ app.post('/v1/admin/analyze-batch', async (c) => {
       endpoints?: AnalysisEndpoint[];
     };
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     let skillIds: string[];
 
     if (body.skillIds && body.skillIds.length > 0) {
@@ -1978,7 +1966,7 @@ app.post('/v1/admin/analyze-batch', async (c) => {
 // Admin: clear stale in-flight jobs
 app.post('/v1/admin/clear-stale', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const result = await pool.query(
       `UPDATE skills
        SET cognium_job_id = NULL, cognium_job_submitted_at = NULL
@@ -1994,7 +1982,7 @@ app.post('/v1/admin/clear-stale', async (c) => {
 // Admin: inventory of skills by content type
 app.get('/v1/admin/skill-inventory', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const [total, bySource, byStatus, byContent, byScanStatus, failureReasons, embeddingCoverage] = await Promise.all([
       pool.query(`SELECT count(*)::int AS cnt FROM skills WHERE status = 'published'`),
       pool.query(`SELECT source, count(*)::int AS cnt FROM skills WHERE status = 'published' GROUP BY source ORDER BY cnt DESC`),
@@ -2051,9 +2039,9 @@ app.post('/v1/admin/embed-backfill', async (c) => {
   try {
     const limit = Math.min(parseInt(c.req.query('limit') ?? '200', 10), 500);
     const source = c.req.query('source');
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const embedPipeline = new EmbedPipeline(c.env);
-    const provider = new PgVectorProvider(c.env.NEON_CONNECTION_STRING, c.env);
+    const provider = new PgVectorProvider(c.env);
     const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';
 
     const params: unknown[] = [];
@@ -2130,7 +2118,7 @@ app.post('/v1/admin/embed-queue-backfill', async (c) => {
   try {
     const limit = Math.min(parseInt(c.req.query('limit') ?? '500', 10), 5000);
     const source = c.req.query('source');
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
 
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -2173,7 +2161,7 @@ app.post('/v1/admin/embed-queue-backfill', async (c) => {
 // Admin: cross-source deduplication analysis
 app.get('/v1/admin/dedup-analysis', async (c) => {
   try {
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
 
     const [byRepoUrl, byName, summary] = await Promise.all([
@@ -2248,7 +2236,7 @@ app.post('/v1/admin/backfill', async (c) => {
     const source = c.req.query('source'); // optional: filter by source
     const content = c.req.query('content'); // optional: 'instructions' | 'repo' | 'metadata'
     const retry = c.req.query('retry') === 'true'; // retry previously failed scans
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
 
     let baseWhere = retry
       ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NOT NULL`
@@ -2490,6 +2478,7 @@ app.post('/v1/admin/sync-clawhub', async (c) => {
     }
 
     const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const { ClawHubSync } = await import("./sync/clawhub");
     const sync = new ClawHubSync(c.env);
     const r = await sync.run({ maxPages, startCursor: savedCursor });
 
@@ -2499,7 +2488,7 @@ app.post('/v1/admin/sync-clawhub', async (c) => {
       await c.env.SEARCH_CACHE.delete(cursorKey);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const totalResult = await pool.query(
       `SELECT count(*)::int AS cnt FROM skills WHERE source = 'clawhub'`
     );
@@ -2534,6 +2523,7 @@ app.post('/v1/admin/sync-glama', async (c) => {
     }
 
     const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const { GlamaSync } = await import("./sync/glama");
     const sync = new GlamaSync(c.env);
     const r = await sync.run({ maxPages, startCursor: savedCursor });
 
@@ -2543,7 +2533,7 @@ app.post('/v1/admin/sync-glama', async (c) => {
       await c.env.SEARCH_CACHE.delete(cursorKey);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const totalResult = await pool.query(
       `SELECT count(*)::int AS cnt FROM skills WHERE source = 'glama'`
     );
@@ -2574,6 +2564,7 @@ app.post('/v1/admin/sync-smithery', async (c) => {
     }
 
     const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const { SmitherySync } = await import("./sync/smithery");
     const sync = new SmitherySync(c.env);
     const r = await sync.run({ maxPages, startCursor: savedCursor });
 
@@ -2583,7 +2574,7 @@ app.post('/v1/admin/sync-smithery', async (c) => {
       await c.env.SEARCH_CACHE.delete(cursorKey);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const totalResult = await pool.query(
       `SELECT count(*)::int AS cnt FROM skills WHERE source = 'smithery'`
     );
@@ -2614,6 +2605,7 @@ app.post('/v1/admin/sync-pulsemcp', async (c) => {
     }
 
     const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const { PulseMCPSync } = await import("./sync/pulsemcp");
     const sync = new PulseMCPSync(c.env);
     const r = await sync.run({ maxPages, startCursor: savedCursor });
 
@@ -2623,7 +2615,7 @@ app.post('/v1/admin/sync-pulsemcp', async (c) => {
       await c.env.SEARCH_CACHE.delete(cursorKey);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const totalResult = await pool.query(
       `SELECT count(*)::int AS cnt FROM skills WHERE source = 'pulsemcp'`
     );
@@ -2654,6 +2646,7 @@ app.post('/v1/admin/sync-openclaw', async (c) => {
     }
 
     const savedCursor = await c.env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+    const { OpenClawSync } = await import("./sync/openclaw");
     const sync = new OpenClawSync(c.env);
     const r = await sync.run({ maxPages, startCursor: savedCursor });
 
@@ -2663,7 +2656,7 @@ app.post('/v1/admin/sync-openclaw', async (c) => {
       await c.env.SEARCH_CACHE.delete(cursorKey);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const totalResult = await pool.query(
       `SELECT count(*)::int AS cnt FROM skills WHERE source = 'openclaw'`
     );
@@ -2693,9 +2686,9 @@ app.post('/v1/admin/regenerate-summaries', async (c) => {
       return c.json({ error: 'Provide ?source= or ?ids= parameter' }, 400);
     }
 
-    const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+    const pool = createPool(c.env);
     const embedPipeline = new EmbedPipeline(c.env);
-    const provider = new PgVectorProvider(c.env.NEON_CONNECTION_STRING, c.env);
+    const provider = new PgVectorProvider(c.env);
     const useMultiVector = c.env.MULTI_VECTOR_ENABLED === 'true';
 
     // Build query based on filters
@@ -2838,7 +2831,7 @@ export default {
       // Refresh social materialized views (v4)
       ctx.waitUntil(
         (async () => {
-          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          const pool = createPool(env);
           try {
             await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY skill_cooccurrence');
             await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_human');
@@ -2856,7 +2849,7 @@ export default {
     if (hour === 0 && minute === 0) {
       ctx.waitUntil(
         (async () => {
-          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          const pool = createPool(env);
           try {
             await pool.query(
               'UPDATE skills SET weekly_agent_invocation_count = 0 WHERE weekly_agent_invocation_count > 0'
@@ -2872,8 +2865,9 @@ export default {
     // Every 5 minutes: MCP Registry sync
     if (minute % 5 === 0 && env.SYNC_MCP_ENABLED !== 'false') {
       ctx.waitUntil(
-        new McpRegistrySync(env)
-          .run()
+        import('./sync/mcp-registry').then(({ McpRegistrySync }) =>
+          new McpRegistrySync(env).run()
+        )
           .then((r) =>
             console.log(
               `[CRON] MCP sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
@@ -2891,6 +2885,7 @@ export default {
         (async () => {
           const cursorKey = 'sync:clawhub:cursor';
           const savedCursor = await env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+          const { ClawHubSync } = await import("./sync/clawhub");
           const sync = new ClawHubSync(env);
           const r = await sync.run({ maxPages: 20, startCursor: savedCursor });
 
@@ -2916,9 +2911,9 @@ export default {
     if (minute % 5 === 0) {
       ctx.waitUntil(
         (async () => {
-          const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+          const pool = createPool(env);
           const embedPipeline = new EmbedPipeline(env);
-          const provider = new PgVectorProvider(env.NEON_CONNECTION_STRING, env);
+          const provider = new PgVectorProvider(env);
           const useMultiVector = env.MULTI_VECTOR_ENABLED === 'true';
           try {
             const result = await pool.query(
@@ -2973,7 +2968,7 @@ export default {
       (async () => {
         // Hard kill switch — when COGNIUM_ENABLED=false, skip all cron-driven cognium work.
         if (env.COGNIUM_ENABLED === 'false') return;
-        const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+        const pool = createPool(env);
         const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
         const apiKey = env.COGNIUM_API_KEY ?? '';
         if (!apiKey) return;
@@ -3281,8 +3276,9 @@ export default {
     // Every 15 minutes: GitHub sync
     if (minute % 15 === 0 && env.SYNC_GITHUB_ENABLED !== 'false') {
       ctx.waitUntil(
-        new GitHubSync(env)
-          .run()
+        import('./sync/github').then(({ GitHubSync }) =>
+          new GitHubSync(env).run()
+        )
           .then((r) =>
             console.log(
               `[CRON] GitHub sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
@@ -3300,6 +3296,7 @@ export default {
         (async () => {
           const cursorKey = 'sync:glama:cursor';
           const savedCursor = await env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+          const { GlamaSync } = await import("./sync/glama");
           const sync = new GlamaSync(env);
           const r = await sync.run({ maxPages: 30, startCursor: savedCursor });
 
@@ -3322,8 +3319,9 @@ export default {
     // Every 15 minutes: Smithery sync
     if (minute % 15 === 0 && env.SYNC_SMITHERY_ENABLED !== 'false') {
       ctx.waitUntil(
-        new SmitherySync(env)
-          .run()
+        import('./sync/smithery').then(({ SmitherySync }) =>
+          new SmitherySync(env).run()
+        )
           .then((r) =>
             console.log(
               `[CRON] Smithery sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
@@ -3338,8 +3336,9 @@ export default {
     // Every 15 minutes: PulseMCP sync (disabled by default — Cloudflare-blocked)
     if (minute % 15 === 0 && env.SYNC_PULSEMCP_ENABLED === 'true') {
       ctx.waitUntil(
-        new PulseMCPSync(env)
-          .run()
+        import('./sync/pulsemcp').then(({ PulseMCPSync }) =>
+          new PulseMCPSync(env).run()
+        )
           .then((r) =>
             console.log(
               `[CRON] PulseMCP sync: synced=${r.synced} skipped=${r.skipped} errors=${r.errors}`
@@ -3357,6 +3356,7 @@ export default {
         (async () => {
           const cursorKey = 'sync:openclaw:cursor';
           const savedCursor = await env.SEARCH_CACHE.get(cursorKey) ?? undefined;
+          const { OpenClawSync } = await import("./sync/openclaw");
           const sync = new OpenClawSync(env);
           const r = await sync.run({ maxPages: 20, startCursor: savedCursor });
 
@@ -3383,38 +3383,33 @@ export default {
     _ctx: ExecutionContext
   ): Promise<void> {
     switch (batch.queue) {
-      case 'runics-embed':
-        await handleEmbedQueue(
-          batch as MessageBatch<EmbedQueueMessage>,
-          env
-        );
+      case 'runics-embed': {
+        const { handleEmbedQueue } = await import('./queues/embed-consumer');
+        await handleEmbedQueue(batch as MessageBatch<EmbedQueueMessage>, env);
         break;
+      }
       case 'runics-cognium':
-      case 'runics-cognium-v2':
-        await handleCogniumSubmitQueue(
-          batch as MessageBatch<CogniumSubmitMessage>,
-          env
-        );
+      case 'runics-cognium-v2': {
+        const { handleCogniumSubmitQueue } = await import('./cognium/submit-consumer');
+        await handleCogniumSubmitQueue(batch as MessageBatch<CogniumSubmitMessage>, env);
         break;
+      }
       case 'runics-cognium-poll':
-      case 'runics-cognium-poll-v2':
-        await handleCogniumPollQueue(
-          batch as MessageBatch<CogniumPollMessage>,
-          env
-        );
+      case 'runics-cognium-poll-v2': {
+        const { handleCogniumPollQueue } = await import('./cognium/poll-consumer');
+        await handleCogniumPollQueue(batch as MessageBatch<CogniumPollMessage>, env);
         break;
-      case 'runics-analysis-submit':
-        await handleAnalysisSubmitQueue(
-          batch as MessageBatch<AnalysisSubmitMessage>,
-          env
-        );
+      }
+      case 'runics-analysis-submit': {
+        const { handleAnalysisSubmitQueue } = await import('./cognium/analysis-submit-consumer');
+        await handleAnalysisSubmitQueue(batch as MessageBatch<AnalysisSubmitMessage>, env);
         break;
-      case 'runics-analysis-poll':
-        await handleAnalysisPollQueue(
-          batch as MessageBatch<AnalysisPollMessage>,
-          env
-        );
+      }
+      case 'runics-analysis-poll': {
+        const { handleAnalysisPollQueue } = await import('./cognium/analysis-poll-consumer');
+        await handleAnalysisPollQueue(batch as MessageBatch<AnalysisPollMessage>, env);
         break;
+      }
       default:
         console.error(`[QUEUE] Unknown queue: ${batch.queue}`);
         break;

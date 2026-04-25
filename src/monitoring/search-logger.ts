@@ -7,7 +7,7 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import type { SearchLogEntry } from '../types';
 
 export class SearchLogger {

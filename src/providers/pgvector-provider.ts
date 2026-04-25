@@ -13,7 +13,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { SearchProvider } from './search-provider';
 import type {
   SearchFilters,
@@ -42,10 +43,8 @@ export class PgVectorProvider implements SearchProvider {
   private trustBoostWeight: number;
   private candidatePoolMultiplier: number;
 
-  constructor(connectionString: string, env: Env) {
-    // Connect directly to Neon (NOT through Hyperdrive)
-    // @neondatabase/serverless uses WebSockets which don't work with Hyperdrive
-    this.pool = new Pool({ connectionString });
+  constructor(env: Env) {
+    this.pool = createPool(env);
 
     // Parse configurable thresholds
     this.tier1Threshold = parseFloat(env.CONFIDENCE_TIER1_THRESHOLD || '0.85');

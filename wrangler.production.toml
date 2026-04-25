@@ -13,6 +13,7 @@
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
 account_id = "bb8e02ea0ca7c225d2fb62d24a9940be"  # cognium account (has runics.net zone)
 workers_dev = true  # Enables runics.cognium.workers.dev (admin endpoints, bypasses public guard)
 
@@ -176,7 +177,7 @@ VERSION_USAGE_WEIGHT = "0.3"
 # Trust-score ranking boost (multiplicative on fusedScore)
 TRUST_BOOST_WEIGHT = "0.3"
 # Candidate pool multiplier — fetch N× candidates before trust-boost pagination
-CANDIDATE_POOL_MULTIPLIER = "3"
+CANDIDATE_POOL_MULTIPLIER = "5"
 # Name-match boost — boost results whose name matches query tokens
 NAME_BOOST_WEIGHT = "0.15"
 

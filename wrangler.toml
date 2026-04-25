@@ -12,6 +12,7 @@
 name = "runics"
 main = "src/index.ts"
 compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 account_id = "1f59f4dcd0ebb559e3c392566978d446"  # OpenMason account (hosts phantoms.workers.dev)
 

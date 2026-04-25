@@ -11,7 +11,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { Env, SyncResult, SkillUpsert, EmbedQueueMessage, CogniumSubmitMessage } from '../types';
 import { sha256 } from './utils';
 
@@ -26,7 +27,7 @@ export abstract class BaseSyncWorker {
   protected pool: Pool;
 
   constructor(protected env: Env) {
-    this.pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+    this.pool = createPool(env);
   }
 
   /**

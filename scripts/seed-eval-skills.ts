@@ -14,7 +14,8 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { SkillInput } from '../src/types';
-import { Pool } from '@neondatabase/serverless';
+import pg from 'pg';
+const { Pool } = pg;
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Test Skills Definitions

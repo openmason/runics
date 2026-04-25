@@ -55,9 +55,11 @@ function mockEnv(overrides?: Record<string, any>) {
   } as any;
 }
 
-// Mock the Pool constructor to return our mock
-vi.mock('@neondatabase/serverless', () => ({
-  Pool: vi.fn(),
+// Mock the connection module
+vi.mock('../../src/db/connection', () => ({
+  createPool: vi.fn(() => ({
+    query: vi.fn(async () => ({ rows: [] })),
+  })),
 }));
 
 // Mock buildCircleIRRequest
@@ -76,10 +78,15 @@ describe('handleCogniumSubmitQueue', () => {
     global.fetch = fetchMock;
   });
 
+  async function setupPool(queryResults: { rows: any[] }[]) {
+    const pool = mockPool(queryResults);
+    const { createPool } = await import('../../src/db/connection');
+    (createPool as any).mockReturnValue(pool);
+    return pool;
+  }
+
   it('should ack and skip when skill is not found in DB', async () => {
-    const pool = mockPool([{ rows: [] }]); // fetchSkillById returns nothing
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([{ rows: [] }]); // fetchSkillById returns nothing
 
     const msg = mockMsg({ skillId: 'missing-skill', priority: 'normal', timestamp: Date.now() });
     const batch = { messages: [msg] } as any;
@@ -90,12 +97,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should ack and skip when job is already in flight (dedup check)', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },                    // fetchSkillById
       { rows: [{ cognium_job_id: 'existing-job' }] }, // dedup query
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     const msg = mockMsg({ skillId: 'skill-1', priority: 'normal', timestamp: Date.now() });
     const batch = { messages: [msg] } as any;
@@ -106,12 +111,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should submit to Circle-IR, store in KV, and enqueue poll on success', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] }, // fetchSkillById
       { rows: [] },               // dedup: no existing job
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -145,12 +148,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should retry on 500 from Circle-IR', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },
       { rows: [] },
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
 
@@ -163,12 +164,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should retry on 429 from Circle-IR', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },
       { rows: [] },
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
 
@@ -180,12 +179,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should ack (not retry) on 4xx from Circle-IR', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },
       { rows: [] },
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 400 });
 
@@ -198,12 +195,10 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should retry on unexpected error (e.g., network failure)', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },
       { rows: [] },
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockRejectedValueOnce(new Error('Network error'));
 
@@ -215,13 +210,11 @@ describe('handleCogniumSubmitQueue', () => {
   });
 
   it('should process multiple messages in a batch', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow({ id: 'skill-1', slug: 'skill-a' })] },
       { rows: [] },
       { rows: [] }, // skill-2 not found
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,

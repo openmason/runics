@@ -35,7 +35,7 @@ import { DeepSearch } from './deep-search';
 import { CompositionDetector } from './composition-detector';
 import { Reranker } from './reranker';
 import { CircuitBreaker } from '../resilience/circuit-breaker';
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Types

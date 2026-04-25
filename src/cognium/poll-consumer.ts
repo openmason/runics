@@ -11,7 +11,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 import type { CogniumPollMessage, CircleIRJobStatus, CircleIRFinding, CircleIRSkillResult, SkillRow } from './types';
 import { normalizeFindings } from './finding-mapper';
@@ -35,7 +36,7 @@ export async function handleCogniumPollQueue(
     console.log(`[COGNIUM-POLL] Disabled (COGNIUM_ENABLED=false), acked ${batch.messages.length} messages`);
     return;
   }
-  const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+  const pool = createPool(env);
   const maxAttempts = parseInt(env.COGNIUM_MAX_POLL_ATTEMPTS ?? '12', 10);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
 

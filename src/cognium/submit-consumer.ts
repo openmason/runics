@@ -8,7 +8,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 import type { CogniumSubmitMessage, SkillRow } from './types';
 import { buildCircleIRRequest } from './request-builder';
@@ -25,7 +26,7 @@ export async function handleCogniumSubmitQueue(
     console.log(`[COGNIUM-SUBMIT] Disabled (COGNIUM_ENABLED=false), acked ${batch.messages.length} messages`);
     return;
   }
-  const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+  const pool = createPool(env);
 
   for (const msg of batch.messages) {
     try {

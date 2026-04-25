@@ -10,7 +10,7 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 import type { ScanFinding, SkillRow, CircleIRJobStatus, CircleIRSkillResult } from './types';
 import { deriveWorstSeverity, isContentUnsafe } from './finding-mapper';

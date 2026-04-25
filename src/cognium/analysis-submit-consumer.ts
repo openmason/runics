@@ -12,7 +12,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 import type { AnalysisSubmitMessage, AnalysisEndpoint, SkillRow } from './types';
 import { buildAnalysisRequests } from './analysis-request-builder';
@@ -36,7 +37,7 @@ export async function handleAnalysisSubmitQueue(
     return;
   }
 
-  const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+  const pool = createPool(env);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
   const apiKey = env.COGNIUM_API_KEY ?? '';
   const initialDelay = parseInt(env.COGNIUM_POLL_DELAY_MS ?? '15000', 10);

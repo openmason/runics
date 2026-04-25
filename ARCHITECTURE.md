@@ -2279,7 +2279,7 @@ runics/
 
 ### Critical decisions
 
-1. **Use `@neondatabase/serverless` or Hyperdrive HTTP driver**, not `pg`. Standard `pg` doesn't work in Workers.
+1. **Use `pg` (node-postgres) with Hyperdrive** for Postgres connections. Requires `nodejs_compat` compatibility flag. All connections go through `src/db/connection.ts`.
 
 2. **SearchProvider interface is sacred.** Never import Postgres types outside `pgvector-provider.ts`.
 
@@ -2406,7 +2406,7 @@ COGNIUM_MAX_POLL_ATTEMPTS = "12"
 {
   "dependencies": {
     "hono": "^4.0.0",
-    "@neondatabase/serverless": "^0.10.0",
+    "pg": "^8.20.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },

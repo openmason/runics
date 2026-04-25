@@ -59,8 +59,12 @@ function mockEnv(overrides?: Record<string, any>) {
   } as any;
 }
 
-vi.mock('@neondatabase/serverless', () => ({
-  Pool: vi.fn(),
+// Mock the connection module
+vi.mock('../../src/db/connection', () => ({
+  createPool: vi.fn(() => ({
+    query: vi.fn(async () => ({ rows: [] })),
+    connect: vi.fn(async () => ({ query: vi.fn(), release: vi.fn() })),
+  })),
 }));
 
 // Mock scan-report-handler
@@ -85,10 +89,15 @@ describe('handleCogniumPollQueue', () => {
     global.fetch = fetchMock;
   });
 
+  async function setupPool(queryResults: { rows: any[] }[]) {
+    const pool = mockPool(queryResults);
+    const { createPool } = await import('../../src/db/connection');
+    (createPool as any).mockReturnValue(pool);
+    return pool;
+  }
+
   it('should retry on 5xx status check response', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
 
@@ -101,9 +110,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should mark failed and ack on 4xx status check (unrecoverable)', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
 
@@ -121,11 +128,9 @@ describe('handleCogniumPollQueue', () => {
 
   it('should handle completed job: fetch findings, apply report, delete KV, ack', async () => {
     const skill = makeSkillRow();
-    const pool = mockPool([
+    await setupPool([
       { rows: [skill] }, // fetchSkillById in handleCompleted
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     // Status check → completed
     fetchMock.mockResolvedValueOnce({
@@ -161,9 +166,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should handle failed job: mark failed, delete KV, ack', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -183,9 +186,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should handle cancelled job same as failed (v1.12.2)', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -205,9 +206,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should re-enqueue with backoff when still running', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -229,9 +228,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should give up after max attempts', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -251,9 +248,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should mark failed when findings fetch returns non-OK', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     // Status → completed
     fetchMock.mockResolvedValueOnce({
@@ -278,11 +273,9 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should still apply report when skill-result fetch fails (non-fatal)', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [makeSkillRow()] },
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -309,11 +302,9 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should skip report when skill is deleted between submit and poll', async () => {
-    const pool = mockPool([
+    await setupPool([
       { rows: [] }, // fetchSkillById → not found
     ]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
 
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -343,9 +334,7 @@ describe('handleCogniumPollQueue', () => {
   });
 
   it('should retry on unexpected errors', async () => {
-    const pool = mockPool([]);
-    const { Pool } = await import('@neondatabase/serverless');
-    (Pool as any).mockReturnValue(pool);
+    await setupPool([]);
 
     fetchMock.mockRejectedValueOnce(new Error('Network failure'));
 

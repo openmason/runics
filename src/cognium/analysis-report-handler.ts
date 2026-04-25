@@ -10,7 +10,7 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import type {
   QualityResultResponse,
   TrustResultResponse,

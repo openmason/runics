@@ -3,10 +3,8 @@
  * Wake up Neon database (free tier auto-suspends)
  */
 
-import { Pool, neonConfig } from '@neondatabase/serverless';
-
-// Use HTTP fetch mode
-neonConfig.fetchConnectionCache = true;
+import pg from 'pg';
+const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: "postgresql://neondb_owner:npg_4P6BeXkZLcTA@ep-autumn-river-akx7s38p-pooler.c-3.us-west-2.aws.neon.tech/neondb?sslmode=require"

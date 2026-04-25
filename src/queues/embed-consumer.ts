@@ -8,7 +8,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import { PgVectorProvider } from '../providers/pgvector-provider';
 import { EmbedPipeline } from '../ingestion/embed-pipeline';
 import type { Env, EmbedQueueMessage, SkillInput } from '../types';
@@ -17,9 +18,9 @@ export async function handleEmbedQueue(
   batch: MessageBatch<EmbedQueueMessage>,
   env: Env
 ): Promise<void> {
-  const pool = new Pool({ connectionString: env.NEON_CONNECTION_STRING });
+  const pool = createPool(env);
   const embedPipeline = new EmbedPipeline(env);
-  const provider = new PgVectorProvider(env.NEON_CONNECTION_STRING, env);
+  const provider = new PgVectorProvider(env);
   const useMultiVector = env.MULTI_VECTOR_ENABLED === 'true';
 
   for (const message of batch.messages) {

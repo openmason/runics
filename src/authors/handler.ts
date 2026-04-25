@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { Pool } from '@neondatabase/serverless';
+import { createPool } from '../db/connection';
+import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 
 export const authorRoutes = new Hono<{ Bindings: Env }>();
@@ -7,7 +8,7 @@ export const authorRoutes = new Hono<{ Bindings: Env }>();
 // GET /v1/authors/:handle — Author profile with aggregate stats
 authorRoutes.get('/:handle', async (c) => {
   const handle = c.req.param('handle');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const result = await pool.query(
@@ -60,7 +61,7 @@ authorRoutes.get('/:handle/skills', async (c) => {
   const status = c.req.query('status');
   const limit = Math.min(parseInt(c.req.query('limit') || '20'), 100);
   const offset = parseInt(c.req.query('offset') || '0');
-  const pool = new Pool({ connectionString: c.env.NEON_CONNECTION_STRING });
+  const pool = createPool(c.env);
 
   try {
     const conditions: string[] = ['a.handle = $1'];

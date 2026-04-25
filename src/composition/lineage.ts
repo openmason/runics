@@ -1,4 +1,4 @@
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 
 export async function getAncestry(
   skillId: string,

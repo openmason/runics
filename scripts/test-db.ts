@@ -3,7 +3,8 @@
  * Test database connection and check schema
  */
 
-import { Pool } from '@neondatabase/serverless';
+import pg from 'pg';
+const { Pool } = pg;
 
 async function main() {
   console.log('🔍 Testing Neon database connection...\n');

@@ -1,4 +1,4 @@
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 import type { InvocationBatch } from '../types';
 
 const CHUNK_SIZE = 100;

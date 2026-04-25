@@ -11,7 +11,8 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════
 
-import { Pool } from '@neondatabase/serverless';
+import pg from 'pg';
+const { Pool } = pg;
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -103,7 +104,7 @@ function getDbUrl(): string {
 
 // ── Status Report ────────────────────────────────────────────────────────────
 
-async function showStatus(pool: Pool) {
+async function showStatus(pool: InstanceType<typeof Pool>) {
   const result = await pool.query(`
     SELECT
       source,
@@ -158,7 +159,7 @@ interface SkillToScan {
   status: string;
 }
 
-async function fetchSkillsToScan(pool: Pool, opts: Options): Promise<SkillToScan[]> {
+async function fetchSkillsToScan(pool: InstanceType<typeof Pool>, opts: Options): Promise<SkillToScan[]> {
   const conditions: string[] = [
     "source IN ('github', 'mcp-registry', 'clawhub')",
     "cognium_job_id IS NULL",   // skip in-flight

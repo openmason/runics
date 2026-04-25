@@ -13,7 +13,7 @@
 
 import type { Env, ScoredSkill } from '../types';
 import type { CircuitBreaker } from '../resilience/circuit-breaker';
-import { Pool } from '@neondatabase/serverless';
+import type { Pool } from '../db/connection';
 
 export class Reranker {
   private topN: number;
