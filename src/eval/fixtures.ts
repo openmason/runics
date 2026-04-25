@@ -264,6 +264,7 @@ const ALT = {
     '7abf0ea7-3e8a-468b-a282-14809a480bc0', // Template (deploy tool)
     '16517573-5792-4323-9261-bc2cd83c18b9', // terraform-cloud-mcp
     'fa30bfc3-421e-4065-bd1d-fe6bf84018b3', // AppDeploy (application deployment)
+    '8d9cfb13-bc35-4bea-80e8-10974ec40724', // Vercel (deployment platform)
   ],
   API_TESTING: [
     'ddf79f9b-bfe1-48fd-aefe-6eb86a270960', // api-tester
@@ -478,6 +479,15 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-disambig-013', query: 'run tests for my react components', expectedSkillId: SKILL.JEST, acceptableSkillIds: [...ALT.JEST, ...ALT.FRONTEND_TESTING], pattern: 'direct' },
   { id: 'eval-disambig-014', query: 'document my UI components', expectedSkillId: SKILL.STORYBOOK, acceptableSkillIds: [...ALT.STORYBOOK, ...ALT.UI_COMPONENTS], pattern: 'direct' },
   { id: 'eval-disambig-015', query: 'analyze code for security vulnerabilities using queries', expectedSkillId: SKILL.CODEQL, acceptableSkillIds: [...ALT.CODEQL, ...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // HARDENING — Targeted fixtures for previously weak areas
+  // ──────────────────────────────────────────────────────────────────────────
+
+  { id: 'eval-hardening-001', query: 'javascript linter to enforce coding standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY], pattern: 'direct' },
+  { id: 'eval-hardening-002', query: 'collect application metrics and set up alerting', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.DATADOG, ...ALT.MONITORING], pattern: 'problem' },
+  { id: 'eval-hardening-003', query: 'scan npm packages for known security vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEP_SECURITY, ...ALT.DEPENDABOT, '926d5d00-f4ba-47c6-a160-2f9ebc08fdb6' /* io.github.rog0x/npm */, 'f81f230d-3d61-42c8-a246-edc1f5c633ac' /* io.github.alisaitteke/npm-mcp */], pattern: 'direct' },
+  { id: 'eval-hardening-004', query: 'run end to end browser tests for web application', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING], pattern: 'direct' },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
