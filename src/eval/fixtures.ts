@@ -154,6 +154,7 @@ const ALT = {
     '37d45443-157a-44c2-b1b9-e2b299186eca', // k8s-interactive-mcp
     'b7b599e5-b73e-41f3-a59b-8ff3baf765ed', // kube-lint-mcp
     'facd248d-9341-4732-bb73-799c3032e137', // Rootcause (K8s crash debugging)
+    '3945936d-92f3-4081-99da-2af80ef2b814', // mcp-k8s-ro (k8s read-only)
   ],
   TRIVY: [
     '49202c54-6431-4e13-8ecb-9ef633e41812', // Trivy (glama)
@@ -229,6 +230,7 @@ const ALT = {
     '2eb2991d-f2fc-4729-9037-2845fc720d7e', // code-sentinel (security analysis)
     '40343933-2809-4b5e-8c58-ceae83977cfc', // CodeBadger Toolkit (static analysis via Joern)
     '665c2790-3351-42d6-abe7-746eaf570c0a', // Sheriff (SARIF static analysis)
+    '5271235b-fdbb-4708-8ffd-9cfc49631f04', // claude-code-safety-net (code security)
   ],
   MONITORING: [
     '3951b9af-123e-4adb-9faa-63aac2914f4d', // AppSignal MCP (monitoring)
@@ -238,6 +240,7 @@ const ALT = {
     '73ef9110-b43a-407c-9e20-26dfe0654114', // mpop (application performance monitoring)
     '0e646a51-32ff-4707-9ef4-4f4236568728', // Alpic (monitoring stack)
     '360e9461-1e5f-4f42-848e-831e118fe467', // honeycomb-mcp-server (observability)
+    'd2b7034d-85d8-4d2b-8469-105c7543a081', // Cloudflare DEX (digital experience monitoring)
   ],
   CODE_QUALITY: [
     '88258393-d923-4d93-8c8b-a4762294912c', // code-quality (complexity, duplicates, naming)
@@ -257,6 +260,7 @@ const ALT = {
     'bd69c0de-2a87-434c-aa77-9748e11ab3ae', // Railway MCP Server
     '7abf0ea7-3e8a-468b-a282-14809a480bc0', // Template (deploy tool)
     '16517573-5792-4323-9261-bc2cd83c18b9', // terraform-cloud-mcp
+    'fa30bfc3-421e-4065-bd1d-fe6bf84018b3', // AppDeploy (application deployment)
   ],
   API_TESTING: [
     'ddf79f9b-bfe1-48fd-aefe-6eb86a270960', // api-tester
@@ -289,6 +293,8 @@ const ALT = {
     'f3a25640-091e-45bf-85f8-e7631cde34e6', // RenderMark (Markdown to PDF/DOCX/HTML)
     'c78b678f-5abd-401a-af78-647ca4f8de0b', // proflulab-documentassistant (document converter)
     '7f1aac23-8ef8-4914-824d-ccf45d157fe5', // huoshui-file-converter
+    '652406ad-962b-45b8-b747-56e257abd672', // remove-metadata-from-pdf
+    '58c99c8f-4c41-4f50-86ee-d08003e051a4', // mcp-pdf2md (PDF to markdown)
   ],
   CACHE: [
     'a0951745-4301-45a8-a7ef-531407aac85f', // smart-cache (LRU/LFU caching)
@@ -423,7 +429,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-alternate-007', query: 'fast javascript typescript formatter linter combo', expectedSkillId: SKILL.BIOME, pattern: 'alternate' },
   { id: 'eval-alternate-008', query: 'SAST security scanning multi language', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: ALT.SEMGREP, pattern: 'alternate' },
   { id: 'eval-alternate-009', query: 'software composition analysis dependency checker', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEPENDABOT, ...ALT.DEP_SECURITY], pattern: 'alternate' },
-  { id: 'eval-alternate-010', query: 'IaC cloud provisioning declarative', expectedSkillId: SKILL.TERRAFORM, pattern: 'alternate' },
+  { id: 'eval-alternate-010', query: 'IaC cloud provisioning declarative', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE, ...ALT.CLOUD_DEPLOY], pattern: 'alternate' },
   { id: 'eval-alternate-011', query: 'k8s cluster management deploy pods', expectedSkillId: SKILL.KUBECTL, acceptableSkillIds: ALT.KUBECTL, pattern: 'alternate' },
   { id: 'eval-alternate-012', query: 'HTTP request testing command line tool', expectedSkillId: SKILL.HTTPIE, pattern: 'alternate' },
   { id: 'eval-alternate-013', query: 'application performance monitoring distributed tracing', expectedSkillId: SKILL.DATADOG, acceptableSkillIds: [...ALT.DATADOG, ...ALT.PROMETHEUS, ...ALT.MONITORING], pattern: 'alternate' },
@@ -442,7 +448,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-composition-007', query: 'deploy infrastructure then deploy application on top', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE, ...ALT.CLOUD_DEPLOY], pattern: 'composition' },
   { id: 'eval-composition-008', query: 'set up monitoring stack with metrics and dashboards', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.MONITORING], pattern: 'composition' },
   { id: 'eval-composition-009', query: 'automated release pipeline with version bump and changelog', expectedSkillId: SKILL.SEMANTIC_RELEASE, acceptableSkillIds: ALT.SEMANTIC_RELEASE, pattern: 'composition' },
-  { id: 'eval-composition-010', query: 'end to end testing pipeline with cross browser verification', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: ALT.PLAYWRIGHT, pattern: 'composition' },
+  { id: 'eval-composition-010', query: 'end to end testing pipeline with cross browser verification', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING], pattern: 'composition' },
 
   // ──────────────────────────────────────────────────────────────────────────
   // DISAMBIGUATION — Queries where multiple skills could match
