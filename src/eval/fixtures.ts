@@ -254,6 +254,7 @@ const ALT = {
     'b1745fe7-0304-4055-a8a1-b6c300f3604b', // Apiiro Guardian Agent (code security)
     '656b2312-aab4-47c6-a0e6-979b1cdbc700', // Roslyn CodeLens (code quality)
     '588da5c8-a4f9-4444-83b8-e856a09e36a9', // typescript-lsp (code analysis)
+    'd435fd2d-0c35-4ddd-a3d8-5858c439b3c3', // Code Assistant (code review/issues)
   ],
   CLOUD_DEPLOY: [
     '6452601e-81c9-4712-863d-5b43607f359b', // heroku-mcp-server
@@ -420,7 +421,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-business-010', query: 'automate infrastructure provisioning for cloud migration', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE], pattern: 'business' },
   { id: 'eval-business-011', query: 'automate the release and versioning process', expectedSkillId: SKILL.SEMANTIC_RELEASE, acceptableSkillIds: ALT.SEMANTIC_RELEASE, pattern: 'business' },
   { id: 'eval-business-012', query: 'generate API documentation for partner integrations', expectedSkillId: SKILL.SWAGGER_CODEGEN, acceptableSkillIds: [...ALT.SWAGGER, ...ALT.API_DOCS, SKILL.TYPEDOC], pattern: 'business' },
-  { id: 'eval-business-013', query: 'keep all project dependencies secure and up to date', expectedSkillId: SKILL.DEPENDABOT, acceptableSkillIds: [...ALT.DEPENDABOT, ...ALT.SNYK, ...ALT.DEP_SECURITY], pattern: 'business' },
+  { id: 'eval-business-013', query: 'keep all project dependencies secure and up to date', expectedSkillId: SKILL.DEPENDABOT, acceptableSkillIds: [...ALT.DEPENDABOT, ...ALT.SNYK, ...ALT.DEP_SECURITY, SKILL.CARGO_DENY], pattern: 'business' },
   { id: 'eval-business-014', query: 'ensure website works on all major browsers', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: ALT.PLAYWRIGHT, pattern: 'business' },
 
   // ──────────────────────────────────────────────────────────────────────────
