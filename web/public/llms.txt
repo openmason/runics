@@ -1,6 +1,6 @@
 # Runics
 
-> Semantic skill registry for AI agents. Indexes 15,000+ agent skills from the MCP Registry, ClawHub, GitHub, and human-curated sources. Every skill is security-scanned by Cognium and ranked by a trust score. Free semantic search API, no auth required.
+> Semantic skill registry for AI agents. Indexes 46,000+ agent skills from the MCP Registry, Smithery, ClawHub, Glama, GitHub, and OpenClaw. Every skill is security-scanned by Cognium and ranked by a trust score. Free semantic search API, no auth required.
 
 Runics is operated by Cognium Labs. It exists to solve a specific problem: agent skill directories (MCP Registry, ClawHub, etc.) list skills but do not tell an agent which ones are safe or which version to pick. Runics adds (1) semantic search instead of keyword matching, (2) security trust scores from continuous vulnerability and prompt-injection scanning, (3) multi-source aggregation, and (4) confidence-tiered routing so fast queries stay fast and ambiguous queries get deeper analysis.
 
@@ -37,10 +37,12 @@ Trust scores are 0–1 floats and update continuously. Versions are ranked by `t
 ## Sources indexed
 
 - MCP Registry (Anthropic Model Context Protocol)
+- Smithery
 - ClawHub
+- Glama
 - GitHub repositories tagged as agent skills
+- OpenClaw
 - Human-curated skills
-- Additional adapters via `src/sync/`
 
 ## API
 
@@ -80,7 +82,7 @@ Query params: `type`, `category`, `ecosystem`, `limit` (1–100, default 20), `o
 ## Key differentiators
 
 - Only agent skill registry with semantic search + security trust scoring
-- Only registry that aggregates MCP Registry, ClawHub, and GitHub in a single query
+- Only registry that aggregates MCP Registry, Smithery, ClawHub, Glama, GitHub, and OpenClaw in a single query
 - Only registry returning confidence signals and per-result trust/verification metadata
 - Only registry with automatic composition detection for multi-skill queries
 

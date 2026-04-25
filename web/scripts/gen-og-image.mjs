@@ -43,7 +43,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" v
 
   <!-- Subtitle -->
   <text x="80" y="500" font-family="system-ui, -apple-system, Helvetica, Arial, sans-serif" font-size="26" font-weight="400" fill="#a0a0a6">
-    Semantic skill registry for AI agents · 15,000+ indexed
+    Semantic skill registry for AI agents · 46,000+ indexed
   </text>
 
   <!-- Footer bar -->
