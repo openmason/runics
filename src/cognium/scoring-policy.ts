@@ -18,7 +18,11 @@ import type { SkillStatus, VerificationTier } from '../types';
 // Base trust by source (registry provenance)
 export const BASE_TRUST: Record<string, number> = {
   'mcp-registry':    0.80,
+  'smithery':        0.65,
+  'pulsemcp':        0.50,
+  'glama':           0.60,
   'clawhub':         0.65,
+  'openclaw':        0.55,
   'github':          0.55,
   'manual':          0.60,
   'forge':           0.40,

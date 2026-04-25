@@ -2389,6 +2389,183 @@ app.post('/v1/admin/dedup-repo-url', async (c) => {
   }
 });
 
+// ── Admin: cross-source dedup by name + embedding similarity ─────────────────
+// Groups published skills by lower(name), then within each group compares
+// embedding vectors. Pairs with cosine similarity >= threshold are treated as
+// true duplicates. The higher-priority source wins (same priority order as
+// dedup-repo-url). Dry-run by default.
+app.post('/v1/admin/dedup-name', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const execute = c.req.query('execute') === 'true';
+    const limit = Math.min(parseInt(c.req.query('limit') ?? '100', 10), 1000);
+    const threshold = Math.min(Math.max(parseFloat(c.req.query('threshold') ?? '0.95'), 0.8), 1.0);
+    const minGroupSize = Math.max(parseInt(c.req.query('minGroupSize') ?? '2', 10), 2);
+
+    // Find name-overlap groups where all members are published and have embeddings.
+    // Compare embedding similarity within each group. Return pairs above threshold.
+    const analysisSql = `
+      WITH name_groups AS (
+        SELECT lower(name) AS name_lower, array_agg(id) AS skill_ids, count(*)::int AS cnt
+        FROM skills
+        WHERE status = 'published'
+        GROUP BY lower(name)
+        HAVING count(DISTINCT source) > 1 AND count(*) >= $2
+        ORDER BY count(*) DESC
+        LIMIT $1
+      ),
+      pairs AS (
+        SELECT
+          s1.id AS id1, s1.name AS name1, s1.slug AS slug1, s1.source AS source1,
+          s1.trust_score AS trust1, s1.updated_at AS updated1,
+          s2.id AS id2, s2.name AS name2, s2.slug AS slug2, s2.source AS source2,
+          s2.trust_score AS trust2, s2.updated_at AS updated2,
+          1 - (e1.embedding <=> e2.embedding) AS similarity,
+          ng.name_lower,
+          CASE s1.source
+            WHEN 'mcp-registry' THEN 1 WHEN 'smithery' THEN 2 WHEN 'pulsemcp' THEN 3
+            WHEN 'glama' THEN 4 WHEN 'clawhub' THEN 5 WHEN 'openclaw' THEN 6
+            WHEN 'github' THEN 7 ELSE 8
+          END AS prio1,
+          CASE s2.source
+            WHEN 'mcp-registry' THEN 1 WHEN 'smithery' THEN 2 WHEN 'pulsemcp' THEN 3
+            WHEN 'glama' THEN 4 WHEN 'clawhub' THEN 5 WHEN 'openclaw' THEN 6
+            WHEN 'github' THEN 7 ELSE 8
+          END AS prio2
+        FROM name_groups ng
+        JOIN skills s1 ON s1.id = ANY(ng.skill_ids) AND s1.status = 'published'
+        JOIN skills s2 ON s2.id = ANY(ng.skill_ids) AND s2.status = 'published' AND s2.id > s1.id
+        JOIN skill_embeddings e1 ON e1.skill_id = s1.id AND e1.source = 'agent_summary'
+        JOIN skill_embeddings e2 ON e2.skill_id = s2.id AND e2.source = 'agent_summary'
+        WHERE s1.source != s2.source
+        AND 1 - (e1.embedding <=> e2.embedding) >= $3
+      )
+      SELECT * FROM pairs ORDER BY similarity DESC`;
+
+    const pairsResult = await pool.query(analysisSql, [limit, minGroupSize, threshold]);
+
+    // Deduplicate: for each pair, loser is the lower-priority source.
+    // Use a set to avoid deprecating the same skill twice.
+    const updates: Array<{ loserId: string; winnerId: string; loserSlug: string; winnerSlug: string; similarity: number; loserSource: string; winnerSource: string; name: string }> = [];
+    const deprecated = new Set<string>();
+    const kept = new Set<string>();
+
+    for (const row of pairsResult.rows as any[]) {
+      // Skip if either side already marked for deprecation in this run
+      if (deprecated.has(row.id1) || deprecated.has(row.id2)) continue;
+
+      // Winner = lower priority number (higher source rank), tie-break by updated_at
+      let winnerId: string, winnerSlug: string, winnerSource: string;
+      let loserId: string, loserSlug: string, loserSource: string;
+
+      if (row.prio1 < row.prio2 || (row.prio1 === row.prio2 && row.updated1 >= row.updated2)) {
+        winnerId = row.id1; winnerSlug = row.slug1; winnerSource = row.source1;
+        loserId = row.id2; loserSlug = row.slug2; loserSource = row.source2;
+      } else {
+        winnerId = row.id2; winnerSlug = row.slug2; winnerSource = row.source2;
+        loserId = row.id1; loserSlug = row.slug1; loserSource = row.source1;
+      }
+
+      // Don't deprecate a skill that's already a winner from a previous pair
+      if (kept.has(loserId)) continue;
+
+      deprecated.add(loserId);
+      kept.add(winnerId);
+      updates.push({ loserId, winnerId, loserSlug, winnerSlug, similarity: parseFloat(row.similarity), loserSource, winnerSource, name: row.name_lower });
+    }
+
+    // Execute if requested
+    if (execute && updates.length > 0) {
+      const valuesClauses: string[] = [];
+      const params: any[] = [];
+      for (let i = 0; i < updates.length; i++) {
+        const offset = i * 2;
+        valuesClauses.push(`($${offset + 1}::uuid, $${offset + 2}::uuid)`);
+        params.push(updates[i].loserId, updates[i].winnerId);
+      }
+
+      const updateSql = `
+        WITH dedup_pairs(loser_id, winner_id) AS (
+          VALUES ${valuesClauses.join(', ')}
+        )
+        UPDATE skills s
+        SET
+          status = 'deprecated',
+          deprecated_at = NOW(),
+          deprecated_reason = 'Superseded by name+embedding dedup',
+          replacement_skill_id = dp.winner_id,
+          updated_at = NOW()
+        FROM dedup_pairs dp
+        WHERE s.id = dp.loser_id
+          AND s.status = 'published'`;
+
+      await pool.query(updateSql, params);
+
+      // Cache invalidation
+      const cache = new SearchCache(c.env.SEARCH_CACHE, parseInt(c.env.CACHE_TTL_SECONDS || '120'));
+      for (const u of updates) {
+        await cache.addRevokedSlug(u.loserSlug);
+      }
+    }
+
+    return c.json({
+      mode: execute ? 'execute' : 'dry-run',
+      threshold,
+      pairsFound: pairsResult.rows.length,
+      skillsDeprecated: updates.length,
+      sample: updates.slice(0, 50).map(u => ({
+        name: u.name,
+        similarity: u.similarity.toFixed(4),
+        winner: { slug: u.winnerSlug, source: u.winnerSource },
+        loser: { slug: u.loserSlug, source: u.loserSource },
+      })),
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+// Admin: reset trust scores for a source to its BASE_TRUST value (unscanned skills only)
+app.post('/v1/admin/reset-trust', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const source = c.req.query('source');
+    const trustScore = parseFloat(c.req.query('trust') ?? '0');
+    const execute = c.req.query('execute') === 'true';
+
+    if (!source || !trustScore) {
+      return c.json({ error: 'Required: ?source=pulsemcp&trust=0.50' }, 400);
+    }
+
+    // Only reset unscanned skills (cognium_scanned_at IS NULL)
+    const countResult = await pool.query(
+      `SELECT count(*)::int AS cnt FROM skills
+       WHERE source = $1 AND status = 'published'
+       AND verification_tier = 'unverified' AND cognium_scanned_at IS NULL`,
+      [source]
+    );
+    const count = countResult.rows[0].cnt;
+
+    if (execute && count > 0) {
+      await pool.query(
+        `UPDATE skills SET trust_score = $1, updated_at = NOW()
+         WHERE source = $2 AND status = 'published'
+         AND verification_tier = 'unverified' AND cognium_scanned_at IS NULL`,
+        [trustScore, source]
+      );
+    }
+
+    return c.json({
+      mode: execute ? 'execute' : 'dry-run',
+      source,
+      trustScore,
+      skillsAffected: count,
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 app.post('/v1/admin/backfill', async (c) => {
   try {
     const mode = c.req.query('mode') ?? 'queue';

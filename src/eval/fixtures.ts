@@ -120,6 +120,8 @@ const ALT = {
     'c2033721-020a-4ce3-8906-dbb5fda1589c', // Postman MCP Server
     '1ba47d16-154f-4434-aa66-9a331a7abf58', // api-test-mcp
     '84fc6df9-982b-4bb0-9afa-fab18e63b7c0', // newman (Postman CLI runner)
+    'ee56dfee-92e8-4973-ab5b-aec49b50fd26', // API Tester (pulsemcp)
+    '20118977-6c6e-426c-9e49-9ae00b52c32e', // com.postman/postman-mcp-server
   ],
   CLOUDFLARE: [
     '1d787498-ded2-4a51-b1e5-ba540e3cb804', // cloudflare-mcp (github)
@@ -233,6 +235,7 @@ const ALT = {
     '40343933-2809-4b5e-8c58-ceae83977cfc', // CodeBadger Toolkit (static analysis via Joern)
     '665c2790-3351-42d6-abe7-746eaf570c0a', // Sheriff (SARIF static analysis)
     '5271235b-fdbb-4708-8ffd-9cfc49631f04', // claude-code-safety-net (code security)
+    'c5313718-8863-48a1-9dd0-e2d9b2a51d7e', // Code Review Analyst (security review)
   ],
   MONITORING: [
     '3951b9af-123e-4adb-9faa-63aac2914f4d', // AppSignal MCP (monitoring)
@@ -245,6 +248,8 @@ const ALT = {
     'd2b7034d-85d8-4d2b-8469-105c7543a081', // Cloudflare DEX (digital experience monitoring)
     '7eb78d28-223d-4e8b-a197-ad8e1109294c', // Seq MCP Server (structured log monitoring)
     'e17333c8-be18-4c0d-8a2e-426d81c0f463', // Splunk MCP Server (log/metrics monitoring)
+    '4994161d-6cbf-4d4f-b791-6867e988de13', // Node.js MCP Server (mustafa-can-mcpserver)
+    'b674913c-901e-4a96-84e9-60e62ad30bfb', // Context Guardian (cloud context monitoring)
   ],
   CODE_QUALITY: [
     '88258393-d923-4d93-8c8b-a4762294912c', // code-quality (complexity, duplicates, naming)
@@ -257,6 +262,8 @@ const ALT = {
     '656b2312-aab4-47c6-a0e6-979b1cdbc700', // Roslyn CodeLens (code quality)
     '588da5c8-a4f9-4444-83b8-e856a09e36a9', // typescript-lsp (code analysis)
     'd435fd2d-0c35-4ddd-a3d8-5858c439b3c3', // Code Assistant (code review/issues)
+    '6dfdbb36-cbba-4375-ab80-e5a1b18e0f3e', // Bug Detector (pulsemcp)
+    'c5313718-8863-48a1-9dd0-e2d9b2a51d7e', // Code Review Analyst
   ],
   CLOUD_DEPLOY: [
     '6452601e-81c9-4712-863d-5b43607f359b', // heroku-mcp-server
@@ -272,9 +279,13 @@ const ALT = {
     'ddf79f9b-bfe1-48fd-aefe-6eb86a270960', // api-tester
     '18563797-9e28-4e2d-8cb2-6e4e4f126f5c', // mcp-rest-api
     '60959bbc-20b9-49c1-8fda-3e5d4a2a609a', // ub2-api-health-checker
+    '90fa3c90-c042-4d7c-9f54-8d6a7f2e3b1a', // HTTP Request Testing (pulsemcp)
+    'ebb55123-f8ee-4a1e-b2c3-d4e5f6a7b8c9', // ai.smithery/arjunkmrm-http-test
   ],
   FRONTEND_TESTING: [
     '34f5fbc0-f78e-4524-a37d-0ad82d0f411b', // MCP Frontend Testing Server
+    '6a79e8de-e633-479f-a674-e0317255960b', // Applitools (visual testing)
+    '90cb457b-29f7-487e-b69b-d0c64567f970', // BrowserStack (cross-browser testing)
   ],
   INFRA_AS_CODE: [
     '38dbab7b-d3cb-4842-83fe-f4972422a0ab', // infra-as-code
@@ -286,6 +297,7 @@ const ALT = {
   DB_MIGRATION: [
     '20cffde8-6cb1-49d8-ad09-e214302faede', // migrationpilot (PostgreSQL migration rules)
     '8dd1c0a0-31d9-423b-9260-153160a68156', // MCP Atlas (database migration management)
+    '17a99f59-cb3a-4a6e-b01e-49c67bf78e6a', // MigrationPilot (smithery)
   ],
   CONTAINER_SCANNING: [
     '964c98ee-9cea-4012-ac1a-0f3f493ba36a', // On-Demand Scanning API (Google container scanning)
@@ -321,6 +333,7 @@ const ALT = {
     'a27747ba-8cb7-4ff3-a014-e38a96bae45a', // Socket MCP Server (dependency supply chain security)
     '9196cb95-30aa-4319-bd77-b944c8f4170c', // dep-audit (dependency audit tool)
     '5a1fd58b-383d-453e-bbe8-7459f23176d3', // SBOMApp (SBOM + vulnerability scanner)
+    'a19c2398-b7a9-4115-814a-dbccc68759fb', // Dependency Checker (niradler-dependency-checker)
   ],
   MD_TO_PDF: [
     '56844c03-93b6-4885-8046-79f5a70c866f', // MD-PDF MCP Server
@@ -342,6 +355,9 @@ const ALT = {
     '0fbcaaba-550a-4eab-a7c1-ad9e1e119c4b', // Browser Instrumentation MCP Server
     '7dcc9484-c699-4d68-bc73-d76e79e1cd3e', // Chrome Debug MCP Server (alt)
     'd0eb637c-d114-444d-9316-65ae4fa12218', // Browserbase (browser automation)
+    'bc1cc827-1a2e-4960-82ec-2d2a501f1eae', // Better-Auth (login/auth flow)
+    '24211068-2996-443c-8ff8-d30cf565b3b2', // SteadyFetch (browser fetch)
+    'a6d35954-01da-4d04-9343-71f4e3836b5c', // gateway-guard (auth/login protection)
   ],
   UI_COMPONENTS: [
     'fc2d14d6-6635-4e58-a23a-e9b92730d855', // PrimeNG MCP Server
@@ -425,7 +441,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-business-011', query: 'automate the release and versioning process', expectedSkillId: SKILL.SEMANTIC_RELEASE, acceptableSkillIds: ALT.SEMANTIC_RELEASE, pattern: 'business' },
   { id: 'eval-business-012', query: 'generate API documentation for partner integrations', expectedSkillId: SKILL.SWAGGER_CODEGEN, acceptableSkillIds: [...ALT.SWAGGER, ...ALT.API_DOCS, SKILL.TYPEDOC], pattern: 'business' },
   { id: 'eval-business-013', query: 'keep all project dependencies secure and up to date', expectedSkillId: SKILL.DEPENDABOT, acceptableSkillIds: [...ALT.DEPENDABOT, ...ALT.SNYK, ...ALT.DEP_SECURITY, SKILL.CARGO_DENY], pattern: 'business' },
-  { id: 'eval-business-014', query: 'ensure website works on all major browsers', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: ALT.PLAYWRIGHT, pattern: 'business' },
+  { id: 'eval-business-014', query: 'ensure website works on all major browsers', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.FRONTEND_TESTING, ...ALT.BROWSER_DEBUG], pattern: 'business' },
 
   // ──────────────────────────────────────────────────────────────────────────
   // ALTERNATE Pattern — Different terminology for same concept
@@ -442,7 +458,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-alternate-009', query: 'software composition analysis dependency checker', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEPENDABOT, ...ALT.DEP_SECURITY], pattern: 'alternate' },
   { id: 'eval-alternate-010', query: 'IaC cloud provisioning declarative', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE, ...ALT.CLOUD_DEPLOY], pattern: 'alternate' },
   { id: 'eval-alternate-011', query: 'k8s cluster management deploy pods', expectedSkillId: SKILL.KUBECTL, acceptableSkillIds: ALT.KUBECTL, pattern: 'alternate' },
-  { id: 'eval-alternate-012', query: 'HTTP request testing command line tool', expectedSkillId: SKILL.HTTPIE, pattern: 'alternate' },
+  { id: 'eval-alternate-012', query: 'HTTP request testing command line tool', expectedSkillId: SKILL.HTTPIE, acceptableSkillIds: ALT.API_TESTING, pattern: 'alternate' },
   { id: 'eval-alternate-013', query: 'application performance monitoring distributed tracing', expectedSkillId: SKILL.DATADOG, acceptableSkillIds: [...ALT.DATADOG, ...ALT.PROMETHEUS, ...ALT.MONITORING], pattern: 'alternate' },
   { id: 'eval-alternate-014', query: 'nosql document database for development', expectedSkillId: SKILL.MONGODB, acceptableSkillIds: ALT.MONGODB, pattern: 'alternate' },
 

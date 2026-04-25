@@ -96,7 +96,7 @@ export class PulseMCPSync extends BaseSyncWorker {
       source: 'pulsemcp',
       sourceUrl: server.url ?? `https://www.pulsemcp.com/servers/${urlSlug}`,
       sourceHash: '', // Set by base class
-      trustScore: 0.65,
+      trustScore: 0.50,
     };
   }
 }
