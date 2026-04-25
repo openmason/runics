@@ -187,7 +187,7 @@ SYNC_CLAWHUB_ENABLED = "true"
 SYNC_GITHUB_ENABLED = "true"
 SYNC_GLAMA_ENABLED = "true"
 SYNC_SMITHERY_ENABLED = "true"
-SYNC_PULSEMCP_ENABLED = "false"          # Blocked by Cloudflare — disabled until resolved
+SYNC_PULSEMCP_ENABLED = "true"
 SYNC_OPENCLAW_ENABLED = "true"
 
 # ── Scan Backpressure ────────────────────────────────────────────────────────

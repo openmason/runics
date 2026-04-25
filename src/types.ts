@@ -449,7 +449,7 @@ export interface Env {
   SYNC_GITHUB_ENABLED?: string; // default "true"
   SYNC_GLAMA_ENABLED?: string; // default "true"
   SYNC_SMITHERY_ENABLED?: string; // default "true"
-  SYNC_PULSEMCP_ENABLED?: string; // default "false" (Cloudflare-blocked)
+  SYNC_PULSEMCP_ENABLED?: string; // default "true"
   SYNC_OPENCLAW_ENABLED?: string; // default "true"
 
   // v5.0: Cognium client configuration

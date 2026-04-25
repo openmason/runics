@@ -221,6 +221,8 @@ const ALT = {
     'afde2c53-12bb-4272-9bb3-bf1a82f39745', // Lindorm MCP Server (NoSQL)
     '32d51cf6-687e-4fe4-93dd-fbeef8dde16c', // Couchbase MCP Server (NoSQL)
     '803605ad-c17d-4fac-a644-570488d038a9', // Azure Cosmos DB MCP Server (NoSQL)
+    'f7b168fd-4c38-45a8-b833-a04628626aa1', // Couchbase (pulsemcp)
+    '23e9a0d7-3530-45e2-8b99-932d9fdea31b', // MongoDB MCP Server (pulsemcp)
   ],
   SECURITY_ANALYSIS: [
     '37622379-21d9-420a-b528-0d2bc49864f1', // security-checker

@@ -2754,7 +2754,7 @@ app.post('/v1/admin/sync-smithery', async (c) => {
   }
 });
 
-// Admin: sync PulseMCP directory (disabled by default — Cloudflare-blocked)
+// Admin: sync PulseMCP directory (manual backfill with cursor persistence)
 app.post('/v1/admin/sync-pulsemcp', async (c) => {
   try {
     const maxPages = Math.min(parseInt(c.req.query('pages') ?? '30', 10), 100);
