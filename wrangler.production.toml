@@ -160,7 +160,7 @@ RERANKER_ENABLED = "true"
 RERANKER_TOP_N = "20"
 
 # ── Cognium (Circle-IR) ─────────────────────────────────────────────────────
-COGNIUM_ENABLED = "false"             # Hard kill switch — set to "true" to resume cron + queue scanning
+COGNIUM_ENABLED = "true"              # Cron + queue scanning active
 COGNIUM_URL = "https://circle.cognium.net"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"
