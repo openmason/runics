@@ -241,6 +241,8 @@ const ALT = {
     '0e646a51-32ff-4707-9ef4-4f4236568728', // Alpic (monitoring stack)
     '360e9461-1e5f-4f42-848e-831e118fe467', // honeycomb-mcp-server (observability)
     'd2b7034d-85d8-4d2b-8469-105c7543a081', // Cloudflare DEX (digital experience monitoring)
+    '7eb78d28-223d-4e8b-a197-ad8e1109294c', // Seq MCP Server (structured log monitoring)
+    'e17333c8-be18-4c0d-8a2e-426d81c0f463', // Splunk MCP Server (log/metrics monitoring)
   ],
   CODE_QUALITY: [
     '88258393-d923-4d93-8c8b-a4762294912c', // code-quality (complexity, duplicates, naming)
@@ -310,6 +312,11 @@ const ALT = {
     '6e93c584-78a3-4b78-af8a-f0148313e5ae', // CVE Checker for Node Modules
     'ddbf775e-0944-465f-9592-982582cd6045', // OSV (open source vulnerability database)
     '9c7d8676-8bc5-4356-bef4-30185a4d0cbc', // Hex Graph (dependency analysis)
+    '4f3c1dc7-7f65-4729-a6c3-344ee5769c22', // References (Chinese security audit — checks deps, perms, etc.)
+    'c3f97a0c-c3a4-4253-b5ad-f74328998a24', // Sx Security Audit (Chinese security audit)
+    'a27747ba-8cb7-4ff3-a014-e38a96bae45a', // Socket MCP Server (dependency supply chain security)
+    '9196cb95-30aa-4319-bd77-b944c8f4170c', // dep-audit (dependency audit tool)
+    '5a1fd58b-383d-453e-bbe8-7459f23176d3', // SBOMApp (SBOM + vulnerability scanner)
   ],
   MD_TO_PDF: [
     '56844c03-93b6-4885-8046-79f5a70c866f', // MD-PDF MCP Server
@@ -440,7 +447,7 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-composition-001', query: 'rust supply chain security audit pipeline', expectedSkillId: SKILL.CARGO_DENY, pattern: 'composition' },
-  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, acceptableSkillIds: [SKILL.COMMITLINT, ...ALT.COMMITLINT, SKILL.PRETTIER, SKILL.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY, ...ALT.FORMATTERS], pattern: 'composition' },
+  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, acceptableSkillIds: [SKILL.COMMITLINT, ...ALT.COMMITLINT, SKILL.PRETTIER, SKILL.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY, ...ALT.FORMATTERS, '4451c98e-6156-478a-8ffc-b2267b216335', /* ruchy-mcp (lint/format/analysis) */ 'eeb14657-6240-4c2f-884e-14ac026ee28c' /* Nm Attune Precommit Setup */], pattern: 'composition' },
   { id: 'eval-composition-003', query: 'ci pipeline to validate code quality', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'composition' },
   { id: 'eval-composition-004', query: 'container security scanning in deployment workflow', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: [...ALT.TRIVY, ...ALT.CONTAINER_SCANNING, SKILL.HADOLINT], pattern: 'composition' },
   { id: 'eval-composition-005', query: 'spin up a postgres container for integration test fixtures', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'composition' },
