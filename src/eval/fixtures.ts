@@ -234,6 +234,10 @@ const ALT = {
     '3951b9af-123e-4adb-9faa-63aac2914f4d', // AppSignal MCP (monitoring)
     '27134267-2505-43ff-90ac-7a0adb2e44e6', // Observability MCP Server
     '44db5eb6-b4b2-4624-9049-b84f84f38033', // mcp-observability-server
+    'cf9547c1-a82e-4ac3-b101-1d8fc69686da', // Fulcra Context (health monitoring)
+    '73ef9110-b43a-407c-9e20-26dfe0654114', // mpop (application performance monitoring)
+    '0e646a51-32ff-4707-9ef4-4f4236568728', // Alpic (monitoring stack)
+    '360e9461-1e5f-4f42-848e-831e118fe467', // honeycomb-mcp-server (observability)
   ],
   CODE_QUALITY: [
     '88258393-d923-4d93-8c8b-a4762294912c', // code-quality (complexity, duplicates, naming)
@@ -243,12 +247,16 @@ const ALT = {
     '022ce744-d7a1-49f2-a153-72223cceeb7b', // nextscan (Next.js scanner)
     '977c8d70-3ecf-4237-a492-30f155692078', // vet (code vetting)
     'b1745fe7-0304-4055-a8a1-b6c300f3604b', // Apiiro Guardian Agent (code security)
+    '656b2312-aab4-47c6-a0e6-979b1cdbc700', // Roslyn CodeLens (code quality)
+    '588da5c8-a4f9-4444-83b8-e856a09e36a9', // typescript-lsp (code analysis)
   ],
   CLOUD_DEPLOY: [
     '6452601e-81c9-4712-863d-5b43607f359b', // heroku-mcp-server
     '3ad22348-51e1-46b1-b6b5-4db1f6608ea6', // azd-deployment (Azure Container Apps)
     'd77bd30c-b653-4922-aae1-504dd4b80525', // ibmcloud
     'bd69c0de-2a87-434c-aa77-9748e11ab3ae', // Railway MCP Server
+    '7abf0ea7-3e8a-468b-a282-14809a480bc0', // Template (deploy tool)
+    '16517573-5792-4323-9261-bc2cd83c18b9', // terraform-cloud-mcp
   ],
   API_TESTING: [
     'ddf79f9b-bfe1-48fd-aefe-6eb86a270960', // api-tester
@@ -263,6 +271,7 @@ const ALT = {
     '28aae8a6-76eb-47f0-8bd7-d162689baadb', // cloudforge (Terraform HCL + cloud infra)
     'bcaaaaf4-dc84-4951-a618-b6fa5b4f5802', // cloudwright-mcp (IaC from natural language)
     '9e84f6f9-569f-49e6-ac90-2431c4e2c45c', // MCP SysOperator (Ansible/Terraform)
+    '8a02ed1c-239f-4d04-9cba-6aac8643e88c', // oracle-cloud (cloud provisioning)
   ],
   DB_MIGRATION: [
     '20cffde8-6cb1-49d8-ad09-e214302faede', // migrationpilot (PostgreSQL migration rules)
@@ -278,15 +287,23 @@ const ALT = {
     '125b7b4f-d96e-47bd-8ba5-4241f7f36646', // MarkItDown MCP Server
     '5742ff28-1014-4b7f-a43b-8d88a7c69044', // MCP PDF to Markdown Converter
     'f3a25640-091e-45bf-85f8-e7631cde34e6', // RenderMark (Markdown to PDF/DOCX/HTML)
+    'c78b678f-5abd-401a-af78-647ca4f8de0b', // proflulab-documentassistant (document converter)
+    '7f1aac23-8ef8-4914-824d-ccf45d157fe5', // huoshui-file-converter
   ],
   CACHE: [
     'a0951745-4301-45a8-a7ef-531407aac85f', // smart-cache (LRU/LFU caching)
+    'ef4fb428-c8af-487d-a473-4858310564d3', // Memory Cache (in-memory caching)
   ],
   DEP_SECURITY: [
     'df727e7e-2ca4-4c0b-81a2-398658fae33d', // dependency-updater-ai-mcp
     '68e9d053-13b1-4763-9c53-82f25ba56fb2', // GuardianMCP (npm/Composer vuln scan)
     'f782ec3b-8b62-42af-a0f4-75835eece7b7', // Mcp Security Audit (npm audit)
     'd200df82-dc78-4451-93b9-3ae6b00c2440', // dependency-auditor
+    '42826fc0-2bad-4a54-b3c8-2233139261ec', // Sonatype dependency management
+    '6a060fed-1261-4c80-bc1f-b941e39bc54f', // dep (dependency manager)
+    '6e93c584-78a3-4b78-af8a-f0148313e5ae', // CVE Checker for Node Modules
+    'ddbf775e-0944-465f-9592-982582cd6045', // OSV (open source vulnerability database)
+    '9c7d8676-8bc5-4356-bef4-30185a4d0cbc', // Hex Graph (dependency analysis)
   ],
   MD_TO_PDF: [
     '56844c03-93b6-4885-8046-79f5a70c866f', // MD-PDF MCP Server
@@ -307,6 +324,7 @@ const ALT = {
     '3e99a3d5-6338-4c43-a8da-66f00016d65a', // Chrome Debug MCP Server
     '0fbcaaba-550a-4eab-a7c1-ad9e1e119c4b', // Browser Instrumentation MCP Server
     '7dcc9484-c699-4d68-bc73-d76e79e1cd3e', // Chrome Debug MCP Server (alt)
+    'd0eb637c-d114-444d-9316-65ae4fa12218', // Browserbase (browser automation)
   ],
   UI_COMPONENTS: [
     'fc2d14d6-6635-4e58-a23a-e9b92730d855', // PrimeNG MCP Server
@@ -368,7 +386,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-problem-010', query: 'need to verify our APIs return correct responses after changes', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: ALT.POSTMAN, pattern: 'problem' },
   { id: 'eval-problem-011', query: 'cloud infrastructure is configured manually and drifting', expectedSkillId: SKILL.TERRAFORM, acceptableSkillIds: [...ALT.TERRAFORM, ...ALT.INFRA_AS_CODE], pattern: 'problem' },
   { id: 'eval-problem-012', query: 'we have no metrics to tell if our services are healthy or degraded', expectedSkillId: SKILL.PROMETHEUS, acceptableSkillIds: [...ALT.PROMETHEUS, ...ALT.GRAFANA, ...ALT.DATADOG, ...ALT.MONITORING], pattern: 'problem' },
-  { id: 'eval-problem-013', query: 'login flow breaks on different browsers after deployments', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING], pattern: 'problem' },
+  { id: 'eval-problem-013', query: 'login flow breaks on different browsers after deployments', expectedSkillId: SKILL.PLAYWRIGHT, acceptableSkillIds: [...ALT.PLAYWRIGHT, ...ALT.BROWSER_DEBUG, ...ALT.FRONTEND_TESTING, ...ALT.CLOUD_DEPLOY], pattern: 'problem' },
   { id: 'eval-problem-014', query: 'our kubernetes pods keep crashing and need debugging', expectedSkillId: SKILL.KUBECTL, acceptableSkillIds: ALT.KUBECTL, pattern: 'problem' },
   { id: 'eval-problem-015', query: 'our python code style is inconsistent between developers', expectedSkillId: SKILL.BLACK, acceptableSkillIds: [SKILL.ESLINT, SKILL.BIOME, SKILL.PRETTIER, ...ALT.ESLINT, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY], pattern: 'problem' },
   { id: 'eval-problem-016', query: 'commit messages are all over the place no consistency', expectedSkillId: SKILL.COMMITLINT, acceptableSkillIds: ALT.COMMITLINT, pattern: 'problem' },
@@ -381,7 +399,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-business-002', query: 'maintain consistent code style across engineering team', expectedSkillId: SKILL.PRETTIER, pattern: 'business' },
   { id: 'eval-business-003', query: 'reduce bugs and improve code quality standards', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, ...ALT.CODE_REVIEW, SKILL.BIOME], pattern: 'business' },
   { id: 'eval-business-004', query: 'meet security compliance requirements for container deployments', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'business' },
-  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE, ...ALT.DEV_ENVIRONMENT], pattern: 'business' },
+  { id: 'eval-business-005', query: 'set up development environment for new engineers', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: [...ALT.POSTGRES, ...ALT.CLOUD_DEPLOY, ...ALT.INFRA_AS_CODE, ...ALT.DEV_ENVIRONMENT, SKILL.MYSQL, SKILL.MONGODB], pattern: 'business' },
   { id: 'eval-business-006', query: 'convert documentation to PDF and Word for client deliverables', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: [...ALT.PANDOC, ...ALT.MD_TO_PDF, ...ALT.DOC_CONVERTER], pattern: 'business' },
   { id: 'eval-business-007', query: 'improve application performance and scalability', expectedSkillId: SKILL.REDIS, acceptableSkillIds: [...ALT.REDIS, ...ALT.K6], pattern: 'business' },
   { id: 'eval-business-008', query: 'enterprise license compliance scanning across all projects', expectedSkillId: SKILL.FOSSA, acceptableSkillIds: [...ALT.LICENSE, SKILL.LICENSE_CHECKER], pattern: 'business' },
@@ -398,7 +416,7 @@ export const evalFixtures: EvalFixture[] = [
 
   { id: 'eval-alternate-001', query: 'cargo ban crate security advisory check', expectedSkillId: SKILL.CARGO_DENY, pattern: 'alternate' },
   { id: 'eval-alternate-002', query: 'beautify typescript code automatically', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, ...ALT.TS_TOOLS, SKILL.TYPEDOC], pattern: 'alternate' },
-  { id: 'eval-alternate-003', query: 'static analysis tool for javascript', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS], pattern: 'alternate' },
+  { id: 'eval-alternate-003', query: 'static analysis tool for javascript', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.SEMGREP, ...ALT.SECURITY_ANALYSIS, ...ALT.CODE_QUALITY], pattern: 'alternate' },
   { id: 'eval-alternate-004', query: 'container image vulnerability scanner', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: ALT.TRIVY, pattern: 'alternate' },
   { id: 'eval-alternate-005', query: 'postgresql container for development', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'alternate' },
   { id: 'eval-alternate-006', query: 'document converter markup to portable format', expectedSkillId: SKILL.PANDOC, acceptableSkillIds: [...ALT.PANDOC, ...ALT.DOC_CONVERTER], pattern: 'alternate' },
@@ -416,7 +434,7 @@ export const evalFixtures: EvalFixture[] = [
   // ──────────────────────────────────────────────────────────────────────────
 
   { id: 'eval-composition-001', query: 'rust supply chain security audit pipeline', expectedSkillId: SKILL.CARGO_DENY, pattern: 'composition' },
-  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, acceptableSkillIds: [SKILL.COMMITLINT, ...ALT.COMMITLINT, SKILL.PRETTIER, SKILL.ESLINT, SKILL.BIOME], pattern: 'composition' },
+  { id: 'eval-composition-002', query: 'pre-commit hook to format and lint code', expectedSkillId: SKILL.GIT_HOOKS, acceptableSkillIds: [SKILL.COMMITLINT, ...ALT.COMMITLINT, SKILL.PRETTIER, SKILL.ESLINT, SKILL.BIOME, ...ALT.CODE_QUALITY, ...ALT.FORMATTERS], pattern: 'composition' },
   { id: 'eval-composition-003', query: 'ci pipeline to validate code quality', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'composition' },
   { id: 'eval-composition-004', query: 'container security scanning in deployment workflow', expectedSkillId: SKILL.TRIVY, acceptableSkillIds: [...ALT.TRIVY, ...ALT.CONTAINER_SCANNING, SKILL.HADOLINT], pattern: 'composition' },
   { id: 'eval-composition-005', query: 'spin up a postgres container for integration test fixtures', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'composition' },
@@ -434,7 +452,7 @@ export const evalFixtures: EvalFixture[] = [
   { id: 'eval-disambig-001', query: 'check my code for issues', expectedSkillId: SKILL.ESLINT, acceptableSkillIds: [...ALT.ESLINT, ...ALT.CODE_QUALITY, SKILL.BIOME], pattern: 'direct' },
   { id: 'eval-disambig-002', query: 'static analysis to find security problems in my source code', expectedSkillId: SKILL.SEMGREP, acceptableSkillIds: [...ALT.SEMGREP, SKILL.CODEQL, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
   { id: 'eval-disambig-003', query: 'code formatter for my project', expectedSkillId: SKILL.PRETTIER, acceptableSkillIds: [SKILL.BIOME, SKILL.BLACK, ...ALT.TS_TOOLS, ...ALT.FORMATTERS, ...ALT.CODE_QUALITY, ...ALT.ESLINT], pattern: 'direct' },
-  { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEP_SECURITY, ...ALT.DEPENDABOT], pattern: 'direct' },
+  { id: 'eval-disambig-004', query: 'check dependency vulnerabilities', expectedSkillId: SKILL.SNYK, acceptableSkillIds: [...ALT.SNYK, ...ALT.DEP_SECURITY, ...ALT.DEPENDABOT, ...ALT.SECURITY_ANALYSIS], pattern: 'direct' },
   { id: 'eval-disambig-005', query: 'lint my dockerfile', expectedSkillId: SKILL.HADOLINT, acceptableSkillIds: [SKILL.DOCKERFILE_LINT], pattern: 'direct' },
   { id: 'eval-disambig-006', query: 'test my API endpoints', expectedSkillId: SKILL.POSTMAN, acceptableSkillIds: [...ALT.POSTMAN, ...ALT.API_TESTING], pattern: 'direct' },
   { id: 'eval-disambig-007', query: 'run a local database for testing', expectedSkillId: SKILL.DOCKER_POSTGRES, acceptableSkillIds: ALT.POSTGRES, pattern: 'direct' },
