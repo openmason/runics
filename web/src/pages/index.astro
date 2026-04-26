@@ -75,7 +75,7 @@ const faqs = [
   },
   {
     q: 'What sources does Runics index?',
-    a: 'Runics aggregates skills from the MCP Registry, ClawHub, GitHub repositories, and a human-curated source. All are normalized into a single search index, so one query returns results across every ecosystem.',
+    a: 'Runics aggregates skills from the MCP Registry, Smithery, PulseMCP, ClawHub, Glama, OpenClaw, GitHub repositories, and a human-curated source. All are normalized into a single search index, so one query returns results across every ecosystem.',
   },
   {
     q: 'How does the 3-tier intelligence search work?',
@@ -190,7 +190,7 @@ const faqJsonLd = {
         {[
           { value: '61K+', label: 'Skills indexed' },
           { value: '<60ms', label: 'Search latency (p50)' },
-          { value: '6', label: 'Skill sources' },
+          { value: '8', label: 'Skill sources' },
           { value: '3-tier', label: 'Confidence routing' },
         ].map(stat => (
           <div class="text-center">
@@ -228,7 +228,7 @@ const faqJsonLd = {
             },
             {
               title: 'Multi-Source',
-              desc: 'One search across MCP Registry, ClawHub, GitHub, and human-curated sources.',
+              desc: 'One search across MCP Registry, Smithery, PulseMCP, ClawHub, Glama, OpenClaw, GitHub, and human-curated sources.',
               icon: `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.5 16.875h3.375m0 0h3.375m-3.375 0V13.5m0 3.375v3.375M6 10.5h2.25a2.25 2.25 0 002.25-2.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v2.25A2.25 2.25 0 006 10.5zm0 9.75h2.25A2.25 2.25 0 0010.5 18v-2.25a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25V18A2.25 2.25 0 006 20.25zm9.75-9.75H18a2.25 2.25 0 002.25-2.25V6A2.25 2.25 0 0018 3.75h-2.25A2.25 2.25 0 0013.5 6v2.25a2.25 2.25 0 002.25 2.25z" />`,
             },
             {
@@ -274,14 +274,15 @@ const faqJsonLd = {
               const trustPct = Math.round((skill.trustScore || 0) * 100)
               const trustTextCls = skill.trustScore >= 0.8 ? 'text-green-400' : skill.trustScore >= 0.6 ? 'text-yellow-400' : 'text-red-400'
               const trustBarCls = skill.trustScore >= 0.8 ? 'bg-green-400' : skill.trustScore >= 0.6 ? 'bg-yellow-400' : 'bg-red-400'
-              const href = skill.sourceUrl || skill.shareUrl || '#'
+              const href = skill.slug ? `/skills/${skill.slug}` : (skill.sourceUrl || skill.shareUrl || '#')
               const hasLink = href !== '#'
+              const isInternal = href.startsWith('/')
               const description = skill.description || skill.agentSummary || ''
               return (
                 <a
                   href={href}
-                  target={hasLink ? '_blank' : undefined}
-                  rel={hasLink ? 'noopener' : undefined}
+                  target={hasLink && !isInternal ? '_blank' : undefined}
+                  rel={hasLink && !isInternal ? 'noopener' : undefined}
                   class="group p-5 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border transition-all duration-200 flex flex-col"
                   aria-label={`${skill.name} — trust score ${trustPct} percent`}
                 >
