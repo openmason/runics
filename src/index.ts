@@ -89,8 +89,14 @@ function initComponents(env: Env) {
   const logger = new SearchLogger(pool);
   const qualityTracker = new QualityTracker(pool);
 
-  // Embed function for the intelligence layer
-  const embedFn = (text: string) => embedPipeline['embed'](text);
+  // Embed function for the intelligence layer (with KV cache to skip ~1000ms AI call on repeat queries)
+  const embedFn = async (text: string) => {
+    const cached = await cache.getQueryEmbedding(text);
+    if (cached) return cached;
+    const embedding = await embedPipeline['embed'](text);
+    cache.setQueryEmbedding(text, embedding).catch(() => {});
+    return embedding;
+  };
 
   const gate = new ConfidenceGate(
     env,

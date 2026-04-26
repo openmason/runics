@@ -168,11 +168,14 @@ export class ConfidenceGate {
       }
       preGeneratedQueries = altQueries;
     } else if (this.rerankerEnabled && searchResult.results.length > 1) {
-      // T1: just rerank, no LLM expansion needed
-      const rerankerResult = await this.reranker.rerank(query, searchResult.results);
-      if (rerankerResult.applied) {
-        searchResult.results = rerankerResult.results;
-        reranked = true;
+      // T1: skip reranker when top result is clearly dominant (large gap saves ~120ms)
+      const skipRerankerGap = parseFloat(this.env.SKIP_RERANKER_GAP || '0.10');
+      if (searchResult.confidence.gapToSecond < skipRerankerGap) {
+        const rerankerResult = await this.reranker.rerank(query, searchResult.results);
+        if (rerankerResult.applied) {
+          searchResult.results = rerankerResult.results;
+          reranked = true;
+        }
       }
     }
 

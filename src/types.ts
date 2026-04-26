@@ -432,6 +432,7 @@ export interface Env {
   RATE_LIMIT_RPM?: string; // Max requests per minute per IP (default: "100")
   RERANKER_ENABLED?: string; // Set to "true" to enable cross-encoder reranking
   RERANKER_TOP_N?: string; // Number of candidates to rerank (default: "20")
+  SKIP_RERANKER_GAP?: string; // T1 gap above which reranker is skipped (default: "0.10")
 
   // Phase 5: Sync pipelines & publish API
   EMBED_QUEUE: Queue;

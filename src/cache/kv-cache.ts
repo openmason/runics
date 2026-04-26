@@ -218,6 +218,50 @@ export class SearchCache {
   }
 
   // ────────────────────────────────────────────────────────────────────────────
+  // Query Embedding Cache
+  // ────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Get cached query embedding vector.
+   * Embeddings are deterministic for a given model, so we cache aggressively (30min TTL).
+   */
+  async getQueryEmbedding(query: string): Promise<number[] | null> {
+    try {
+      const key = await this.generateEmbeddingKey(query);
+      const cached = await this.kv.get(key, 'text');
+      if (!cached) return null;
+      return JSON.parse(cached) as number[];
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Cache a query embedding vector.
+   * TTL: 1800s (30 minutes) — embeddings are deterministic for a given model.
+   */
+  async setQueryEmbedding(query: string, embedding: number[]): Promise<void> {
+    try {
+      const key = await this.generateEmbeddingKey(query);
+      await this.kv.put(key, JSON.stringify(embedding), {
+        expirationTtl: 1800,
+      });
+    } catch {
+      // Cache errors should not break search
+    }
+  }
+
+  private async generateEmbeddingKey(query: string): Promise<string> {
+    const normalized = query.toLowerCase().trim().replace(/\s+/g, ' ');
+    const encoder = new TextEncoder();
+    const data = encoder.encode(normalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `qemb:${hashHex}`;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
   // Clear All (Development/Testing)
   // ────────────────────────────────────────────────────────────────────────────
 
