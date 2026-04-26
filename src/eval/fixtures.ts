@@ -120,8 +120,8 @@ const ALT = {
     'c2033721-020a-4ce3-8906-dbb5fda1589c', // Postman MCP Server
     '1ba47d16-154f-4434-aa66-9a331a7abf58', // api-test-mcp
     '84fc6df9-982b-4bb0-9afa-fab18e63b7c0', // newman (Postman CLI runner)
-    'ee56dfee-92e8-4973-ab5b-aec49b50fd26', // API Tester (pulsemcp)
-    '20118977-6c6e-426c-9e49-9ae00b52c32e', // com.postman/postman-mcp-server
+    'ee56dfee-92e8-4d48-b002-e69323f6257b', // API Tester (pulsemcp)
+    '20118977-6c68-4c4e-9493-43a5ca2dd67a', // com.postman/postman-mcp-server
   ],
   CLOUDFLARE: [
     '1d787498-ded2-4a51-b1e5-ba540e3cb804', // cloudflare-mcp (github)
@@ -225,6 +225,7 @@ const ALT = {
     '803605ad-c17d-4fac-a644-570488d038a9', // Azure Cosmos DB MCP Server (NoSQL)
     'f7b168fd-4c38-45a8-b833-a04628626aa1', // Couchbase (pulsemcp)
     '23e9a0d7-3530-45e2-8b99-932d9fdea31b', // MongoDB MCP Server (pulsemcp)
+    '7a077718-7a5e-42c7-8616-0595e30b73fb', // ArangoDB (NoSQL document database)
   ],
   SECURITY_ANALYSIS: [
     '37622379-21d9-420a-b528-0d2bc49864f1', // security-checker
@@ -235,7 +236,7 @@ const ALT = {
     '40343933-2809-4b5e-8c58-ceae83977cfc', // CodeBadger Toolkit (static analysis via Joern)
     '665c2790-3351-42d6-abe7-746eaf570c0a', // Sheriff (SARIF static analysis)
     '5271235b-fdbb-4708-8ffd-9cfc49631f04', // claude-code-safety-net (code security)
-    'c5313718-8863-48a1-9dd0-e2d9b2a51d7e', // Code Review Analyst (security review)
+    'c5313718-8861-454b-a52e-284b35978892', // Code Review Analyst (security review)
   ],
   MONITORING: [
     '3951b9af-123e-4adb-9faa-63aac2914f4d', // AppSignal MCP (monitoring)
@@ -262,8 +263,9 @@ const ALT = {
     '656b2312-aab4-47c6-a0e6-979b1cdbc700', // Roslyn CodeLens (code quality)
     '588da5c8-a4f9-4444-83b8-e856a09e36a9', // typescript-lsp (code analysis)
     'd435fd2d-0c35-4ddd-a3d8-5858c439b3c3', // Code Assistant (code review/issues)
-    '6dfdbb36-cbba-4375-ab80-e5a1b18e0f3e', // Bug Detector (pulsemcp)
-    'c5313718-8863-48a1-9dd0-e2d9b2a51d7e', // Code Review Analyst
+    '6dfdbb36-cbb8-43eb-b984-96e61a7eb7b1', // Bug Detector (pulsemcp)
+    'c5313718-8861-454b-a52e-284b35978892', // Code Review Analyst
+    '16814cc7-9794-467f-beac-f2a31cf659aa', // Redux Saga Testing
   ],
   CLOUD_DEPLOY: [
     '6452601e-81c9-4712-863d-5b43607f359b', // heroku-mcp-server
@@ -279,8 +281,8 @@ const ALT = {
     'ddf79f9b-bfe1-48fd-aefe-6eb86a270960', // api-tester
     '18563797-9e28-4e2d-8cb2-6e4e4f126f5c', // mcp-rest-api
     '60959bbc-20b9-49c1-8fda-3e5d4a2a609a', // ub2-api-health-checker
-    '90fa3c90-c042-4d7c-9f54-8d6a7f2e3b1a', // HTTP Request Testing (pulsemcp)
-    'ebb55123-f8ee-4a1e-b2c3-d4e5f6a7b8c9', // ai.smithery/arjunkmrm-http-test
+    '90fa3c90-c045-4dd6-8dfa-4b91c7cfa7e6', // HTTP Request Testing (pulsemcp)
+    'ebb55123-f8e4-46ad-8d66-585ed6ae1603', // ai.smithery/arjunkmrm-http-test
   ],
   FRONTEND_TESTING: [
     '34f5fbc0-f78e-4524-a37d-0ad82d0f411b', // MCP Frontend Testing Server
@@ -297,7 +299,7 @@ const ALT = {
   DB_MIGRATION: [
     '20cffde8-6cb1-49d8-ad09-e214302faede', // migrationpilot (PostgreSQL migration rules)
     '8dd1c0a0-31d9-423b-9260-153160a68156', // MCP Atlas (database migration management)
-    '17a99f59-cb3a-4a6e-b01e-49c67bf78e6a', // MigrationPilot (smithery)
+    '17a99f59-cb3d-45fc-aeb6-48d9ad36ad69', // MigrationPilot (smithery)
   ],
   CONTAINER_SCANNING: [
     '964c98ee-9cea-4012-ac1a-0f3f493ba36a', // On-Demand Scanning API (Google container scanning)
