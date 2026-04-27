@@ -615,12 +615,13 @@ const faqJsonLd = {
         </div>
       `;
 
-      const html = data.results.map((r: any) => {
+      const html = data.results.map((r: any, idx: number) => {
         const name = escapeHtml(r.name || r.slug || 'unnamed');
         const summary = escapeHtml(r.agentSummary || '');
         const matchSrc = r.matchSource ? escapeHtml(String(r.matchSource).replace(/_/g, ' ')) : null;
         const tier = escapeHtml(r.verificationTier || 'unverified');
         const trustPct = ((r.trustScore || 0) * 100).toFixed(0);
+        const relevancePct = ((r.score || 0) * 100).toFixed(0);
         const href = r.slug ? `/skills/${encodeURIComponent(r.slug)}` : null;
         const openTag = href ? `<a href="${href}" class="block p-4 rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-accent/50 transition-all">` : `<div class="p-4 rounded-xl border border-border-subtle bg-bg-card">`;
         const closeTag = href ? `</a>` : `</div>`;
@@ -629,14 +630,15 @@ const faqJsonLd = {
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs text-text-muted font-mono mr-0.5">${idx + 1}.</span>
                   <span class="font-semibold text-text-primary text-sm truncate">${name}</span>
                   ${matchSrc ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border-subtle text-text-muted font-mono uppercase tracking-wide" title="Matched on: ${matchSrc}">${matchSrc}</span>` : ''}
                 </div>
                 ${summary ? `<p class="mt-1 text-xs text-text-secondary line-clamp-2">${summary}</p>` : ''}
               </div>
               <div class="shrink-0 text-right">
-                <div class="text-xs font-mono ${trustColor(r.trustScore || 0)}">${trustPct}%</div>
-                <div class="text-[10px] text-text-muted mt-0.5">${tier}</div>
+                <div class="text-xs font-mono text-text-secondary" title="Relevance score">${relevancePct}%</div>
+                <div class="text-[10px] font-mono ${trustColor(r.trustScore || 0)} mt-0.5" title="Trust score">${trustPct}% trust</div>
               </div>
             </div>
           ${closeTag}
