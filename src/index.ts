@@ -3432,11 +3432,11 @@ export default {
             console.log(`[CRON] Poll phase: applied ${polled} scan results`);
           }
 
-          // ── Phase 2: Submit new skills (every 5 min only) ─────────────────
+          // ── Phase 2: Submit new skills (every 2 min) ──────────────────────
           // Fast path: skills without repo URL (Mode B inline, ~2s each)
           // Repo path: GitHub source OR has repository_url (Mode A, deferred)
-          if (minute % 5 !== 0) {
-            // Skip submit phase on non-5min cycles (only poll above)
+          if (minute % 2 !== 0) {
+            // Skip submit phase on odd-minute cycles (only poll above)
           } else {
 
           // ── Backpressure: skip submissions if too many jobs in-flight ──
@@ -3494,17 +3494,12 @@ export default {
           );
 
           let submitted = 0;
-          let consecutiveFailures = 0;
-          const MAX_CONSECUTIVE_FAILURES = 3;
 
-          // Fast path: non-GitHub skills (inline poll, ~2s each)
-          for (const skill of fastSkills.rows) {
-            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-              console.warn(`[CRON-SUBMIT] Aborting fast path: ${consecutiveFailures} consecutive Circle-IR failures`);
-              break;
-            }
-            try {
-              // buildCircleIRRequest includes bundle_url for clawhub skills
+          // Fast path: submit all non-GitHub skills in parallel, then poll
+          const FAST_CONCURRENCY = 5;
+          for (let i = 0; i < fastSkills.rows.length; i += FAST_CONCURRENCY) {
+            const batch = fastSkills.rows.slice(i, i + FAST_CONCURRENCY);
+            const results = await Promise.allSettled(batch.map(async (skill: any) => {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -3512,14 +3507,13 @@ export default {
               });
               if (!submitRes.ok) {
                 console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
-                if (submitRes.status >= 500 || submitRes.status === 429) consecutiveFailures++;
-                continue;
+                return null;
               }
-              consecutiveFailures = 0;
               const { job_id } = await submitRes.json() as { job_id: string };
 
+              // Quick inline poll (3 attempts × 2s)
               let jobStatus: any;
-              for (let i = 0; i < 5; i++) {
+              for (let p = 0; p < 3; p++) {
                 await new Promise(r => setTimeout(r, 2000));
                 const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
                   headers: authHeaders,
@@ -3528,7 +3522,7 @@ export default {
                 if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
               }
 
-              if (jobStatus.status === 'completed') {
+              if (jobStatus?.status === 'completed') {
                 const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
                   fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
                   fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
@@ -3537,7 +3531,6 @@ export default {
                 const { findings: raw } = await findingsRes.json() as { findings: any[] };
                 const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
 
-                // Enrich jobStatus with files_detail and bundle_metadata from /results
                 if (resultsRes.ok) {
                   const resultsBody = await resultsRes.json() as any;
                   if (resultsBody.files_detail) jobStatus.files_detail = resultsBody.files_detail;
@@ -3546,28 +3539,27 @@ export default {
                 }
 
                 await applyScanReport(env, pool, skill, normalizeFindings(raw), jobStatus, skillResult);
-                submitted++;
+                return 'completed';
               } else {
-                // Slow non-GitHub skill — store for deferred poll
+                // Defer for later poll
                 await pool.query(
                   `UPDATE skills SET cognium_job_id = $1, cognium_job_submitted_at = NOW() WHERE id = $2`,
                   [job_id, skill.id]
                 );
-                submitted++;
                 console.log(`[CRON-SUBMIT] ${skill.slug} slow, deferred → job ${job_id}`);
+                return 'deferred';
               }
-            } catch (e: any) {
-              console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
+            }));
+            for (const r of results) {
+              if (r.status === 'fulfilled' && r.value) submitted++;
             }
           }
 
-          // Repo path: skills with GitHub source or repository_url (submit + defer poll)
-          for (const skill of repoSkills.rows) {
-            if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-              console.warn(`[CRON-SUBMIT] Aborting repo path: ${consecutiveFailures} consecutive Circle-IR failures`);
-              break;
-            }
-            try {
+          // Repo path: submit in parallel (all deferred — repo scans take >10s)
+          const REPO_CONCURRENCY = 5;
+          for (let i = 0; i < repoSkills.rows.length; i += REPO_CONCURRENCY) {
+            const batch = repoSkills.rows.slice(i, i + REPO_CONCURRENCY);
+            const results = await Promise.allSettled(batch.map(async (skill: any) => {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...authHeaders },
@@ -3575,20 +3567,19 @@ export default {
               });
               if (!submitRes.ok) {
                 console.error(`[CRON-SUBMIT] Submit failed for ${skill.slug}: ${submitRes.status}`);
-                if (submitRes.status >= 500 || submitRes.status === 429) consecutiveFailures++;
-                continue;
+                return null;
               }
-              consecutiveFailures = 0;
               const { job_id } = await submitRes.json() as { job_id: string };
 
               await pool.query(
                 `UPDATE skills SET cognium_job_id = $1, cognium_job_submitted_at = NOW() WHERE id = $2`,
                 [job_id, skill.id]
               );
-              submitted++;
               console.log(`[CRON-SUBMIT] Repo ${skill.slug} → job ${job_id} (deferred poll)`);
-            } catch (e: any) {
-              console.error(`[CRON-SUBMIT] Error submitting ${skill.slug}:`, e.message);
+              return 'deferred';
+            }));
+            for (const r of results) {
+              if (r.status === 'fulfilled' && r.value) submitted++;
             }
           }
 
@@ -3597,7 +3588,7 @@ export default {
           }
 
           } // end backpressure check
-          } // end Phase 2 (minute % 5 guard)
+          } // end Phase 2 (minute % 2 guard)
 
           // ── Phase 3: Garbage collect orphaned job state ──────────────────
           // Clean up skills stuck with cognium_job_id for >2h (KV TTL is 1h,
