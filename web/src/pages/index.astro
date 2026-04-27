@@ -444,17 +444,25 @@ const faqJsonLd = {
       doSearch(urlQuery);
     }
 
+    let activeResultIdx = -1;
+
     async function doSearch(query: string) {
+      activeResultIdx = -1;
+      // Show loading state
+      resultsEl.innerHTML = `<div class="flex items-center justify-center gap-2 p-4 rounded-xl border border-border-subtle bg-bg-card text-sm text-text-muted"><svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 2a10 10 0 019.95 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Searching…</div>`;
+      resultsEl.classList.remove('hidden');
       try {
         const res = await fetch(`${API}/v1/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query, tenantId: 'public', limit: 5 }),
         });
+        if (!res.ok) throw new Error(`${res.status}`);
         const data = await res.json();
         renderResults(data);
       } catch {
-        resultsEl.classList.add('hidden');
+        resultsEl.innerHTML = `<div class="p-4 rounded-xl border border-red-400/20 bg-bg-card text-sm text-red-400 text-center">Search unavailable — please try again.</div>`;
+        resultsEl.classList.remove('hidden');
       }
     }
 
@@ -557,8 +565,46 @@ const faqJsonLd = {
         `;
       }).join('');
 
-      resultsEl.innerHTML = `${metaPanel}<div class="flex flex-col gap-2">${html}</div>`;
+      resultsEl.innerHTML = `${metaPanel}<div class="flex flex-col gap-2" id="results-list">${html}</div>`;
       resultsEl.classList.remove('hidden');
+      activeResultIdx = -1;
+    }
+
+    // Keyboard navigation: ↑↓ to move, Enter to open, Esc to close
+    input.addEventListener('keydown', (e) => {
+      const list = document.getElementById('results-list');
+      if (!list) return;
+      const items = list.querySelectorAll<HTMLElement>('a, div.p-4');
+      if (items.length === 0) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeResultIdx = Math.min(activeResultIdx + 1, items.length - 1);
+        highlightResult(items);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeResultIdx = Math.max(activeResultIdx - 1, 0);
+        highlightResult(items);
+      } else if (e.key === 'Enter' && activeResultIdx >= 0) {
+        e.preventDefault();
+        const link = items[activeResultIdx]?.closest('a') || items[activeResultIdx]?.querySelector('a');
+        if (link) (link as HTMLAnchorElement).click();
+      } else if (e.key === 'Escape') {
+        resultsEl.classList.add('hidden');
+        resultsEl.innerHTML = '';
+        activeResultIdx = -1;
+      }
+    });
+
+    function highlightResult(items: NodeListOf<HTMLElement>) {
+      items.forEach((el, i) => {
+        if (i === activeResultIdx) {
+          el.classList.add('ring-1', 'ring-accent/50');
+          el.scrollIntoView({ block: 'nearest' });
+        } else {
+          el.classList.remove('ring-1', 'ring-accent/50');
+        }
+      });
     }
   </script>
 </Layout>
