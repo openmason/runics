@@ -3200,6 +3200,15 @@ export default {
   ): Promise<void> {
     const minute = new Date(event.scheduledTime).getMinutes();
 
+    // Keep-alive: self-ping to prevent cold starts (runs every minute)
+    // workers_dev URL bypasses the public domain guard so admin/internal routes work
+    const workerUrl = env.ENVIRONMENT === 'production'
+      ? 'https://runics.cognium.workers.dev'
+      : 'https://runics.phantoms.workers.dev';
+    ctx.waitUntil(
+      fetch(`${workerUrl}/health`).catch(() => {})
+    );
+
     // Hourly: materialized view refresh (minute 0)
     if (minute === 0) {
       const { qualityTracker } = initComponents(env);
