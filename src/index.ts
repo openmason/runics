@@ -1985,6 +1985,45 @@ app.post('/v1/admin/clear-stale', async (c) => {
   }
 });
 
+// Admin: deprecate skills whose scans failed with a specific reason
+app.post('/v1/admin/deprecate-failed', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const body = await c.req.json().catch(() => ({})) as { reason?: string; dryRun?: boolean };
+    const reason = body.reason ?? 'Status check returned 404';
+    const dryRun = body.dryRun ?? true;
+
+    if (dryRun) {
+      const preview = await pool.query(
+        `SELECT count(*)::int AS cnt FROM skills
+         WHERE scan_failure_reason = $1 AND status = 'published'`,
+        [reason]
+      );
+      const sample = await pool.query(
+        `SELECT slug, source, name FROM skills
+         WHERE scan_failure_reason = $1 AND status = 'published'
+         ORDER BY created_at ASC LIMIT 10`,
+        [reason]
+      );
+      return c.json({ dryRun: true, reason, count: preview.rows[0].cnt, sample: sample.rows });
+    }
+
+    const result = await pool.query(
+      `UPDATE skills SET
+        status = 'deprecated',
+        deprecated_at = NOW(),
+        deprecated_reason = $2,
+        updated_at = NOW()
+       WHERE scan_failure_reason = $1 AND status = 'published'
+       RETURNING id, slug, source`,
+      [reason, `Scan failed: ${reason}`]
+    );
+    return c.json({ deprecated: result.rows.length, reason, sample: result.rows.slice(0, 20).map((r: any) => r.slug) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: inventory of skills by content type
 app.get('/v1/admin/skill-inventory', async (c) => {
   try {
