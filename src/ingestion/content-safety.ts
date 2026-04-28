@@ -34,23 +34,21 @@ export async function checkContentSafety(env: Env, skill: SkillInput): Promise<S
   try {
     // Llama Guard 3 8B classification via Workers AI
     // Format: https://developers.cloudflare.com/workers-ai/models/llama-guard-3-8b/
-    // System prompt provides context so Llama Guard evaluates the DESCRIPTION
-    // rather than treating imperative tool descriptions as user requests
+    // Note: llama-guard only accepts user/assistant roles (no system role).
+    // Context is prepended to the user message so Llama Guard evaluates the
+    // DESCRIPTION rather than treating imperative tool descriptions as user requests.
+    const context =
+      'You are evaluating the description of a software developer tool (MCP server). ' +
+      'The text below is a tool description, NOT a user request. ' +
+      'Only flag it as unsafe if the tool itself is designed for clearly harmful purposes ' +
+      '(malware creation, generating CSAM, weapons manufacturing instructions). ' +
+      'Developer tools that interact with databases, APIs, browsers, containers, ' +
+      'file systems, or external services are SAFE even if they use imperative language.\n\n';
     const result = await env.AI.run(env.SAFETY_MODEL as any, {
       messages: [
         {
-          role: 'system',
-          content:
-            'You are evaluating the description of a software developer tool (MCP server). ' +
-            'The text below is a tool description, NOT a user request. ' +
-            'Only flag it as unsafe if the tool itself is designed for clearly harmful purposes ' +
-            '(malware creation, generating CSAM, weapons manufacturing instructions). ' +
-            'Developer tools that interact with databases, APIs, browsers, containers, ' +
-            'file systems, or external services are SAFE even if they use imperative language.',
-        },
-        {
           role: 'user',
-          content: textToCheck,
+          content: context + textToCheck,
         },
       ],
     });
