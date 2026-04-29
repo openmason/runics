@@ -2024,6 +2024,35 @@ app.post('/v1/admin/deprecate-failed', async (c) => {
   }
 });
 
+// Admin: restore falsely revoked skills (safety model false positives)
+app.post('/v1/admin/restore-revoked', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const body = await c.req.json().catch(() => ({})) as { dryRun?: boolean };
+    const dryRun = body.dryRun ?? true;
+
+    if (dryRun) {
+      const preview = await pool.query(
+        `SELECT count(*)::int AS cnt FROM skills
+         WHERE status = 'revoked' AND content_safety_passed = false`
+      );
+      return c.json({ dryRun: true, count: preview.rows[0].cnt });
+    }
+
+    const result = await pool.query(
+      `UPDATE skills SET
+        status = 'published',
+        content_safety_passed = true,
+        updated_at = NOW()
+       WHERE status = 'revoked' AND content_safety_passed = false
+       RETURNING id, slug`
+    );
+    return c.json({ restored: result.rows.length, sample: result.rows.slice(0, 20).map((r: any) => r.slug) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: inventory of skills by content type
 app.get('/v1/admin/skill-inventory', async (c) => {
   try {

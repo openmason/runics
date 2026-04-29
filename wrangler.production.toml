@@ -136,8 +136,10 @@ RERANKER_MODEL = "@cf/baai/bge-reranker-base"
 LLM_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 SAFETY_MODEL = "@cf/meta/llama-guard-3-8b"
 
-# ── Content Safety — ENABLED in production ────────────────────────────────────
-DISABLE_CONTENT_SAFETY = "false"
+# ── Content Safety — DISABLED: llama-guard-3-8b no longer supports system role,
+# causing false positives on developer tool descriptions. Cognium scanning is
+# the real safety gate. Re-enable when Cloudflare fixes the model or we switch.
+DISABLE_CONTENT_SAFETY = "true"
 
 # ── Search Tuning ────────────────────────────────────────────────────────────
 CONFIDENCE_TIER1_THRESHOLD = "0.47"
