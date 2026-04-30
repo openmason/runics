@@ -4,9 +4,22 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 spec. 526 tests, 57 endpoints, 15 migrations. Deployed to staging + production (April 2026).
+v5.4 spec. 526 tests, 57 endpoints, 15 migrations. Deployed to production (April 2026).
+56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=96.7%, R@5=100%, MRR=0.984.
+Cognium scanning DISABLED — missing Circle-IR API key. Content safety DISABLED — llama-guard model broke.
+Staging DEAD — Neon free-tier data transfer quota exceeded.
 v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
 Known SDK issues documented in ARCHITECTURE.md §17 Known Issues table.
+
+## URLs
+
+**Production:**
+- API: `https://api.runics.net` / `https://runics.cognium.workers.dev`
+- Web: `https://runics.net` / `https://web.cognium.workers.dev`
+
+**Staging:**
+- API: `https://runics.phantoms.workers.dev`
+- Web: `https://runics-web-brm.pages.dev`
 
 ## Architecture
 
@@ -17,10 +30,11 @@ Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 - TypeScript on Cloudflare Workers (Hono framework)
 - Neon Postgres with pgvector (HNSW) + tsvector for search
 - Cloudflare Workers AI for embeddings (bge-small-en-v1.5), reranking, and LLM fallback
-- Cloudflare KV for caching
+- Cloudflare KV for caching (search results + query embedding cache)
 - Hyperdrive for Postgres connection pooling
-- pg (node-postgres) for the Postgres driver via Hyperdrive connection pooling
+- @neondatabase/serverless for the Postgres driver (NOT pg — standard pg doesn't work in Workers)
 - Drizzle ORM for schema/migrations
+- Astro + Cloudflare Workers for the web frontend (web/ directory)
 
 ## Key Principles
 
@@ -30,6 +44,18 @@ Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 - Every threshold is configurable via env vars (never hardcode)
 - Logging is non-blocking (use executionCtx.waitUntil)
 - Eval suite runs before and after every change — numbers only, no "feels better"
+
+## Performance
+
+All SLOs passing (April 30, 2026 benchmark):
+- Search T1 p50: 43ms, p95: 204ms (SLO < 300ms)
+- Search T2 p50: 40ms, p95: 101ms (SLO < 600ms)
+- Skill lookup p50: 26ms, p95: 28ms (SLO < 400ms)
+- Leaderboard p50: 27ms, p95: 116ms (SLO < 400ms)
+- Cold query: ~4s (Workers AI embedding warm-up, architectural limit)
+- Query embedding cache in KV saves ~1000ms on repeat queries
+- T1 reranker skip (SKIP_RERANKER_GAP) saves ~120ms when top result is dominant
+- Cron keep-alive self-ping every minute prevents Worker cold starts
 
 ## Project Structure
 
@@ -45,25 +71,42 @@ See ARCHITECTURE.md for the full tree. Key directories:
 - src/sync/          — MCP Registry, ClawHub, GitHub sync adapters
 - src/queues/        — Queue consumers (embed)
 - src/monitoring/    — Search logger, quality tracker, perf monitor
-- src/cache/         — KV cache
+- src/cache/         — KV cache (search results + query embeddings)
 - src/db/            — Drizzle schema + SQL migrations (0001-0015)
 - src/eval/          — Eval suite (fixtures, runner, metrics)
 - src/resilience/    — Circuit breaker
+- web/               — Astro frontend (deployed as Cloudflare Worker "web")
 
 ## Commands
 
+### API (root directory)
 npm run dev               — wrangler dev (local)
 npm run deploy:staging    — wrangler deploy (staging)
 npm run deploy:production — wrangler deploy -c wrangler.production.toml
 npm run db:migrate        — run drizzle migrations
-npm run eval              — run eval suite against live endpoint
+npx tsx scripts/run-eval.ts --endpoint https://api.runics.net/v1/search  — run eval suite
 npm run typecheck         — tsc --noEmit
 npm run test:run          — run vitest (single run, no watch)
 npm run smoke:production  — smoke test against api.runics.net
 npm run smoke:staging     — smoke test against staging
-npm run perf              — latency benchmark with SLOs
+npm run perf -- --endpoint https://api.runics.net  — latency benchmark with SLOs
+
+### Web (web/ directory)
+npm run dev               — astro dev (local)
+npm run deploy            — astro build && wrangler deploy (production via Worker "web")
+
+**Note:** The web deploys as a Cloudflare Worker (name: "web"), NOT Pages.
+The `runics-web` Pages project exists but is NOT wired to `runics.net`.
+Always use `cd web && npm run deploy` to deploy the frontend.
 
 ## Testing
 
 vitest for unit tests. Tests live in tests/ mirroring src/ structure.
+
+## Known Issues
+
+- **Cognium scanning disabled** — `COGNIUM_ENABLED=false` in wrangler.production.toml. Missing real Circle-IR API key. Set with `wrangler secret put COGNIUM_API_KEY -c wrangler.production.toml` and flip to `true`.
+- **Content safety disabled** — `DISABLE_CONTENT_SAFETY=true`. Cloudflare's llama-guard-3-8b no longer accepts the `system` role, causing all dev tool descriptions to be flagged as unsafe. Fix: switch to a model that supports system role, or wait for Cloudflare fix.
+- **Staging dead** — Neon free-tier data transfer quota exceeded. Needs plan upgrade or new project.
+- **Cold query latency** — ~4s on first uncached query due to Workers AI embedding model warm-up. Architectural limit of `bge-small-en-v1.5` on Cloudflare. Keep-alive mitigates Worker cold start but not AI model cold start.
 
