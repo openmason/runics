@@ -2024,6 +2024,21 @@ app.post('/v1/admin/deprecate-failed', async (c) => {
   }
 });
 
+// Admin: fix NULL content_safety_passed for published skills (when safety is disabled)
+app.post('/v1/admin/fix-safety-nulls', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const result = await pool.query(
+      `UPDATE skills SET content_safety_passed = true, updated_at = NOW()
+       WHERE status = 'published' AND (content_safety_passed IS NULL OR content_safety_passed = false)
+       RETURNING id`
+    );
+    return c.json({ fixed: result.rows.length });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: restore falsely revoked skills (safety model false positives)
 app.post('/v1/admin/restore-revoked', async (c) => {
   try {
