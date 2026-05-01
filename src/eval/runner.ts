@@ -139,7 +139,10 @@ export async function runEvalSuite(
           : result.foundInTop5
             ? `⚠️  Rank ${result.correctSkillRank}`
             : '❌ Not found';
-        console.log(` ${status} (${latencyMs}ms, T${result.response.meta.tier})`);
+        const competitorNote = result.unknownCompetitor
+          ? ` [NEW: ${result.unknownCompetitor.name} (${result.unknownCompetitor.id.slice(0, 8)})]`
+          : '';
+        console.log(` ${status} (${latencyMs}ms, T${result.response.meta.tier})${competitorNote}`);
       }
     } catch (error) {
       const errorMsg = `Fixture ${fixture.id} failed: ${(error as Error).message}`;
@@ -215,6 +218,19 @@ export function formatSummary(result: EvalRunResult): string {
   lines.push(`Fixtures:     ${result.fixtureCount}`);
   lines.push(`Passed:       ${result.passed} (${((result.passed / result.fixtureCount) * 100).toFixed(1)}%)`);
   lines.push(`Failed:       ${result.failed} (${((result.failed / result.fixtureCount) * 100).toFixed(1)}%)`);
+
+  // Unknown competitors — new skills that outranked expected results
+  const unknowns = result.results.filter((r) => r.unknownCompetitor);
+  if (unknowns.length > 0) {
+    lines.push('');
+    lines.push(`New Competitors (${unknowns.length} — add to acceptableSkillIds if legitimate):`);
+    for (const r of unknowns) {
+      const uc = r.unknownCompetitor!;
+      lines.push(`  ${r.fixture.id} "${r.fixture.query.slice(0, 40)}..."`);
+      lines.push(`    Rank 1: ${uc.name} (${uc.id})`);
+      lines.push(`    Expected at rank ${r.correctSkillRank}: ${r.fixture.expectedSkillId}`);
+    }
+  }
 
   if (result.errors.length > 0) {
     lines.push('');

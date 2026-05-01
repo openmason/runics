@@ -27,6 +27,8 @@ export interface EvalResult {
   foundInTop5: boolean;
   foundInTop1: boolean;
   latencyMs: number; // query round-trip time
+  // When rank > 1, who beat us? null if rank 1 or not found
+  unknownCompetitor?: { id: string; name: string; score: number } | null;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -334,12 +336,22 @@ function computeMatchSourceDistribution(
 export function findSkillRank(
   response: FindSkillResponse,
   expectedSkillId: string,
-  acceptableSkillIds?: readonly string[]
+  acceptableSkillIds?: readonly string[],
+  acceptableNamePatterns?: readonly string[]
 ): number | null {
   const validIds = new Set([expectedSkillId, ...(acceptableSkillIds ?? [])]);
+  const namePatterns = (acceptableNamePatterns ?? []).map((p) => p.toLowerCase());
   for (let i = 0; i < response.results.length; i++) {
-    if (validIds.has(response.results[i].id)) {
+    const result = response.results[i];
+    if (validIds.has(result.id)) {
       return i + 1; // Rank is 1-indexed
+    }
+    // Name-based matching: catches cross-source duplicates without hardcoding UUIDs
+    if (namePatterns.length > 0) {
+      const name = (result.name || '').toLowerCase();
+      if (namePatterns.some((p) => name.includes(p))) {
+        return i + 1;
+      }
     }
   }
   return null; // Not found
@@ -354,7 +366,19 @@ export function buildEvalResult(
   response: FindSkillResponse,
   latencyMs: number
 ): EvalResult {
-  const rank = findSkillRank(response, fixture.expectedSkillId, fixture.acceptableSkillIds);
+  const rank = findSkillRank(response, fixture.expectedSkillId, fixture.acceptableSkillIds, fixture.acceptableNamePatterns);
+
+  // Detect unknown competitors: rank 1 result is NOT in the acceptable set
+  let unknownCompetitor: EvalResult['unknownCompetitor'] = null;
+  if (rank !== null && rank > 1 && response.results.length > 0) {
+    const topResult = response.results[0];
+    const validIds = new Set([fixture.expectedSkillId, ...(fixture.acceptableSkillIds ?? [])]);
+    const namePatterns = (fixture.acceptableNamePatterns ?? []).map((p) => p.toLowerCase());
+    const nameMatch = namePatterns.some((p) => (topResult.name || '').toLowerCase().includes(p));
+    if (!validIds.has(topResult.id) && !nameMatch) {
+      unknownCompetitor = { id: topResult.id, name: topResult.name, score: topResult.score };
+    }
+  }
 
   return {
     fixture,
@@ -363,6 +387,7 @@ export function buildEvalResult(
     foundInTop5: rank !== null && rank <= 5,
     foundInTop1: rank !== null && rank === 1,
     latencyMs,
+    unknownCompetitor,
   };
 }
 

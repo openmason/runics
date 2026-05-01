@@ -370,6 +370,7 @@ export interface EvalFixture {
   query: string;
   expectedSkillId: string;
   acceptableSkillIds?: readonly string[]; // Additional IDs that count as correct (e.g., duplicates from other sources)
+  acceptableNamePatterns?: readonly string[]; // Name substrings that auto-match (e.g., 'prometheus' matches any Prometheus MCP server)
   pattern: 'direct' | 'problem' | 'business' | 'alternate' | 'composition';
 }
 
