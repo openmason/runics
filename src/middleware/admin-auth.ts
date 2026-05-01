@@ -33,7 +33,7 @@ export function adminAuth() {
     }
 
     // Constant-time comparison to prevent timing attacks
-    if (!timingSafeEqual(token, adminKey)) {
+    if (!(await timingSafeEqual(token, adminKey))) {
       return c.json({ error: 'Invalid admin API key' }, 403);
     }
 
@@ -41,14 +41,20 @@ export function adminAuth() {
   });
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const encoder = new TextEncoder();
-  const aBuf = encoder.encode(a);
-  const bBuf = encoder.encode(b);
+  // Hash both values to fixed-length digests so comparison
+  // never leaks the length of the actual key
+  const [aHash, bHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const aArr = new Uint8Array(aHash);
+  const bArr = new Uint8Array(bHash);
+  if (aArr.length !== bArr.length) return false;
   let result = 0;
-  for (let i = 0; i < aBuf.length; i++) {
-    result |= aBuf[i] ^ bBuf[i];
+  for (let i = 0; i < aArr.length; i++) {
+    result |= aArr[i] ^ bArr[i];
   }
   return result === 0;
 }

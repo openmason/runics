@@ -4,8 +4,9 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 spec. 526 tests, 57 endpoints, 15 migrations. Deployed to production (April 2026).
-56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=96.7%, R@5=100%, MRR=0.984.
+v5.4 spec. 528 tests, 57 endpoints, 15 migrations. Deployed to production (May 2026).
+56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
+Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
 Cognium scanning DISABLED — missing Circle-IR API key. Content safety DISABLED — llama-guard model broke.
 Staging DEAD — Neon free-tier data transfer quota exceeded.
 v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.

@@ -193,13 +193,23 @@ app.post('/v1/search', async (c) => {
       return c.json({ error: 'Missing required fields: query, tenantId' }, 400);
     }
 
+    // Input bounds validation
+    const query = String(body.query).trim();
+    if (query.length === 0) {
+      return c.json({ error: 'query must not be empty' }, 400);
+    }
+    if (query.length > 500) {
+      return c.json({ error: 'query exceeds maximum length of 500 characters' }, 400);
+    }
+    const limit = body.limit !== undefined ? Math.min(Math.max(1, Number(body.limit) || 10), 50) : undefined;
+
     const { gate } = initComponents(c.env);
 
     const response = await gate.findSkill(
-      body.query,
+      query,
       body.tenantId,
       {
-        limit: body.limit,
+        limit,
         appetite: body.appetite as Appetite,
         tags: body.tags,
         category: body.category,
@@ -212,13 +222,7 @@ app.post('/v1/search', async (c) => {
     return c.json(response);
   } catch (error) {
     console.error('Search error:', error);
-    return c.json(
-      {
-        error: 'Search failed',
-        message: (error as Error).message,
-      },
-      500
-    );
+    return c.json({ error: 'Search failed' }, 500);
   }
 });
 
@@ -312,13 +316,7 @@ app.post('/v1/skills/:skillId/index', adminAuth(), async (c) => {
     console.error('[INDEX] Error stack:', (error as Error).stack);
     console.error('[INDEX] Error name:', (error as Error).name);
     console.error('[INDEX] Error message:', (error as Error).message);
-    return c.json(
-      {
-        error: 'Failed to index skill',
-        message: (error as Error).message,
-      },
-      500
-    );
+    return c.json({ error: 'Failed to index skill' }, 500);
   }
 });
 
@@ -356,7 +354,7 @@ app.delete('/v1/skills/:skillId', async (c) => {
     return c.json({ id: skillId, status: 'deleted' });
   } catch (error) {
     console.error('Delete error:', error);
-    return c.json({ error: 'Failed to delete skill', message: (error as Error).message }, 500);
+    return c.json({ error: 'Failed to delete skill' }, 500);
   }
 });
 
@@ -590,13 +588,7 @@ app.post('/v1/eval/run', async (c) => {
     return c.json({ success: true, ...persistedRun });
   } catch (error) {
     console.error('Eval run error:', error);
-    return c.json(
-      {
-        error: 'Failed to run eval suite',
-        message: (error as Error).message,
-      },
-      500
-    );
+    return c.json({ error: 'Failed to run eval suite' }, 500);
   }
 });
 
@@ -752,7 +744,7 @@ app.get('/v1/skills/:slug/versions', async (c) => {
     });
   } catch (error) {
     console.error('[SKILL VERSIONS] Error:', error);
-    return c.json({ error: 'Failed to fetch versions', message: (error as Error).message }, 500);
+    return c.json({ error: 'Failed to fetch versions' }, 500);
   }
 });
 
@@ -871,7 +863,7 @@ app.get('/v1/skills/:slug', async (c) => {
     });
   } catch (error) {
     console.error('[SKILL DETAIL] Error:', error);
-    return c.json({ error: 'Failed to fetch skill', message: (error as Error).message }, 500);
+    return c.json({ error: 'Failed to fetch skill' }, 500);
   }
 });
 
@@ -1114,7 +1106,12 @@ app.post('/v1/skills/:id/star', zValidator('json', starInputSchema), async (c) =
 
 app.delete('/v1/skills/:id/star', async (c) => {
   const skillId = c.req.param('id');
-  const body = await c.req.json();
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
   const userId = body.userId;
   if (!userId) return c.json({ error: 'userId required' }, 400);
   const pool = createPool(c.env);
@@ -1283,7 +1280,7 @@ app.get('/v1/skills/:slug/:version', async (c) => {
     });
   } catch (error) {
     console.error('[SKILL VERSION DETAIL] Error:', error);
-    return c.json({ error: 'Failed to fetch skill version', message: (error as Error).message }, 500);
+    return c.json({ error: 'Failed to fetch skill version' }, 500);
   }
 });
 

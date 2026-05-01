@@ -123,6 +123,15 @@ const faqJsonLd = {
           <a href="#featured" class="hidden sm:inline text-sm text-text-muted hover:text-text-secondary transition-colors">Featured</a>
         )}
         <a href="#faq" class="text-sm text-text-muted hover:text-text-secondary transition-colors">FAQ</a>
+        <a href="https://cognium.net" target="_blank" rel="noopener" class="hidden sm:flex items-center gap-1.5 text-sm text-text-muted hover:text-text-secondary transition-colors" title="Powered by Cognium">
+          <svg viewBox="0 0 32 25" class="w-5 h-4" fill="none" aria-hidden="true">
+            <path d="M3.9 6 C9.8 6, 12.8 9.2, 15.7 11.8" stroke="#64748B" stroke-width="2.2" stroke-linecap="round"/>
+            <path d="M3.9 19 C9.8 19, 12.8 16, 15.7 13.5" stroke="#A8B5C2" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="16.2" cy="12.6" r="2.5" fill="#E5A820"/>
+            <path d="M19 12.2 C23 11.5, 26 10.5, 29 9.6" stroke="#E5A820" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span class="hidden lg:inline">Cognium</span>
+        </a>
       </div>
     </div>
   </nav>
@@ -328,7 +337,15 @@ const faqJsonLd = {
           </div>
 
           <p class="mt-10 text-center text-sm text-text-muted">
-            Security-scanned by <span class="text-text-secondary">Cognium</span>. Trust scores update continuously.
+            Security-scanned by
+            <a href="https://cognium.net" target="_blank" rel="noopener" class="inline-flex items-center gap-1 text-text-secondary hover:text-text-primary transition-colors">
+              <svg viewBox="0 0 32 25" class="w-4 h-3 inline-block" fill="none" aria-hidden="true">
+                <path d="M3.9 6 C9.8 6, 12.8 9.2, 15.7 11.8" stroke="#64748B" stroke-width="2.2" stroke-linecap="round"/>
+                <path d="M3.9 19 C9.8 19, 12.8 16, 15.7 13.5" stroke="#A8B5C2" stroke-width="1.5" stroke-linecap="round"/>
+                <circle cx="16.2" cy="12.6" r="2.5" fill="#E5A820"/>
+                <path d="M19 12.2 C23 11.5, 26 10.5, 29 9.6" stroke="#E5A820" stroke-width="2.5" stroke-linecap="round"/>
+              </svg>
+              Cognium</a>. Trust scores update continuously.
           </p>
         </div>
       </section>
@@ -383,12 +400,24 @@ const faqJsonLd = {
     <!-- Footer -->
     <footer class="border-t border-border-subtle py-10">
       <div class="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div class="flex items-center gap-2 text-sm text-text-muted">
-          <svg viewBox="0 0 32 32" fill="none" class="w-5 h-5" aria-hidden="true">
-            <path d="M8 10L16 6L24 10V16L16 26L8 16V10Z" stroke="#6ee7b7" stroke-width="1.5" fill="none"/>
-            <circle cx="16" cy="14" r="3" fill="#6ee7b7" opacity="0.8"/>
-          </svg>
-          Runics by Cognium Labs
+        <div class="flex items-center gap-3 text-sm text-text-muted">
+          <a href="/" class="flex items-center gap-1.5 hover:text-text-secondary transition-colors">
+            <svg viewBox="0 0 32 32" fill="none" class="w-5 h-5" aria-hidden="true">
+              <path d="M8 10L16 6L24 10V16L16 26L8 16V10Z" stroke="#6ee7b7" stroke-width="1.5" fill="none"/>
+              <circle cx="16" cy="14" r="3" fill="#6ee7b7" opacity="0.8"/>
+            </svg>
+            Runics
+          </a>
+          <span class="text-border" aria-hidden="true">|</span>
+          <a href="https://cognium.net" target="_blank" rel="noopener" class="flex items-center gap-1.5 hover:text-text-secondary transition-colors">
+            <svg viewBox="0 0 32 25" class="w-5 h-4" fill="none" aria-hidden="true">
+              <path d="M3.9 6 C9.8 6, 12.8 9.2, 15.7 11.8" stroke="#64748B" stroke-width="2.2" stroke-linecap="round"/>
+              <path d="M3.9 19 C9.8 19, 12.8 16, 15.7 13.5" stroke="#A8B5C2" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="16.2" cy="12.6" r="2.5" fill="#E5A820"/>
+              <path d="M19 12.2 C23 11.5, 26 10.5, 29 9.6" stroke="#E5A820" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+            Cognium Labs
+          </a>
         </div>
         <nav class="flex items-center gap-6 text-sm text-text-muted" aria-label="Footer">
           <a href="https://api.runics.net/health" target="_blank" rel="noopener" class="hover:text-text-secondary transition-colors">API</a>
@@ -414,6 +443,11 @@ const faqJsonLd = {
     let debounceTimer: ReturnType<typeof setTimeout>;
     let abortController: AbortController | null = null;
     const localSkills: any[] = (window as any).__featuredSkills || [];
+    let currentQuery = '';
+    let lastData: any = null;
+    let visibleCount = 5;
+    const INITIAL_VISIBLE = 5;
+    const FETCH_LIMIT = 20;
 
     // Keyboard shortcut
     document.addEventListener('keydown', (e) => {
@@ -506,43 +540,80 @@ const faqJsonLd = {
         <div class="flex items-center justify-center gap-2 mt-2 text-xs text-text-muted"><svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 2a10 10 0 019.95 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Loading full results…</div>`;
     }
 
+    function renderSkeletons(count = 3): string {
+      const skeleton = Array.from({ length: count }, () => `
+        <div class="p-4 rounded-xl border border-border-subtle bg-bg-card animate-pulse">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1 space-y-2">
+              <div class="h-4 bg-bg-elevated rounded w-2/5"></div>
+              <div class="h-3 bg-bg-elevated rounded w-4/5"></div>
+              <div class="h-3 bg-bg-elevated rounded w-3/5"></div>
+            </div>
+            <div class="shrink-0 space-y-1.5">
+              <div class="h-3 bg-bg-elevated rounded w-8 ml-auto"></div>
+              <div class="h-3 bg-bg-elevated rounded w-12 ml-auto"></div>
+            </div>
+          </div>
+        </div>`).join('');
+      return `<div class="flex flex-col gap-2">${skeleton}</div>`;
+    }
+
     async function doSearch(query: string) {
       activeResultIdx = -1;
+      currentQuery = query;
+      visibleCount = INITIAL_VISIBLE;
+
       // Cancel any in-flight request
       abortController?.abort();
       abortController = new AbortController();
       const signal = abortController.signal;
 
-      // Show instant local results (if any) while API loads
+      // Show instant local results (if any) while API loads, or skeletons
       const localMatches = localSearch(query);
       if (localMatches.length > 0) {
         resultsEl.innerHTML = renderLocalResults(localMatches);
       } else {
-        resultsEl.innerHTML = `<div class="flex items-center justify-center gap-2 p-4 rounded-xl border border-border-subtle bg-bg-card text-sm text-text-muted"><svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 2a10 10 0 019.95 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Searching…</div>`;
+        resultsEl.innerHTML = renderSkeletons();
       }
       resultsEl.classList.remove('hidden');
+
       try {
         const res = await fetch(`${API}/v1/search`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, tenantId: 'public', limit: 5 }),
+          body: JSON.stringify({ query, tenantId: 'public', limit: FETCH_LIMIT }),
           signal,
         });
         if (!res.ok) throw new Error(`${res.status}`);
         const data = await res.json();
-        if (!signal.aborted) renderResults(data);
+        if (!signal.aborted) {
+          lastData = data;
+          renderResults(data);
+        }
       } catch (e: any) {
-        if (e?.name === 'AbortError') return; // superseded by newer query
-        // If we have local results, keep them visible instead of showing error
+        if (e?.name === 'AbortError') return;
         if (localMatches.length > 0) {
           const loader = resultsEl.querySelector('.animate-spin')?.closest('div:not(#results-list)');
           if (loader) loader.innerHTML = `<span class="text-xs text-text-muted">Showing featured results only</span>`;
         } else {
-          resultsEl.innerHTML = `<div class="p-4 rounded-xl border border-red-400/20 bg-bg-card text-sm text-red-400 text-center">Search unavailable — please try again.</div>`;
+          resultsEl.innerHTML = `<div class="p-4 rounded-xl border border-red-400/20 bg-bg-card text-sm text-text-muted text-center">
+            <p class="text-red-400">Search unavailable</p>
+            <button id="retry-btn" class="mt-2 px-4 py-1.5 text-xs rounded-lg border border-border text-text-secondary hover:text-text-primary hover:border-accent/50 transition-all cursor-pointer">Retry</button>
+          </div>`;
           resultsEl.classList.remove('hidden');
+          document.getElementById('retry-btn')?.addEventListener('click', () => doSearch(query));
         }
       }
     }
+
+    function showMore() {
+      if (!lastData) return;
+      visibleCount = Math.min(visibleCount + 5, lastData.results.length);
+      renderResults(lastData);
+    }
+
+    // Expose for inline handlers
+    (window as any).doSearch = doSearch;
 
     function trustColor(score: number): string {
       if (score >= 0.8) return 'text-green-400';
@@ -594,6 +665,9 @@ const faqJsonLd = {
       const tier = meta.tier || 1;
       const latency = meta.latencyMs || 0;
       const confidence = data.confidence || 'unknown';
+      const totalResults = data.results.length;
+      const visible = data.results.slice(0, visibleCount);
+      const hasMore = visibleCount < totalResults;
 
       const metaPanel = `
         <div class="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-border-subtle bg-bg-card mb-2 text-xs" aria-label="Search routing metadata">
@@ -611,15 +685,14 @@ const faqJsonLd = {
           ${meta.reranked ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="Cross-encoder reranking applied">reranked</span>' : ''}
           ${meta.llmInvoked ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="LLM deep search invoked">LLM</span>' : ''}
           ${meta.cacheHit ? '<span class="inline-flex items-center px-2 py-0.5 rounded border border-border-subtle bg-bg-elevated text-text-muted font-mono" title="Served from cache">cached</span>' : ''}
-          <span class="ml-auto text-text-muted">${data.results.length} result${data.results.length === 1 ? '' : 's'}</span>
+          <span class="ml-auto text-text-muted">${hasMore ? `${visibleCount} of ${totalResults}` : `${totalResults}`} result${totalResults === 1 ? '' : 's'}</span>
         </div>
       `;
 
-      const html = data.results.map((r: any, idx: number) => {
+      const html = visible.map((r: any, idx: number) => {
         const name = escapeHtml(r.name || r.slug || 'unnamed');
         const summary = escapeHtml(r.agentSummary || '');
         const matchSrc = r.matchSource ? escapeHtml(String(r.matchSource).replace(/_/g, ' ')) : null;
-        const tier = escapeHtml(r.verificationTier || 'unverified');
         const trustPct = ((r.trustScore || 0) * 100).toFixed(0);
         const relevancePct = ((r.score || 0) * 100).toFixed(0);
         const href = r.slug ? `/skills/${encodeURIComponent(r.slug)}` : null;
@@ -645,9 +718,16 @@ const faqJsonLd = {
         `;
       }).join('');
 
-      resultsEl.innerHTML = `${metaPanel}<div class="flex flex-col gap-2" id="results-list">${html}</div>`;
+      const showMoreBtn = hasMore
+        ? `<button id="show-more-btn" class="mt-2 w-full py-2.5 text-xs rounded-xl border border-border-subtle bg-bg-card hover:bg-bg-card-hover hover:border-border text-text-muted hover:text-text-secondary transition-all cursor-pointer">Show more (${totalResults - visibleCount} remaining)</button>`
+        : '';
+
+      resultsEl.innerHTML = `${metaPanel}<div class="flex flex-col gap-2" id="results-list">${html}</div>${showMoreBtn}`;
       resultsEl.classList.remove('hidden');
       activeResultIdx = -1;
+
+      // Bind "Show more" button
+      document.getElementById('show-more-btn')?.addEventListener('click', showMore);
     }
 
     // Keyboard navigation: ↑↓ to move, Enter to open, Esc to close
