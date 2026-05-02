@@ -28,8 +28,10 @@
     "smoke:staging": "tsx scripts/smoke-test.ts --endpoint https://runics.phantoms.workers.dev"
   },
   "dependencies": {
+    "@hono/zod-openapi": "^0.19.10",
     "@hono/zod-validator": "^0.4.1",
     "@runics/dag": "file:../runics-sdk/packages/dag",
+    "@scalar/hono-api-reference": "^0.10.13",
     "drizzle-orm": "^0.38.0",
     "hono": "^4.0.0",
     "nanoid": "^5.1.6",

@@ -1,9 +1,9 @@
-import { Hono } from 'hono';
+import { OpenAPIHono } from '@hono/zod-openapi';
 import { createPool } from '../db/connection';
 import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 
-export const authorRoutes = new Hono<{ Bindings: Env }>();
+export const authorRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
 // GET /v1/authors/:handle — Author profile with aggregate stats
 authorRoutes.get('/:handle', async (c) => {

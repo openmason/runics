@@ -19,6 +19,9 @@ const PUBLIC_HOSTNAME = 'api.runics.net';
 const PUBLIC_ROUTES: Array<{ method: string; path: string; exact?: boolean; suffix?: string }> = [
   // Health
   { method: 'GET', path: '/health' },
+  // OpenAPI spec + docs
+  { method: 'GET', path: '/openapi.json', exact: true },
+  { method: 'GET', path: '/docs', exact: true },
   // Search (exact — excludes /v1/search/feedback)
   { method: 'POST', path: '/v1/search', exact: true },
   // Skill detail (read-only GET — write methods are blocked)
