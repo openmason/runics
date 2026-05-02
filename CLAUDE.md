@@ -4,7 +4,8 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 spec. 528 tests, 57 endpoints, 15 migrations. Deployed to production (May 2026).
+v5.4 spec. 528 tests, 72 endpoints (39 OpenAPI + 25 admin + 8 publish/authors), 15 migrations.
+Deployed to production (May 2026). Interactive API docs at api.runics.net/docs (Scalar + OpenAPI 3.1).
 56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
 Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
 Cognium scanning DISABLED — missing Circle-IR API key. Content safety DISABLED — llama-guard model broke.
@@ -16,6 +17,8 @@ Known SDK issues documented in ARCHITECTURE.md §17 Known Issues table.
 
 **Production:**
 - API: `https://api.runics.net` / `https://runics.cognium.workers.dev`
+- API Docs: `https://api.runics.net/docs` (Scalar — OpenAPI 3.1, themed to match website)
+- OpenAPI spec: `https://api.runics.net/openapi.json` (38 paths, 39 endpoints)
 - Web: `https://runics.net` / `https://web.cognium.workers.dev`
 
 **Staging:**
@@ -28,7 +31,8 @@ Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 
 ## Stack
 
-- TypeScript on Cloudflare Workers (Hono framework)
+- TypeScript on Cloudflare Workers (OpenAPIHono framework — @hono/zod-openapi)
+- @scalar/hono-api-reference for interactive API docs at /docs
 - Neon Postgres with pgvector (HNSW) + tsvector for search
 - Cloudflare Workers AI for embeddings (bge-small-en-v1.5), reranking, and LLM fallback
 - Cloudflare KV for caching (search results + query embedding cache)
@@ -61,6 +65,9 @@ All SLOs passing (April 30, 2026 benchmark):
 ## Project Structure
 
 See ARCHITECTURE.md for the full tree. Key directories:
+- src/routes/        — OpenAPI route modules (search, skills, analytics, eval, composition, lineage, social, leaderboards)
+- src/schemas/       — Shared Zod schemas for OpenAPI (responses.ts, common.ts)
+- src/components.ts  — Shared service initialization (initComponents, createPool)
 - src/providers/     — SearchProvider interface + PgVectorProvider
 - src/intelligence/  — Confidence gate, deep search, composition detector, reranker
 - src/ingestion/     — Embed pipeline, agent summary, content safety
@@ -103,6 +110,29 @@ Always use `cd web && npm run deploy` to deploy the frontend.
 ## Testing
 
 vitest for unit tests. Tests live in tests/ mirroring src/ structure.
+
+## Design Tokens (Theme)
+
+All Runics surfaces (website, API docs, future dashboards) share this palette:
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `--color-bg` | `#0a0a0b` | Page background |
+| `--color-bg-elevated` | `#111113` | Elevated surfaces |
+| `--color-bg-card` | `#16161a` | Cards, panels |
+| `--color-bg-card-hover` | `#1c1c21` | Card hover state |
+| `--color-border` | `#27272a` | Primary borders |
+| `--color-border-subtle` | `#1e1e22` | Subtle separators |
+| `--color-text-primary` | `#ededed` | Body text |
+| `--color-text-secondary` | `#a0a0a6` | Secondary text |
+| `--color-text-muted` | `#6b6b72` | Muted / placeholder |
+| `--color-accent` | `#6ee7b7` | Emerald accent (links, highlights, buttons) |
+| `--color-accent-dim` | `#34d399` | Hover/active accent |
+| `--color-accent-glow` | `rgba(110,231,183,0.12)` | Glow backgrounds |
+| Font sans | Inter | Body text |
+| Font mono | JetBrains Mono | Code, metrics |
+
+Scalar API docs (api.runics.net/docs) are themed via `customCss` in `src/index.ts` mapping these tokens to `--scalar-*` variables. When adding new surfaces, use these tokens — not arbitrary hex values.
 
 ## Known Issues
 

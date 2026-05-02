@@ -113,7 +113,69 @@ app.doc31('/openapi.json', {
   servers: [{ url: 'https://api.runics.net', description: 'Production' }],
 });
 
-app.get('/docs', apiReference({ spec: { url: '/openapi.json' }, pageTitle: 'Runics API Docs' } as any));
+app.get('/docs', apiReference({
+  spec: { url: '/openapi.json' },
+  pageTitle: 'Runics API Docs',
+  theme: 'none',
+  customCss: `
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    .dark-mode {
+      color-scheme: dark;
+      --scalar-font: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --scalar-font-code: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+      --scalar-color-1: #ededed;
+      --scalar-color-2: #a0a0a6;
+      --scalar-color-3: #6b6b72;
+      --scalar-color-disabled: #4a4a50;
+      --scalar-color-ghost: #3a3a40;
+      --scalar-color-accent: #6ee7b7;
+      --scalar-background-1: #0a0a0b;
+      --scalar-background-2: #111113;
+      --scalar-background-3: #16161a;
+      --scalar-background-4: rgba(110, 231, 183, 0.06);
+      --scalar-background-accent: rgba(110, 231, 183, 0.12);
+      --scalar-border-color: #27272a;
+      --scalar-scrollbar-color: rgba(255, 255, 255, 0.12);
+      --scalar-scrollbar-color-active: rgba(255, 255, 255, 0.24);
+      --scalar-lifted-brightness: 1.2;
+      --scalar-backdrop-brightness: 0.5;
+      --scalar-shadow-1: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+      --scalar-shadow-2: 0 3px 6px rgba(0,0,0,0.3), 0 9px 24px rgba(0,0,0,0.5);
+      --scalar-button-1: #6ee7b7;
+      --scalar-button-1-color: #0a0a0b;
+      --scalar-button-1-hover: #34d399;
+      --scalar-color-green: #6ee7b7;
+      --scalar-color-red: #f87171;
+      --scalar-color-yellow: #fbbf24;
+      --scalar-color-blue: #60a5fa;
+      --scalar-color-orange: #fb923c;
+      --scalar-color-purple: #a78bfa;
+    }
+    .dark-mode .sidebar {
+      --scalar-sidebar-background-1: #0a0a0b;
+      --scalar-sidebar-item-hover-color: #6ee7b7;
+      --scalar-sidebar-item-hover-background: rgba(110, 231, 183, 0.06);
+      --scalar-sidebar-item-active-background: rgba(110, 231, 183, 0.08);
+      --scalar-sidebar-border-color: #1e1e22;
+      --scalar-sidebar-color-1: #ededed;
+      --scalar-sidebar-color-2: #a0a0a6;
+      --scalar-sidebar-color-active: #6ee7b7;
+      --scalar-sidebar-search-background: #16161a;
+      --scalar-sidebar-search-border-color: #27272a;
+      --scalar-sidebar-search-color: #6b6b72;
+    }
+    .light-mode {
+      --scalar-font: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --scalar-font-code: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+      --scalar-color-accent: #059669;
+      --scalar-background-accent: rgba(5, 150, 105, 0.08);
+      --scalar-button-1: #059669;
+      --scalar-button-1-color: #fff;
+      --scalar-button-1-hover: #047857;
+      --scalar-color-green: #059669;
+    }
+  `,
+} as any));
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Rate Limiting + Admin Auth
