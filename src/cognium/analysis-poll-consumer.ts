@@ -39,16 +39,12 @@ export async function handleAnalysisPollQueue(
   const pool = createPool(env);
   const maxAttempts = parseInt(env.COGNIUM_MAX_POLL_ATTEMPTS ?? '12', 10);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
-  const apiKey = env.COGNIUM_API_KEY ?? '';
-
   for (const msg of batch.messages) {
     const { skillId, endpoint, jobId, apiPath, attempt } = msg.body;
 
     try {
       // ── Step 1: Check job status ────────────────────────────────────────
-      const statusRes = await fetch(`${cogniumUrl}${apiPath}/${jobId}/status`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
-      });
+      const statusRes = await fetch(`${cogniumUrl}${apiPath}/${jobId}/status`);
 
       if (!statusRes.ok) {
         if (statusRes.status >= 500 || statusRes.status === 429) {
@@ -67,9 +63,7 @@ export async function handleAnalysisPollQueue(
       // ── Step 2: Handle terminal states ──────────────────────────────────
       if (job.status === 'completed') {
         // Fetch results
-        const resultRes = await fetch(`${cogniumUrl}${apiPath}/${jobId}/results`, {
-          headers: { 'Authorization': `Bearer ${apiKey}` },
-        });
+        const resultRes = await fetch(`${cogniumUrl}${apiPath}/${jobId}/results`);
 
         if (resultRes.ok) {
           const result = await resultRes.json();

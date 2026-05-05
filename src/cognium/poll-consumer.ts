@@ -45,9 +45,7 @@ export async function handleCogniumPollQueue(
 
     try {
       // ── Step 1: Check job status ────────────────────────────────────────
-      const statusRes = await fetch(`${cogniumUrl}/api/analyze/${jobId}/status`, {
-        headers: { 'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}` },
-      });
+      const statusRes = await fetch(`${cogniumUrl}/api/analyze/${jobId}/status`);
 
       if (!statusRes.ok) {
         if (statusRes.status >= 500 || statusRes.status === 429) {
@@ -122,13 +120,11 @@ async function handleCompleted(
   jobId: string,
   job: CircleIRJobStatus,
 ): Promise<void> {
-  const authHeaders = { 'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}` };
-
   // Fetch findings, skill-result, and full results (for files_detail/bundle_metadata) in parallel
   const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
-    fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, { headers: authHeaders }),
-    fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`, { headers: authHeaders }),
-    fetch(`${cogniumUrl}/api/analyze/${jobId}/results`, { headers: authHeaders }),
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`),
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`),
+    fetch(`${cogniumUrl}/api/analyze/${jobId}/results`),
   ]);
 
   if (!findingsRes.ok) {

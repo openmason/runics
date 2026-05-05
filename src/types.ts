@@ -458,7 +458,6 @@ export interface Env {
   COGNIUM_ENABLED?: string;         // default "true" — set to "false" to halt all cron + queue cognium scanning
   ANALYSIS_ENABLED?: string;        // default "true" — set to "false" to halt analysis queue processing
   COGNIUM_URL?: string; // default "https://circle.cognium.net"
-  COGNIUM_API_KEY?: string;
   COGNIUM_POLL_DELAY_MS?: string; // default "15000"
   COGNIUM_MAX_POLL_ATTEMPTS?: string; // default "12"
   COGNIUM_FAST_BATCH_SIZE?: string; // default "10" — non-GitHub skills per cron cycle

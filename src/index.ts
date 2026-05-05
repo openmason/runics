@@ -254,15 +254,13 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
 
     // Inline mode: submit to Circle-IR Skills API, poll, apply report
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-    const apiKey = c.env.COGNIUM_API_KEY ?? '';
-    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
     // buildCircleIRRequest includes bundle_url for clawhub skills —
     // Circle-IR downloads + extracts the zip bundle directly
     const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildCircleIRRequest(skill)),
     });
     if (!submitRes.ok) return c.json({ error: `Circle-IR submit failed: ${submitRes.status}` }, 502);
@@ -272,9 +270,7 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
     let jobStatus: any;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 4000));
-      const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-        headers: authHeaders,
-      });
+      const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`);
       jobStatus = await statusRes.json();
       if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
     }
@@ -285,9 +281,9 @@ app.post('/v1/admin/scan/:skillId', async (c) => {
 
     // Fetch findings, skill-result, and results (for files_detail/bundle_metadata) in parallel
     const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
-      fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
-      fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
-      fetch(`${cogniumUrl}/api/analyze/${job_id}/results`, { headers: authHeaders }),
+      fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`),
+      fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`),
+      fetch(`${cogniumUrl}/api/analyze/${job_id}/results`),
     ]);
     const { findings: raw } = await findingsRes.json() as { findings: any[] };
     const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
@@ -328,8 +324,6 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
   try {
     const pool = createPool(c.env);
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-    const apiKey = c.env.COGNIUM_API_KEY ?? '';
-    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
     const skillRes = await pool.query(
       `SELECT id, slug, version, name, description, source, status,
@@ -350,10 +344,10 @@ app.post('/v1/admin/apply-job/:skillId', async (c) => {
 
     // Fetch status, findings, skill-result, and results from Circle-IR
     const [statusRes, findingsRes, skillResultRes, resultsRes] = await Promise.all([
-      fetch(`${cogniumUrl}/api/analyze/${jobId}/status`, { headers: authHeaders }),
-      fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`, { headers: authHeaders }),
-      fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`, { headers: authHeaders }),
-      fetch(`${cogniumUrl}/api/analyze/${jobId}/results`, { headers: authHeaders }),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/status`),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/findings`),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/skill-result`),
+      fetch(`${cogniumUrl}/api/analyze/${jobId}/results`),
     ]);
 
     const jobStatus = await statusRes.json() as any;
@@ -647,9 +641,6 @@ app.post('/v1/admin/analyze/:skillId', async (c) => {
     }
 
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-    const apiKey = c.env.COGNIUM_API_KEY ?? '';
-    const authHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-
     const { buildAnalysisRequests } = await import('./cognium/analysis-request-builder');
     const requests = buildAnalysisRequests(skill);
 
@@ -665,7 +656,7 @@ app.post('/v1/admin/analyze/:skillId', async (c) => {
       endpoints.map(async (ep) => {
         const res = await fetch(`${cogniumUrl}${ep.path}`, {
           method: 'POST',
-          headers: authHeaders,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(ep.body),
         });
         if (!res.ok) throw new Error(`${ep.path} submit failed: ${res.status}`);
@@ -700,15 +691,11 @@ app.post('/v1/admin/analyze/:skillId', async (c) => {
       await Promise.allSettled(
         pendingKeys.map(async (key) => {
           const { jobId, path } = jobs[key];
-          const statusRes = await fetch(`${cogniumUrl}${path}/${jobId}/status`, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-          });
+          const statusRes = await fetch(`${cogniumUrl}${path}/${jobId}/status`);
           if (!statusRes.ok) return;
           const status = await statusRes.json() as { status: string };
           if (status.status === 'completed') {
-            const resultRes = await fetch(`${cogniumUrl}${path}/${jobId}/results`, {
-              headers: { 'Authorization': `Bearer ${apiKey}` },
-            });
+            const resultRes = await fetch(`${cogniumUrl}${path}/${jobId}/results`);
             if (resultRes.ok) {
               results[key] = await resultRes.json();
             } else {
@@ -1647,8 +1634,6 @@ app.post('/v1/admin/backfill', async (c) => {
     // No queue needed — cron checks cognium_job_id IS NOT NULL every minute
     if (mode === 'submit') {
       const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-      const apiKey = c.env.COGNIUM_API_KEY ?? '';
-      const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
       const { buildCircleIRRequest } = await import('./cognium/request-builder');
 
       let submitted = 0;
@@ -1660,7 +1645,7 @@ app.post('/v1/admin/backfill', async (c) => {
         try {
           const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...authHeaders },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(buildCircleIRRequest(skill)),
           });
           if (!submitRes.ok) { submitFailed++; submitErrors.push(`${skill.slug}: submit ${submitRes.status}`); continue; }
@@ -1707,8 +1692,6 @@ app.post('/v1/admin/backfill', async (c) => {
 
     // Inline mode: direct scan + poll (original behavior, small batches only)
     const cogniumUrl = c.env.COGNIUM_URL ?? 'https://circle.cognium.net';
-    const apiKey = c.env.COGNIUM_API_KEY ?? '';
-    const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
     const { buildCircleIRRequest } = await import('./cognium/request-builder');
     const { normalizeFindings } = await import('./cognium/finding-mapper');
@@ -1723,7 +1706,7 @@ app.post('/v1/admin/backfill', async (c) => {
       try {
         const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(buildCircleIRRequest(skill)),
         });
         if (!submitRes.ok) { failed++; errors.push(`${skill.slug}: submit ${submitRes.status}`); continue; }
@@ -1732,18 +1715,16 @@ app.post('/v1/admin/backfill', async (c) => {
         let jobStatus: any;
         for (let i = 0; i < 15; i++) {
           await new Promise(r => setTimeout(r, 4000));
-          const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-            headers: authHeaders,
-          });
+          const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`);
           jobStatus = await statusRes.json();
           if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
         }
         if (jobStatus.status !== 'completed') { failed++; errors.push(`${skill.slug}: ${jobStatus.status}`); continue; }
 
         const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
-          fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
-          fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
-          fetch(`${cogniumUrl}/api/analyze/${job_id}/results`, { headers: authHeaders }),
+          fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`),
+          fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`),
+          fetch(`${cogniumUrl}/api/analyze/${job_id}/results`),
         ]);
         const { findings: raw } = await findingsRes.json() as { findings: any[] };
         const skillResult = skillResultRes.ok
@@ -2298,9 +2279,6 @@ export default {
         if (env.COGNIUM_ENABLED === 'false') return;
         const pool = createPool(env);
         const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
-        const apiKey = env.COGNIUM_API_KEY ?? '';
-        if (!apiKey) return;
-        const authHeaders = { 'Authorization': `Bearer ${apiKey}` };
 
         try {
           const { buildCircleIRRequest } = await import('./cognium/request-builder');
@@ -2339,9 +2317,7 @@ export default {
             const results = await Promise.all(
               batch.map(async (skill: any) => {
                 try {
-                  const res = await fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/status`, {
-                    headers: authHeaders,
-                  });
+                  const res = await fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/status`);
                   if (!res.ok) return { skill, status: 'error' };
                   const body = await res.json() as any;
                   return { skill, status: body.status as string, jobStatus: body };
@@ -2361,9 +2337,9 @@ export default {
             await Promise.all(batch.map(async ({ skill, jobStatus }) => {
               try {
                 const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
-                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/findings`, { headers: authHeaders }),
-                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/skill-result`, { headers: authHeaders }),
-                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/results`, { headers: authHeaders }),
+                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/findings`),
+                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/skill-result`),
+                  fetch(`${cogniumUrl}/api/analyze/${skill.cogniumJobId}/results`),
                 ]);
                 const { findings: raw } = await findingsRes.json() as { findings: any[] };
                 const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
@@ -2488,7 +2464,7 @@ export default {
             const results = await Promise.allSettled(batch.map(async (skill: any) => {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildCircleIRRequest(skill)),
               });
               if (!submitRes.ok) {
@@ -2501,18 +2477,16 @@ export default {
               let jobStatus: any;
               for (let p = 0; p < 3; p++) {
                 await new Promise(r => setTimeout(r, 2000));
-                const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`, {
-                  headers: authHeaders,
-                });
+                const statusRes = await fetch(`${cogniumUrl}/api/analyze/${job_id}/status`);
                 jobStatus = await statusRes.json();
                 if (jobStatus.status === 'completed' || jobStatus.status === 'failed') break;
               }
 
               if (jobStatus?.status === 'completed') {
                 const [findingsRes, skillResultRes, resultsRes] = await Promise.all([
-                  fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`, { headers: authHeaders }),
-                  fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`, { headers: authHeaders }),
-                  fetch(`${cogniumUrl}/api/analyze/${job_id}/results`, { headers: authHeaders }),
+                  fetch(`${cogniumUrl}/api/analyze/${job_id}/findings`),
+                  fetch(`${cogniumUrl}/api/analyze/${job_id}/skill-result`),
+                  fetch(`${cogniumUrl}/api/analyze/${job_id}/results`),
                 ]);
                 const { findings: raw } = await findingsRes.json() as { findings: any[] };
                 const skillResult = skillResultRes.ok ? await skillResultRes.json() as any : null;
@@ -2548,7 +2522,7 @@ export default {
             const results = await Promise.allSettled(batch.map(async (skill: any) => {
               const submitRes = await fetch(`${cogniumUrl}/api/analyze/skill`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeaders },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildCircleIRRequest(skill)),
               });
               if (!submitRes.ok) {

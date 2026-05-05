@@ -55,7 +55,6 @@ export async function handleCogniumSubmitQueue(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${env.COGNIUM_API_KEY ?? ''}`,
         },
         body: JSON.stringify(buildCircleIRRequest(skill)),
       });

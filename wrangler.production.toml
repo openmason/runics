@@ -162,7 +162,7 @@ RERANKER_ENABLED = "true"
 RERANKER_TOP_N = "20"
 
 # ── Cognium (Circle-IR) ─────────────────────────────────────────────────────
-COGNIUM_ENABLED = "false"             # Disabled — missing real API key, stops cron + queue scanning
+COGNIUM_ENABLED = "true"              # Enabled — no auth needed for Circle-IR
 COGNIUM_URL = "https://circle.cognium.net"
 COGNIUM_POLL_DELAY_MS = "15000"
 COGNIUM_MAX_POLL_ATTEMPTS = "12"

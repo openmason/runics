@@ -45,7 +45,6 @@ function mockEnv(overrides?: Record<string, any>) {
   return {
     NEON_CONNECTION_STRING: 'postgresql://test',
     COGNIUM_URL: 'https://test-cognium.example.com',
-    COGNIUM_API_KEY: 'test-key',
     COGNIUM_MAX_POLL_ATTEMPTS: '12',
     COGNIUM_JOBS: {
       put: vi.fn(),

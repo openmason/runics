@@ -39,7 +39,6 @@ export async function handleAnalysisSubmitQueue(
 
   const pool = createPool(env);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
-  const apiKey = env.COGNIUM_API_KEY ?? '';
   const initialDelay = parseInt(env.COGNIUM_POLL_DELAY_MS ?? '15000', 10);
 
   for (const msg of batch.messages) {
@@ -70,7 +69,6 @@ export async function handleAnalysisSubmitQueue(
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
             },
             body: JSON.stringify(body),
           });
