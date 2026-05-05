@@ -31,9 +31,9 @@ This file covers **what's deployed, how the code is organized, and implementatio
 | Migrations | 16 (0001–0015 + 0018) |
 | Published skills | 56.6K across 7 sources (62.8K total) |
 | Eval | 91 fixtures, R@1=100%, R@5=100%, MRR=1.000 |
-| Cognium scanning | ENABLED — `COGNIUM_ENABLED=true`, no auth needed, processing 56K backlog |
-| Content safety | DISABLED — `DISABLE_CONTENT_SAFETY=true`, llama-guard model broke |
-| Staging | DEAD — Neon free-tier data transfer quota exceeded |
+| Cognium scanning | ENABLED — `COGNIUM_ENABLED=true`, no auth needed, processing 56K backlog (~390/hr) |
+| Content safety | DISABLED — redundant with Circle-IR scanning. Code is correct (user role only). |
+| Staging | ALIVE — DB has 24K skills, worker healthy. Search returns 0 (missing embeddings). |
 
 v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
 
@@ -245,9 +245,8 @@ OpenAPIHono setup → middleware (cors, publicGuard, rateLimiter, adminAuth)
 
 | Issue | Detail |
 |-------|--------|
-| Content safety disabled | `DISABLE_CONTENT_SAFETY=true`. Cloudflare llama-guard-3-8b rejects `system` role, flagging all descriptions as unsafe. |
-| Staging dead | Neon free-tier data transfer quota exceeded. Needs plan upgrade or new project. |
 | Cold query latency | ~4s on first uncached query (Workers AI embedding warm-up). Keep-alive mitigates Worker cold start but not AI model cold start. |
+| Staging search empty | DB has 24K skills but no embeddings. Run embed-queue-backfill to populate. |
 | `cognium_scanned` legacy column | Boolean still referenced in some code paths; actual code uses `cognium_scanned_at`. |
 
 ---

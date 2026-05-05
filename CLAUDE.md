@@ -8,8 +8,8 @@ v5.4 deployed, v5.5 canonical spec. 532 tests, 73 endpoints (39 OpenAPI + 26 adm
 Deployed to production (May 2026). Interactive API docs at api.runics.net/docs (Scalar + OpenAPI 3.1).
 56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
 Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
-Cognium scanning ENABLED — processing 56K skill backlog via Circle-IR (no auth, bounded retries).
-Content safety DISABLED — llama-guard model broke. Staging DEAD — Neon free-tier quota exceeded.
+Cognium scanning ENABLED — processing 56K skill backlog via Circle-IR (no auth, bounded retries, ~390/hr).
+Content safety DISABLED — redundant with Circle-IR. Staging ALIVE (search empty, needs embed backfill).
 v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
 
 ## Canonical Specs (source of truth)
@@ -145,6 +145,5 @@ Scalar API docs (api.runics.net/docs) are themed via `customCss` in `src/index.t
 
 ## Known Issues
 
-- **Content safety disabled** — `DISABLE_CONTENT_SAFETY=true`. Cloudflare's llama-guard-3-8b no longer accepts the `system` role, causing all dev tool descriptions to be flagged as unsafe. Fix: switch to a model that supports system role, or wait for Cloudflare fix.
-- **Staging dead** — Neon free-tier data transfer quota exceeded. Needs plan upgrade or new project.
 - **Cold query latency** — ~4s on first uncached query due to Workers AI embedding model warm-up. Architectural limit of `bge-small-en-v1.5` on Cloudflare. Keep-alive mitigates Worker cold start but not AI model cold start.
+- **Staging search empty** — DB has 24K skills but no embeddings. Run embed-queue-backfill admin endpoint to populate.
