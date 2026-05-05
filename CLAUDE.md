@@ -4,14 +4,27 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 spec. 528 tests, 72 endpoints (39 OpenAPI + 25 admin + 8 publish/authors), 15 migrations.
+v5.4 deployed, v5.5 canonical spec. 528 tests, 72 endpoints (39 OpenAPI + 25 admin + 8 publish/authors), 15 migrations.
 Deployed to production (May 2026). Interactive API docs at api.runics.net/docs (Scalar + OpenAPI 3.1).
 56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
 Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
 Cognium scanning DISABLED — missing Circle-IR API key. Content safety DISABLED — llama-guard model broke.
 Staging DEAD — Neon free-tier data transfer quota exceeded.
 v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
-Known SDK issues documented in ARCHITECTURE.md §17 Known Issues table.
+
+## Canonical Specs (source of truth)
+
+Architecture and design decisions live in `/Users/eyal/work/openmason/`:
+
+| File | Covers |
+|------|--------|
+| `runics.md` | Full Runics architecture — search, ingestion, trust, composition, DAG, events, API (v5.5) |
+| `cognium-engine.md` | Cognium scanning engine — Circle-IR, trust scoring, scan pipeline |
+| `architecture.md` | Platform-level architecture — Cortex, Runics, Forge, Mandate, deployment |
+| `principles.md` | Cross-product design principles — authoring, gates, trust, tenant isolation |
+| `skill-convention.md` | First-party skill format — handler pattern, SKILL.md, sandbox contract |
+
+ARCHITECTURE.md in this repo is the **codebase guide** — project structure, API surface, implementation patterns, known issues. Not a spec.
 
 ## URLs
 
@@ -24,10 +37,6 @@ Known SDK issues documented in ARCHITECTURE.md §17 Known Issues table.
 **Staging:**
 - API: `https://runics.phantoms.workers.dev`
 - Web: `https://runics-web-brm.pages.dev`
-
-## Architecture
-
-Read ARCHITECTURE.md for the complete spec. It is the single source of truth.
 
 ## Stack
 
@@ -140,4 +149,4 @@ Scalar API docs (api.runics.net/docs) are themed via `customCss` in `src/index.t
 - **Content safety disabled** — `DISABLE_CONTENT_SAFETY=true`. Cloudflare's llama-guard-3-8b no longer accepts the `system` role, causing all dev tool descriptions to be flagged as unsafe. Fix: switch to a model that supports system role, or wait for Cloudflare fix.
 - **Staging dead** — Neon free-tier data transfer quota exceeded. Needs plan upgrade or new project.
 - **Cold query latency** — ~4s on first uncached query due to Workers AI embedding model warm-up. Architectural limit of `bge-small-en-v1.5` on Cloudflare. Keep-alive mitigates Worker cold start but not AI model cold start.
-
+- **~3,149 unverified skills** — Scanner disabled before scanning these. Root cause: `markScanFailed()` clears findings but doesn't clear `cognium_scanned_at`, and poll consumer treats 404 as terminal failure. Resilience PR needed.
