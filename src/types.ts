@@ -464,6 +464,8 @@ export interface Env {
   COGNIUM_FAST_BATCH_SIZE?: string; // default "10" — non-GitHub skills per cron cycle
   COGNIUM_REPO_BATCH_SIZE?: string; // default "3"  — GitHub/repo skills per cron cycle
   COGNIUM_MAX_INFLIGHT?: string;    // default "20" — skip submissions if too many jobs pending
+  COGNIUM_404_TOLERANCE?: string;   // default "2" — 404 retries before treating as terminal
+  COGNIUM_MAX_RETRIES?: string;     // default "3" — max scan attempts per skill before giving up
 
   // v5.0: Admin API authentication
   ADMIN_API_KEY?: string; // Set via: wrangler secret put ADMIN_API_KEY

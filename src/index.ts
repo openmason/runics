@@ -864,6 +864,57 @@ app.post('/v1/admin/deprecate-failed', async (c) => {
   }
 });
 
+// Admin: reset failed scans for retry (clears scan_failure_reason + scan_retry_count)
+app.post('/v1/admin/retry-failed', async (c) => {
+  try {
+    const pool = createPool(c.env);
+    const body = await c.req.json().catch(() => ({})) as { reason?: string; limit?: number; dryRun?: boolean };
+    const reason = body.reason; // optional: filter by specific failure reason
+    const limit = Math.min(body.limit ?? 500, 5000);
+    const dryRun = body.dryRun ?? true;
+
+    const reasonFilter = reason ? `AND scan_failure_reason = $2` : '';
+    const params: any[] = reason ? [limit, reason] : [limit];
+
+    if (dryRun) {
+      const preview = await pool.query(
+        `SELECT count(*)::int AS cnt FROM skills
+         WHERE verification_tier = 'unverified' AND scan_failure_reason IS NOT NULL AND status = 'published'
+         ${reason ? `AND scan_failure_reason = $1` : ''}`,
+        reason ? [reason] : []
+      );
+      const sample = await pool.query(
+        `SELECT slug, source, scan_failure_reason, scan_retry_count FROM skills
+         WHERE verification_tier = 'unverified' AND scan_failure_reason IS NOT NULL AND status = 'published'
+         ${reason ? `AND scan_failure_reason = $1` : ''}
+         ORDER BY created_at ASC LIMIT 10`,
+        reason ? [reason] : []
+      );
+      return c.json({ dryRun: true, reason: reason ?? 'all', count: preview.rows[0].cnt, sample: sample.rows });
+    }
+
+    const result = await pool.query(
+      `UPDATE skills SET
+        scan_failure_reason = NULL,
+        scan_retry_count = 0,
+        cognium_scanned_at = NULL,
+        updated_at = NOW()
+       WHERE id IN (
+         SELECT id FROM skills
+         WHERE verification_tier = 'unverified' AND scan_failure_reason IS NOT NULL AND status = 'published'
+         ${reasonFilter}
+         ORDER BY created_at ASC
+         LIMIT $1
+       )
+       RETURNING id, slug, source`,
+      params
+    );
+    return c.json({ reset: result.rows.length, reason: reason ?? 'all', sample: result.rows.slice(0, 20).map((r: any) => r.slug) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 // Admin: fix NULL content_safety_passed for published skills (when safety is disabled)
 app.post('/v1/admin/fix-safety-nulls', async (c) => {
   try {
@@ -1507,7 +1558,7 @@ app.post('/v1/admin/backfill', async (c) => {
     const pool = createPool(c.env);
 
     let baseWhere = retry
-      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NOT NULL`
+      ? `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND scan_failure_reason IS NOT NULL`
       : `WHERE verification_tier = 'unverified' AND status = 'published' AND cognium_job_id IS NULL AND cognium_scanned_at IS NULL`;
 
     const extraFilters: string[] = [];
@@ -2382,6 +2433,7 @@ export default {
 
           const fastBatchSize = parseInt(env.COGNIUM_FAST_BATCH_SIZE ?? '10', 10);
           const repoBatchSize = parseInt(env.COGNIUM_REPO_BATCH_SIZE ?? '3', 10);
+          const maxRetries = parseInt(env.COGNIUM_MAX_RETRIES ?? '3', 10);
 
           const fastSkills = await pool.query(
             `SELECT id, slug, version, name, description, source, status,
@@ -2398,10 +2450,11 @@ export default {
              FROM skills
              WHERE cognium_scanned_at IS NULL AND status = 'published'
                AND cognium_job_id IS NULL
+               AND COALESCE(scan_retry_count, 0) < $2
                AND source != 'github' AND repository_url IS NULL
              ORDER BY created_at ASC
              LIMIT $1`,
-            [fastBatchSize]
+            [fastBatchSize, maxRetries]
           );
 
           const repoSkills = await pool.query(
@@ -2419,10 +2472,11 @@ export default {
              FROM skills
              WHERE cognium_scanned_at IS NULL AND status = 'published'
                AND cognium_job_id IS NULL
+               AND COALESCE(scan_retry_count, 0) < $2
                AND (source = 'github' OR repository_url IS NOT NULL)
              ORDER BY created_at ASC
              LIMIT $1`,
-            [repoBatchSize]
+            [repoBatchSize, maxRetries]
           );
 
           let submitted = 0;

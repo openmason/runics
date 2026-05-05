@@ -205,8 +205,9 @@ export async function markScanFailed(pool: Pool, skillId: string, reason: string
     `UPDATE skills SET
       verification_tier = 'unverified',
       scan_failure_reason = $2,
-      cognium_scanned_at = NOW(),
+      cognium_scanned_at = NULL,
       cognium_job_id = NULL,
+      scan_retry_count = COALESCE(scan_retry_count, 0) + 1,
       updated_at = NOW()
     WHERE id = $1`,
     [skillId, reason]

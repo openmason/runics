@@ -358,6 +358,25 @@ describe('markScanFailed', () => {
     expect(params).toEqual(['skill-1', 'Test failure']);
   });
 
+  it('should NULL cognium_scanned_at to allow retry', async () => {
+    const pool = { query: vi.fn() } as any;
+
+    await markScanFailed(pool, 'skill-1', 'Test failure');
+
+    const [sql] = pool.query.mock.calls[0];
+    expect(sql).toContain('cognium_scanned_at = NULL');
+    expect(sql).not.toContain('cognium_scanned_at = NOW()');
+  });
+
+  it('should increment scan_retry_count', async () => {
+    const pool = { query: vi.fn() } as any;
+
+    await markScanFailed(pool, 'skill-1', 'Test failure');
+
+    const [sql] = pool.query.mock.calls[0];
+    expect(sql).toContain('scan_retry_count = COALESCE(scan_retry_count, 0) + 1');
+  });
+
   it('should persist Circle-IR job failure reason', async () => {
     const pool = { query: vi.fn() } as any;
 

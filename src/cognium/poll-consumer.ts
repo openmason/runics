@@ -54,7 +54,19 @@ export async function handleCogniumPollQueue(
           msg.retry();
           continue;
         }
-        // 4xx (not 429) — unrecoverable
+        // 404 on early attempts → likely race condition (job not yet registered in Circle-IR)
+        const notFoundTolerance = parseInt(env.COGNIUM_404_TOLERANCE ?? '2', 10);
+        if (statusRes.status === 404 && attempt <= notFoundTolerance) {
+          console.log(`[COGNIUM-POLL] 404 for job ${jobId} on attempt ${attempt} (tolerating, will retry)`);
+          const nextDelay = POLL_DELAYS_MS[Math.min(attempt, POLL_DELAYS_MS.length - 1)];
+          await env.COGNIUM_POLL_QUEUE.send(
+            { skillId, jobId, attempt: attempt + 1 },
+            { delaySeconds: Math.floor(nextDelay / 1000) },
+          );
+          msg.ack();
+          continue;
+        }
+        // Other 4xx or 404 past tolerance — unrecoverable
         console.error(`[COGNIUM-POLL] Status check failed for job ${jobId}: ${statusRes.status}`);
         await markScanFailed(pool, skillId, `Status check returned ${statusRes.status}`);
         await env.COGNIUM_JOBS.delete(`cognium:job:${skillId}`);

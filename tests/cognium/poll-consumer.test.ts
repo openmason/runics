@@ -109,7 +109,7 @@ describe('handleCogniumPollQueue', () => {
     expect(msg.ack).not.toHaveBeenCalled();
   });
 
-  it('should mark failed and ack on 4xx status check (unrecoverable)', async () => {
+  it('should tolerate 404 on early attempts and re-enqueue (race condition)', async () => {
     await setupPool([]);
 
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
@@ -121,7 +121,44 @@ describe('handleCogniumPollQueue', () => {
     await handleCogniumPollQueue(batch, env);
 
     const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).not.toHaveBeenCalled();
+    expect(env.COGNIUM_POLL_QUEUE.send).toHaveBeenCalledWith(
+      { skillId: 'skill-1', jobId: 'job-1', attempt: 2 },
+      expect.objectContaining({ delaySeconds: expect.any(Number) }),
+    );
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should mark failed on 404 past tolerance threshold', async () => {
+    await setupPool([]);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 3 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
     expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('404'));
+    expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
+    expect(msg.ack).toHaveBeenCalled();
+  });
+
+  it('should mark failed on non-404 4xx immediately (unrecoverable)', async () => {
+    await setupPool([]);
+
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
+
+    const env = mockEnv();
+    const msg = mockMsg({ skillId: 'skill-1', jobId: 'job-1', attempt: 1 });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumPollQueue(batch, env);
+
+    const { markScanFailed } = await import('../../src/cognium/scan-report-handler');
+    expect(markScanFailed).toHaveBeenCalledWith(expect.anything(), 'skill-1', expect.stringContaining('403'));
     expect(env.COGNIUM_JOBS.delete).toHaveBeenCalledWith('cognium:job:skill-1');
     expect(msg.ack).toHaveBeenCalled();
   });
