@@ -26,12 +26,12 @@ This file covers **what's deployed, how the code is organized, and implementatio
 | Metric | Value |
 |--------|-------|
 | Spec version | v5.4 deployed, v5.5 canonical |
-| Tests | 528 |
-| Endpoints | 72 (39 OpenAPI + 25 admin + 8 publish/authors) |
-| Migrations | 15 (0001–0015) |
+| Tests | 532 |
+| Endpoints | 73 (39 OpenAPI + 26 admin + 8 publish/authors) |
+| Migrations | 16 (0001–0015 + 0018) |
 | Published skills | 56.6K across 7 sources (62.8K total) |
 | Eval | 91 fixtures, R@1=100%, R@5=100%, MRR=1.000 |
-| Cognium scanning | DISABLED — `COGNIUM_ENABLED=false`, missing Circle-IR API key |
+| Cognium scanning | ENABLED — `COGNIUM_ENABLED=true`, no auth needed, processing 56K backlog |
 | Content safety | DISABLED — `DISABLE_CONTENT_SAFETY=true`, llama-guard model broke |
 | Staging | DEAD — Neon free-tier data transfer quota exceeded |
 
@@ -127,7 +127,8 @@ runics/
 │   │       ├── 0012_scan_coverage_v2.sql
 │   │       ├── 0013_scan_failure_reason.sql
 │   │       ├── 0014_v52_columns.sql
-│   │       └── 0015_workflow_definition.sql
+│   │       ├── 0015_workflow_definition.sql
+│   │       └── 0018_scan_retry_count.sql
 │   │
 │   ├── eval/
 │   │   ├── runner.ts / fixtures.ts / metrics.ts
@@ -244,11 +245,9 @@ OpenAPIHono setup → middleware (cors, publicGuard, rateLimiter, adminAuth)
 
 | Issue | Detail |
 |-------|--------|
-| Cognium scanning disabled | `COGNIUM_ENABLED=false` in wrangler.production.toml. Missing Circle-IR API key. Set with `wrangler secret put COGNIUM_API_KEY` and flip to `true`. |
 | Content safety disabled | `DISABLE_CONTENT_SAFETY=true`. Cloudflare llama-guard-3-8b rejects `system` role, flagging all descriptions as unsafe. |
 | Staging dead | Neon free-tier data transfer quota exceeded. Needs plan upgrade or new project. |
 | Cold query latency | ~4s on first uncached query (Workers AI embedding warm-up). Keep-alive mitigates Worker cold start but not AI model cold start. |
-| ~3,149 unverified skills | Scanner was disabled before scanning these. Root cause: `markScanFailed()` clears findings but doesn't clear `cognium_scanned_at`, and poll consumer treats 404 as terminal failure. Resilience PR needed. |
 | `cognium_scanned` legacy column | Boolean still referenced in some code paths; actual code uses `cognium_scanned_at`. |
 
 ---
