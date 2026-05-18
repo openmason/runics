@@ -34,6 +34,8 @@ const PUBLIC_ROUTES: Array<{ method: string; path: string; exact?: boolean; suff
   { method: 'GET', path: '/v1/leaderboards/' },
   // Authors (read-only)
   { method: 'GET', path: '/v1/authors/' },
+  // Catalog export (offline snapshot)
+  { method: 'GET', path: '/v1/catalog/export', exact: true },
   // Eval results (read-only)
   { method: 'GET', path: '/v1/eval/results' },
   { method: 'GET', path: '/v1/eval/compare' },
