@@ -26,9 +26,9 @@ This file covers **what's deployed, how the code is organized, and implementatio
 | Metric | Value |
 |--------|-------|
 | Spec version | v5.4 deployed, v5.5 canonical |
-| Tests | 532 |
+| Tests | 534 |
 | Endpoints | 73 (39 OpenAPI + 26 admin + 8 publish/authors) |
-| Migrations | 16 (0001–0015 + 0018) |
+| Migrations | 19 (0001–0019) |
 | Published skills | 56.6K across 7 sources (62.8K total) |
 | Eval | 91 fixtures, R@1=100%, R@5=100%, MRR=1.000 |
 | Cognium scanning | ENABLED — `COGNIUM_ENABLED=true`, no auth needed, processing 56K backlog (~390/hr) |
@@ -248,6 +248,7 @@ OpenAPIHono setup → middleware (cors, publicGuard, rateLimiter, adminAuth)
 | Cold query latency | ~4s on first uncached query (Workers AI embedding warm-up). Keep-alive mitigates Worker cold start but not AI model cold start. |
 | Staging search empty | DB has 24K skills but no embeddings. Run embed-queue-backfill to populate. |
 | `cognium_scanned` legacy column | Boolean still referenced in some code paths; actual code uses `cognium_scanned_at`. |
+| Circle-IR client-side rate limiting | No explicit req/s rate limiter on Runics side. Throttling is capacity-aware (via `/health/jobs`) but not rate-limited. If Circle-IR has capacity, Runics submits up to 30 skills/min. Add a per-second or token-bucket rate limiter before `fetch(cogniumUrl/api/analyze/skill)` calls in cron + submit-consumer. Also parse `Retry-After` headers from 429 responses. |
 
 ---
 

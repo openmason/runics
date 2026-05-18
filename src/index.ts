@@ -936,6 +936,8 @@ app.post('/v1/admin/restore-revoked', async (c) => {
       `UPDATE skills SET
         status = 'published',
         content_safety_passed = true,
+        revoked_at = NULL,
+        revoked_reason = NULL,
         updated_at = NOW()
        WHERE status = 'revoked' AND content_safety_passed = false
        RETURNING id, slug`

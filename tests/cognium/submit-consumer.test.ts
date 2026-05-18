@@ -208,6 +208,32 @@ describe('handleCogniumSubmitQueue', () => {
     expect(msg.retry).toHaveBeenCalled();
   });
 
+  it('should ack and skip revoked skills without submitting to Circle-IR', async () => {
+    await setupPool([
+      { rows: [makeSkillRow({ status: 'revoked' })] }, // fetchSkillById
+    ]);
+
+    const msg = mockMsg({ skillId: 'skill-1', priority: 'normal', timestamp: Date.now() });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumSubmitQueue(batch, mockEnv());
+    expect(msg.ack).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled(); // Should NOT call Circle-IR
+  });
+
+  it('should ack and skip vulnerable skills without submitting to Circle-IR', async () => {
+    await setupPool([
+      { rows: [makeSkillRow({ status: 'vulnerable' })] }, // fetchSkillById
+    ]);
+
+    const msg = mockMsg({ skillId: 'skill-1', priority: 'normal', timestamp: Date.now() });
+    const batch = { messages: [msg] } as any;
+
+    await handleCogniumSubmitQueue(batch, mockEnv());
+    expect(msg.ack).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('should process multiple messages in a batch', async () => {
     await setupPool([
       { rows: [makeSkillRow({ id: 'skill-1', slug: 'skill-a' })] },

@@ -96,9 +96,11 @@ export abstract class BaseSyncWorker {
             skill.sourceHash = hash;
 
             // Upsert skill row
-            const skillId = await this.upsertSkill(skill);
+            const { id: skillId, status: currentStatus } = await this.upsertSkill(skill);
 
-            // Enqueue for embedding generation and scanning (best-effort)
+            // Enqueue for embedding generation and scanning (best-effort).
+            // Skip scanning for revoked/vulnerable skills — their status was set by
+            // a previous Cognium scan and must not be overwritten by a re-scan.
             try {
               await this.env.EMBED_QUEUE.send({
                 skillId,
@@ -107,13 +109,15 @@ export abstract class BaseSyncWorker {
               } satisfies EmbedQueueMessage);
             } catch { /* queue quota exceeded — embedding backfill in cron will catch it */ }
 
-            try {
-              await this.env.COGNIUM_QUEUE.send({
-                skillId,
-                priority: 'normal',
-                timestamp: Date.now(),
-              } satisfies CogniumSubmitMessage);
-            } catch { /* queue quota exceeded — scan backfill in cron will catch it */ }
+            if (currentStatus !== 'revoked' && currentStatus !== 'vulnerable') {
+              try {
+                await this.env.COGNIUM_QUEUE.send({
+                  skillId,
+                  priority: 'normal',
+                  timestamp: Date.now(),
+                } satisfies CogniumSubmitMessage);
+              } catch { /* queue quota exceeded — scan backfill in cron will catch it */ }
+            }
 
             synced++;
           } catch (error) {
@@ -172,9 +176,9 @@ export abstract class BaseSyncWorker {
   }
 
   /**
-   * Upsert a skill row. Returns the skill ID (existing or newly generated).
+   * Upsert a skill row. Returns the skill ID and current status.
    */
-  private async upsertSkill(skill: SkillUpsert): Promise<string> {
+  private async upsertSkill(skill: SkillUpsert): Promise<{ id: string; status: string }> {
     const result = await this.pool.query(
       `INSERT INTO skills (
         name, slug, version, source, description, schema_json,
@@ -198,7 +202,7 @@ export abstract class BaseSyncWorker {
         runtime_env = EXCLUDED.runtime_env,
         trust_badge = COALESCE(skills.trust_badge, EXCLUDED.trust_badge),
         updated_at = NOW()
-      RETURNING id`,
+      RETURNING id, status`,
       [
         skill.name,
         skill.slug,
@@ -221,6 +225,6 @@ export abstract class BaseSyncWorker {
         'upstream', // trust_badge for sync sources (mcp-registry, github)
       ]
     );
-    return result.rows[0].id;
+    return { id: result.rows[0].id, status: result.rows[0].status };
   }
 }

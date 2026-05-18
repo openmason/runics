@@ -4,7 +4,7 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 deployed, v5.5 canonical spec. 532 tests, 73 endpoints (39 OpenAPI + 26 admin + 8 publish/authors), 16 migrations.
+v5.4 deployed, v5.5 canonical spec. 534 tests, 73 endpoints (39 OpenAPI + 26 admin + 8 publish/authors), 19 migrations.
 Deployed to production (May 2026). Interactive API docs at api.runics.net/docs (Scalar + OpenAPI 3.1).
 56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
 Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
@@ -89,7 +89,7 @@ See ARCHITECTURE.md for the full tree. Key directories:
 - src/queues/        — Queue consumers (embed)
 - src/monitoring/    — Search logger, quality tracker, perf monitor
 - src/cache/         — KV cache (search results + query embeddings)
-- src/db/            — Drizzle schema + SQL migrations (0001-0015, 0018)
+- src/db/            — Drizzle schema + SQL migrations (0001-0019)
 - src/eval/          — Eval suite (fixtures, runner, metrics)
 - src/resilience/    — Circuit breaker
 - web/               — Astro frontend (deployed as Cloudflare Worker "web")

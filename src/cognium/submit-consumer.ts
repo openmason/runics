@@ -37,6 +37,15 @@ export async function handleCogniumSubmitQueue(
         continue;
       }
 
+      // Guard: never re-scan revoked or vulnerable skills — their status was set by
+      // a previous scan and must not be overwritten by a potentially flaky re-scan.
+      // Re-scanning requires explicit admin action (POST /v1/admin/backfill).
+      if (skill.status === 'revoked' || skill.status === 'vulnerable') {
+        console.log(`[COGNIUM-SUBMIT] Skill ${skill.slug} is ${skill.status}, skipping re-scan`);
+        msg.ack();
+        continue;
+      }
+
       // Deduplication: skip if a job is already in flight for this skill
       const existingJob = await pool.query(
         `SELECT cognium_job_id FROM skills WHERE id = $1 AND cognium_job_id IS NOT NULL`,
