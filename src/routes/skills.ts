@@ -278,6 +278,97 @@ app.openapi(skillVersionsRoute, async (c) => {
   }
 });
 
+// ── GET /v1/skills/:slug/pull — Download Skill for Local Use (v5.3) ──
+// NOTE: Must be registered BEFORE {slug}/{version} to avoid route collision.
+
+const pullRoute = createRoute({
+  method: 'get',
+  path: '/v1/skills/{slug}/pull',
+  tags: ['Skills'],
+  summary: 'Download skill for local agent use',
+  request: {
+    params: z.object({ slug: SkillSlugParam }),
+    query: z.object({
+      version: z.string().optional().openapi({ param: { name: 'version', in: 'query' } }),
+    }),
+  },
+  responses: {
+    200: { content: { 'application/json': { schema: SkillPullResponseSchema } }, description: 'Skill content' },
+    403: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Private skill' },
+    404: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Not found' },
+    500: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Server error' },
+  },
+});
+
+// @ts-expect-error response type validated at runtime by Zod
+app.openapi(pullRoute, async (c) => {
+  const slug = c.req.valid('param').slug;
+  const version = c.req.valid('query').version;
+  const pool = createPool(c.env);
+
+  try {
+    const query = version
+      ? `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
+                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
+                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
+                s.auth_requirements, s.capabilities_required, s.mcp_url,
+                s.forked_from, s.source, s.visibility, s.tenant_id
+         FROM skills s WHERE s.slug = $1 AND s.version = $2 LIMIT 1`
+      : `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
+                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
+                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
+                s.auth_requirements, s.capabilities_required, s.mcp_url,
+                s.forked_from, s.source, s.visibility, s.tenant_id
+         FROM skills s WHERE s.slug = $1
+         ORDER BY (COALESCE(s.trust_score, 0.5)::float * 0.7
+                   + LEAST(COALESCE(s.run_count, 0)::float / 100.0, 0.3)) DESC
+         LIMIT 1`;
+
+    const params = version ? [slug, version] : [slug];
+    const result = await pool.query(query, params);
+
+    if (result.rows.length === 0) {
+      return c.json({ error: 'not found' }, 404);
+    }
+
+    const row = result.rows[0];
+
+    // Privacy: 403 if private and no tenant match
+    if (row.visibility === 'private') {
+      const tenantId = c.req.header('X-Tenant-Id') || 'default';
+      if (row.tenant_id && row.tenant_id !== tenantId) {
+        return c.json({ error: 'private skill' }, 403);
+      }
+    }
+
+    return c.json({
+      slug: row.slug,
+      version: row.version,
+      name: row.name,
+      description: row.description,
+      skillMd: row.skill_md ?? null,
+      schemaJson: row.schema_json ?? null,
+      executionLayer: row.execution_layer,
+      runtimeEnv: row.runtime_env ?? 'api',
+      portable: row.portable ?? false,
+      trustScore: parseFloat(row.trust_score) || 0.5,
+      verificationTier: row.verification_tier ?? 'unverified',
+      trustBadge: row.trust_badge ?? null,
+      status: row.status,
+      tags: row.tags ?? [],
+      categories: row.categories ?? [],
+      authRequirements: row.auth_requirements ?? null,
+      capabilitiesRequired: row.capabilities_required ?? [],
+      mcpUrl: row.mcp_url ?? null,
+      forkedFrom: row.forked_from ?? null,
+      source: row.source,
+    }, 200);
+  } catch (error) {
+    console.error('[SKILL PULL] Error:', error);
+    return c.json({ error: 'Failed to pull skill' }, 500);
+  }
+});
+
 // ── GET /v1/skills/:slug/:version ──
 
 const skillVersionDetailRoute = createRoute({
@@ -403,96 +494,6 @@ app.openapi(skillVersionDetailRoute, async (c) => {
   } catch (error) {
     console.error('[SKILL VERSION DETAIL] Error:', error);
     return c.json({ error: 'Failed to fetch skill version' }, 500);
-  }
-});
-
-// ── GET /v1/skills/:slug/pull — Download Skill for Local Use (v5.3) ──
-
-const pullRoute = createRoute({
-  method: 'get',
-  path: '/v1/skills/{slug}/pull',
-  tags: ['Skills'],
-  summary: 'Download skill for local agent use',
-  request: {
-    params: z.object({ slug: SkillSlugParam }),
-    query: z.object({
-      version: z.string().optional().openapi({ param: { name: 'version', in: 'query' } }),
-    }),
-  },
-  responses: {
-    200: { content: { 'application/json': { schema: SkillPullResponseSchema } }, description: 'Skill content' },
-    403: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Private skill' },
-    404: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Not found' },
-    500: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Server error' },
-  },
-});
-
-// @ts-expect-error response type validated at runtime by Zod
-app.openapi(pullRoute, async (c) => {
-  const slug = c.req.valid('param').slug;
-  const version = c.req.valid('query').version;
-  const pool = createPool(c.env);
-
-  try {
-    const query = version
-      ? `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
-                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
-                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
-                s.auth_requirements, s.capabilities_required, s.mcp_url,
-                s.forked_from, s.source, s.visibility, s.tenant_id
-         FROM skills s WHERE s.slug = $1 AND s.version = $2 LIMIT 1`
-      : `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
-                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
-                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
-                s.auth_requirements, s.capabilities_required, s.mcp_url,
-                s.forked_from, s.source, s.visibility, s.tenant_id
-         FROM skills s WHERE s.slug = $1
-         ORDER BY (COALESCE(s.trust_score, 0.5)::float * 0.7
-                   + LEAST(COALESCE(s.run_count, 0)::float / 100.0, 0.3)) DESC
-         LIMIT 1`;
-
-    const params = version ? [slug, version] : [slug];
-    const result = await pool.query(query, params);
-
-    if (result.rows.length === 0) {
-      return c.json({ error: 'not found' }, 404);
-    }
-
-    const row = result.rows[0];
-
-    // Privacy: 403 if private and no tenant match
-    if (row.visibility === 'private') {
-      const tenantId = c.req.header('X-Tenant-Id') || 'default';
-      if (row.tenant_id && row.tenant_id !== tenantId) {
-        return c.json({ error: 'private skill' }, 403);
-      }
-    }
-
-    return c.json({
-      slug: row.slug,
-      version: row.version,
-      name: row.name,
-      description: row.description,
-      skillMd: row.skill_md ?? null,
-      schemaJson: row.schema_json ?? null,
-      executionLayer: row.execution_layer,
-      runtimeEnv: row.runtime_env ?? 'api',
-      portable: row.portable ?? false,
-      trustScore: parseFloat(row.trust_score) || 0.5,
-      verificationTier: row.verification_tier ?? 'unverified',
-      trustBadge: row.trust_badge ?? null,
-      status: row.status,
-      tags: row.tags ?? [],
-      categories: row.categories ?? [],
-      authRequirements: row.auth_requirements ?? null,
-      capabilitiesRequired: row.capabilities_required ?? [],
-      mcpUrl: row.mcp_url ?? null,
-      forkedFrom: row.forked_from ?? null,
-      source: row.source,
-    }, 200);
-  } catch (error) {
-    console.error('[SKILL PULL] Error:', error);
-    return c.json({ error: 'Failed to pull skill' }, 500);
   }
 });
 
