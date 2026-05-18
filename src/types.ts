@@ -83,6 +83,8 @@ export interface FindSkillRequest {
   // v5.2: execution environment + visibility
   runtimeEnv?: string[];
   visibility?: 'public' | 'private' | 'unlisted';
+  // v5.3: portable filter
+  portable?: boolean;
 }
 
 export interface FindSkillResponse {
@@ -219,6 +221,8 @@ export interface SearchFilters {
   // v5.2: execution environment + visibility
   runtimeEnv?: string[]; // filter by runtime environment(s)
   visibility?: 'public' | 'private' | 'unlisted'; // default: respects tenant scope
+  // v5.3: portable filter
+  portable?: boolean;
 }
 
 export interface SearchOptions {
@@ -465,6 +469,7 @@ export interface Env {
   COGNIUM_MAX_INFLIGHT?: string;    // default "20" — skip submissions if too many jobs pending
   COGNIUM_404_TOLERANCE?: string;   // default "2" — 404 retries before treating as terminal
   COGNIUM_MAX_RETRIES?: string;     // default "3" — max scan attempts per skill before giving up
+  COGNIUM_RATE_LIMIT_PER_SECOND?: string; // default "2" — token bucket rate for Circle-IR API calls
 
   // v5.0: Admin API authentication
   ADMIN_API_KEY?: string; // Set via: wrangler secret put ADMIN_API_KEY
@@ -564,6 +569,7 @@ export interface InvocationBatch {
     compositionId?: string;
     tenantId: string;
     callerType: 'agent' | 'human';
+    source?: 'cortex' | 'local'; // v5.3: caller origin
     durationMs?: number;
     succeeded: boolean;
   }[];

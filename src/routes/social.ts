@@ -135,6 +135,7 @@ const InvocationBatchSchema = z
       compositionId: z.string().uuid().optional(),
       tenantId: z.string(),
       callerType: z.enum(['agent', 'human']),
+      source: z.enum(['cortex', 'local']).default('cortex'),
       durationMs: z.number().int().optional(),
       succeeded: z.boolean(),
     })).min(1).max(500),

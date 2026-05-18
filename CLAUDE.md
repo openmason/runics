@@ -4,13 +4,13 @@ Semantic skill registry search service for the Runics platform.
 
 ## Status
 
-v5.4 deployed, v5.5 canonical spec. 534 tests, 73 endpoints (39 OpenAPI + 26 admin + 8 publish/authors), 19 migrations.
+v5.4 deployed, v5.5 canonical spec. 558 tests, 75 endpoints (41 OpenAPI + 26 admin + 8 publish/authors), 20 migrations.
 Deployed to production (May 2026). Interactive API docs at api.runics.net/docs (Scalar + OpenAPI 3.1).
 56.6K published skills across 7 sources (62.8K total). 91 eval fixtures, R@1=100%, R@5=100%, MRR=1.000.
 Eval uses name-pattern matching to auto-accept cross-source duplicates — no more UUID treadmill.
-Cognium scanning ENABLED — processing 56K skill backlog via Circle-IR (no auth, bounded retries, ~390/hr).
+Cognium scanning ENABLED — processing 56K skill backlog via Circle-IR (rate-limited at 2 req/s, bounded retries, ~390/hr).
 Content safety DISABLED — redundant with Circle-IR. Staging ALIVE (search empty, needs embed backfill).
-v5.3 features (portable, pull, export, API keys) are spec'd but not implemented — deferred to Step 2.
+v5.3 features implemented: portable flag, pull endpoint, catalog export, invocation source, tenant scoping, Circle-IR rate limiter.
 
 ## Canonical Specs (source of truth)
 
@@ -80,7 +80,7 @@ See ARCHITECTURE.md for the full tree. Key directories:
 - src/providers/     — SearchProvider interface + PgVectorProvider
 - src/intelligence/  — Confidence gate, deep search, composition detector, reranker
 - src/ingestion/     — Embed pipeline, agent summary, content safety
-- src/cognium/       — Circle-IR scanning, trust scoring, composite cascade
+- src/cognium/       — Circle-IR scanning, trust scoring, composite cascade, rate limiter
 - src/composition/   — Fork, copy, compose, extend, lineage, publish
 - src/social/        — Stars, invocations, cooccurrence, leaderboards
 - src/authors/       — Author profiles and skill listings
@@ -89,7 +89,8 @@ See ARCHITECTURE.md for the full tree. Key directories:
 - src/queues/        — Queue consumers (embed)
 - src/monitoring/    — Search logger, quality tracker, perf monitor
 - src/cache/         — KV cache (search results + query embeddings)
-- src/db/            — Drizzle schema + SQL migrations (0001-0019)
+- src/middleware/     — Tenant context (X-Tenant-Id extraction)
+- src/db/            — Drizzle schema + SQL migrations (0001-0020)
 - src/eval/          — Eval suite (fixtures, runner, metrics)
 - src/resilience/    — Circuit breaker
 - web/               — Astro frontend (deployed as Cloudflare Worker "web")

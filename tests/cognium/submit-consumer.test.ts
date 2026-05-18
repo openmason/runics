@@ -66,6 +66,15 @@ vi.mock('../../src/cognium/request-builder', () => ({
   buildCircleIRRequest: vi.fn(() => ({ repo_url: 'https://github.com/test', skill_context: {}, options: {} })),
 }));
 
+// Mock rate-limiter (v5.3)
+vi.mock('../../src/cognium/rate-limiter', () => ({
+  CogniumRateLimiter: {
+    fromEnv: vi.fn(() => ({
+      tryAcquire: vi.fn(async () => true),
+    })),
+  },
+}));
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe('handleCogniumSubmitQueue', () => {

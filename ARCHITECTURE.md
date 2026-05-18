@@ -26,9 +26,9 @@ This file covers **what's deployed, how the code is organized, and implementatio
 | Metric | Value |
 |--------|-------|
 | Spec version | v5.4 deployed, v5.5 canonical |
-| Tests | 534 |
-| Endpoints | 73 (39 OpenAPI + 26 admin + 8 publish/authors) |
-| Migrations | 19 (0001–0019) |
+| Tests | 558 |
+| Endpoints | 75 (41 OpenAPI + 26 admin + 8 publish/authors) |
+| Migrations | 20 (0001–0020) |
 | Published skills | 56.6K across 7 sources (62.8K total) |
 | Eval | 91 fixtures, R@1=100%, R@5=100%, MRR=1.000 |
 | Cognium scanning | ENABLED — `COGNIUM_ENABLED=true`, no auth needed, processing 56K backlog (~390/hr) |
@@ -128,7 +128,8 @@ runics/
 │   │       ├── 0013_scan_failure_reason.sql
 │   │       ├── 0014_v52_columns.sql
 │   │       ├── 0015_workflow_definition.sql
-│   │       └── 0018_scan_retry_count.sql
+│   │       ├── 0018_scan_retry_count.sql
+│   │       └── 0020_v53_portable_and_source.sql
 │   │
 │   ├── eval/
 │   │   ├── runner.ts / fixtures.ts / metrics.ts
@@ -155,7 +156,7 @@ runics/
 
 ## 4. API Surface
 
-### OpenAPI Routes (39 endpoints — api.runics.net/docs)
+### OpenAPI Routes (41 endpoints — api.runics.net/docs)
 
 Route modules in `src/routes/`, schemas in `src/schemas/`. Uses `@hono/zod-openapi` with `createRoute()` + `app.openapi()`.
 
@@ -163,7 +164,7 @@ Route modules in `src/routes/`, schemas in `src/schemas/`. Uses `@hono/zod-opena
 |-----|--------|------|
 | Health | `GET /health` | search.ts |
 | Search | `POST /v1/search`, `POST /v1/search/feedback` | search.ts |
-| Skills | `DELETE /v1/skills/:skillId`, `GET /v1/skills/:slug[/versions/:version]` | skills.ts |
+| Skills | `DELETE /v1/skills/:skillId`, `GET /v1/skills/:slug[/versions/:version]`, `GET /v1/skills/:slug/pull`, `GET /v1/catalog/export` | skills.ts |
 | Composition | fork, copy, extend, compositions CRUD, publish (7) | composition.ts |
 | Lineage | lineage, forks, dependents (3) | lineage.ts |
 | Social | star, unstar, stars, invocations, cooccurrence (5) | social.ts |
@@ -179,9 +180,14 @@ Route modules in `src/routes/`, schemas in `src/schemas/`. Uses `@hono/zod-opena
 
 Cognium admin (scan, apply-job, scan-test, stats, preview, analyze, analyze-batch), maintenance (clear-stale, deprecate-failed, fix-safety-nulls, restore-revoked, skill-inventory, embed-backfill, embed-queue-backfill, reset-trust, backfill), dedup (analysis, repo-url, name), sync triggers (clawhub, glama, smithery, pulsemcp, openclaw, regenerate-summaries).
 
-### Unimplemented (v5.3 — deferred)
+### v5.3 Features (implemented)
 
-`GET /v1/skills/:slug/pull`, `GET /v1/catalog/export`
+- `GET /v1/skills/:slug/pull` — skill download for local agents (version selection, privacy enforcement)
+- `GET /v1/catalog/export` — NDJSON offline catalog snapshot (portable, runtimeEnv, minTrust filters)
+- `portable` filter on `POST /v1/search` — generated column derived from `runtime_env` + `mcp_url`
+- `source` field on invocations — `'cortex' | 'local'` to distinguish cloud vs local agent usage
+- `X-Tenant-Id` middleware — tenant context extraction for write-path enforcement and read visibility
+- Circle-IR rate limiter — KV-backed token bucket (2 req/s default, configurable via `COGNIUM_RATE_LIMIT_PER_SECOND`)
 
 ---
 
@@ -248,7 +254,7 @@ OpenAPIHono setup → middleware (cors, publicGuard, rateLimiter, adminAuth)
 | Cold query latency | ~4s on first uncached query (Workers AI embedding warm-up). Keep-alive mitigates Worker cold start but not AI model cold start. |
 | Staging search empty | DB has 24K skills but no embeddings. Run embed-queue-backfill to populate. |
 | `cognium_scanned` legacy column | Boolean still referenced in some code paths; actual code uses `cognium_scanned_at`. |
-| Circle-IR client-side rate limiting | No explicit req/s rate limiter on Runics side. Throttling is capacity-aware (via `/health/jobs`) but not rate-limited. If Circle-IR has capacity, Runics submits up to 30 skills/min. Add a per-second or token-bucket rate limiter before `fetch(cogniumUrl/api/analyze/skill)` calls in cron + submit-consumer. Also parse `Retry-After` headers from 429 responses. |
+| Circle-IR client-side rate limiting | **RESOLVED (v5.3).** KV-backed token bucket in `src/cognium/rate-limiter.ts` (default 2 req/s, burst 10). Applied in submit-consumer and poll-consumer. 429 responses parsed for `Retry-After`. Configurable via `COGNIUM_RATE_LIMIT_PER_SECOND`. |
 
 ---
 

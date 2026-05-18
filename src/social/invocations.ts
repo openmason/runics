@@ -17,22 +17,23 @@ export async function recordInvocations(
     const placeholders: string[] = [];
 
     chunk.forEach((inv, idx) => {
-      const offset = idx * 6;
+      const offset = idx * 7;
       placeholders.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
       );
       values.push(
         inv.skillId,
         inv.compositionId || null,
         inv.tenantId,
         inv.callerType,
+        inv.source ?? 'cortex',
         inv.durationMs ?? null,
         inv.succeeded
       );
     });
 
     await pool.query(
-      `INSERT INTO skill_invocations (skill_id, composition_id, tenant_id, caller_type, duration_ms, succeeded)
+      `INSERT INTO skill_invocations (skill_id, composition_id, tenant_id, caller_type, source, duration_ms, succeeded)
        VALUES ${placeholders.join(', ')}`,
       values
     );

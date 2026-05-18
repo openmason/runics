@@ -228,6 +228,11 @@ export class PgVectorProvider implements SearchProvider {
       params.push(filters.runtimeEnv);
     }
 
+    // v5.3: portable filter
+    if (filters.portable === true) {
+      conditions.push('s.portable = true');
+    }
+
     const whereClause = conditions.join(' AND ');
 
     // v5.0: Version ranking — best version per slug using trust×weight + min(run_count/100, usage_weight)
@@ -316,6 +321,11 @@ export class PgVectorProvider implements SearchProvider {
     if (filters.runtimeEnv && filters.runtimeEnv.length > 0) {
       conditions.push(`s.runtime_env = ANY($${++paramCount.value}::text[])`);
       params.push(filters.runtimeEnv);
+    }
+
+    // v5.3: portable filter
+    if (filters.portable === true) {
+      conditions.push('s.portable = true');
     }
 
     const whereClause = conditions.join(' AND ');

@@ -13,6 +13,7 @@ import type { Pool } from '../db/connection';
 import type { Env } from '../types';
 import type { CogniumSubmitMessage, SkillRow } from './types';
 import { buildCircleIRRequest } from './request-builder';
+import { CogniumRateLimiter } from './rate-limiter';
 
 export async function handleCogniumSubmitQueue(
   batch: MessageBatch<CogniumSubmitMessage>,
@@ -27,6 +28,7 @@ export async function handleCogniumSubmitQueue(
     return;
   }
   const pool = createPool(env);
+  const rateLimiter = CogniumRateLimiter.fromEnv(env);
 
   for (const msg of batch.messages) {
     try {
@@ -54,6 +56,14 @@ export async function handleCogniumSubmitQueue(
       if (existingJob.rows.length > 0) {
         console.log(`[COGNIUM-SUBMIT] Skill ${msg.body.skillId} already has job ${existingJob.rows[0].cognium_job_id}, skipping`);
         msg.ack();
+        continue;
+      }
+
+      // v5.3: Rate limit outbound calls to Circle-IR
+      const allowed = await rateLimiter.tryAcquire();
+      if (!allowed) {
+        console.log(`[COGNIUM-SUBMIT] Rate limited, retrying skill ${skill.slug}`);
+        msg.retry();
         continue;
       }
 

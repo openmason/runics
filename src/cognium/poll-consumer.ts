@@ -17,6 +17,7 @@ import type { Env } from '../types';
 import type { CogniumPollMessage, CircleIRJobStatus, CircleIRFinding, CircleIRSkillResult, SkillRow } from './types';
 import { normalizeFindings } from './finding-mapper';
 import { applyScanReport, markScanFailed } from './scan-report-handler';
+import { CogniumRateLimiter } from './rate-limiter';
 
 const POLL_DELAYS_MS = [
   15_000, 30_000, 60_000,
@@ -39,16 +40,34 @@ export async function handleCogniumPollQueue(
   const pool = createPool(env);
   const maxAttempts = parseInt(env.COGNIUM_MAX_POLL_ATTEMPTS ?? '12', 10);
   const cogniumUrl = env.COGNIUM_URL ?? 'https://circle.cognium.net';
+  const rateLimiter = CogniumRateLimiter.fromEnv(env);
 
   for (const msg of batch.messages) {
     const { skillId, jobId, attempt } = msg.body;
 
     try {
+      // v5.3: Rate limit outbound calls to Circle-IR
+      const allowed = await rateLimiter.tryAcquire();
+      if (!allowed) {
+        msg.retry();
+        continue;
+      }
+
       // ── Step 1: Check job status ────────────────────────────────────────
       const statusRes = await fetch(`${cogniumUrl}/api/analyze/${jobId}/status`);
 
       if (!statusRes.ok) {
-        if (statusRes.status >= 500 || statusRes.status === 429) {
+        if (statusRes.status === 429) {
+          // v5.3: Parse Retry-After header for better backoff
+          const retryAfter = parseInt(statusRes.headers.get('Retry-After') ?? '30', 10);
+          await env.COGNIUM_POLL_QUEUE.send(
+            { skillId, jobId, attempt },
+            { delaySeconds: retryAfter },
+          );
+          msg.ack();
+          continue;
+        }
+        if (statusRes.status >= 500) {
           msg.retry();
           continue;
         }

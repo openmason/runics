@@ -89,6 +89,7 @@ const SearchRequestSchema = z
     category: z.string().optional(),
     runtimeEnv: z.string().optional(),
     visibility: z.string().optional(),
+    portable: z.boolean().optional(),
   })
   .openapi('SearchRequest');
 
@@ -144,6 +145,7 @@ app.openapi(searchRoute, async (c) => {
         category: body.category,
         runtimeEnv: body.runtimeEnv ? [body.runtimeEnv] : undefined,
         visibility: body.visibility as FindSkillRequest['visibility'],
+        portable: body.portable,
       },
       c.executionCtx
     );

@@ -153,6 +153,33 @@ export const SkillDetailSchema = z
   })
   .openapi('SkillDetail');
 
+// ── Skill Pull (v5.3) ──
+
+export const SkillPullResponseSchema = z
+  .object({
+    slug: z.string(),
+    version: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    skillMd: z.string().nullable(),
+    schemaJson: z.unknown().nullable(),
+    executionLayer: z.string(),
+    runtimeEnv: z.string(),
+    portable: z.boolean(),
+    trustScore: z.number(),
+    verificationTier: z.string(),
+    trustBadge: z.string().nullable(),
+    status: z.string(),
+    tags: z.array(z.string()),
+    categories: z.array(z.string()),
+    authRequirements: z.unknown().nullable(),
+    capabilitiesRequired: z.array(z.string()),
+    mcpUrl: z.string().nullable(),
+    forkedFrom: z.string().nullable(),
+    source: z.string(),
+  })
+  .openapi('SkillPullResponse');
+
 // ── Skill Versions ──
 
 const SkillVersionSummarySchema = z.object({

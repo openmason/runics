@@ -8,6 +8,7 @@ import { initComponents, createPool } from '../components';
 import { SkillIdParam, SkillSlugParam, VersionParam } from '../schemas/common';
 import {
   SkillDetailSchema,
+  SkillPullResponseSchema,
   SkillVersionsResponseSchema,
   ErrorResponseSchema,
   DeleteResultSchema,
@@ -125,6 +126,14 @@ app.openapi(skillDetailRoute, async (c) => {
     }
 
     const row = result.rows[0];
+
+    // v5.3: Tenant visibility — private/unlisted skills only visible to owning tenant
+    if (row.visibility === 'private' || row.visibility === 'unlisted') {
+      const callerTenant = c.req.header('X-Tenant-Id') || 'default';
+      if (row.tenant_id && row.tenant_id !== callerTenant && callerTenant !== 'default') {
+        return c.json({ error: 'Skill not found' }, 404);
+      }
+    }
 
     return c.json({
       id: row.id,
@@ -394,6 +403,187 @@ app.openapi(skillVersionDetailRoute, async (c) => {
   } catch (error) {
     console.error('[SKILL VERSION DETAIL] Error:', error);
     return c.json({ error: 'Failed to fetch skill version' }, 500);
+  }
+});
+
+// ── GET /v1/skills/:slug/pull — Download Skill for Local Use (v5.3) ──
+
+const pullRoute = createRoute({
+  method: 'get',
+  path: '/v1/skills/{slug}/pull',
+  tags: ['Skills'],
+  summary: 'Download skill for local agent use',
+  request: {
+    params: z.object({ slug: SkillSlugParam }),
+    query: z.object({
+      version: z.string().optional().openapi({ param: { name: 'version', in: 'query' } }),
+    }),
+  },
+  responses: {
+    200: { content: { 'application/json': { schema: SkillPullResponseSchema } }, description: 'Skill content' },
+    403: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Private skill' },
+    404: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Not found' },
+    500: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Server error' },
+  },
+});
+
+// @ts-expect-error response type validated at runtime by Zod
+app.openapi(pullRoute, async (c) => {
+  const slug = c.req.valid('param').slug;
+  const version = c.req.valid('query').version;
+  const pool = createPool(c.env);
+
+  try {
+    const query = version
+      ? `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
+                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
+                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
+                s.auth_requirements, s.capabilities_required, s.mcp_url,
+                s.forked_from, s.source, s.visibility, s.tenant_id
+         FROM skills s WHERE s.slug = $1 AND s.version = $2 LIMIT 1`
+      : `SELECT s.slug, s.version, s.name, s.description, s.skill_md, s.schema_json,
+                s.execution_layer, s.runtime_env, s.portable, s.trust_score,
+                s.verification_tier, s.trust_badge, s.status, s.tags, s.categories,
+                s.auth_requirements, s.capabilities_required, s.mcp_url,
+                s.forked_from, s.source, s.visibility, s.tenant_id
+         FROM skills s WHERE s.slug = $1
+         ORDER BY (COALESCE(s.trust_score, 0.5)::float * 0.7
+                   + LEAST(COALESCE(s.run_count, 0)::float / 100.0, 0.3)) DESC
+         LIMIT 1`;
+
+    const params = version ? [slug, version] : [slug];
+    const result = await pool.query(query, params);
+
+    if (result.rows.length === 0) {
+      return c.json({ error: 'not found' }, 404);
+    }
+
+    const row = result.rows[0];
+
+    // Privacy: 403 if private and no tenant match
+    if (row.visibility === 'private') {
+      const tenantId = c.req.header('X-Tenant-Id') || 'default';
+      if (row.tenant_id && row.tenant_id !== tenantId) {
+        return c.json({ error: 'private skill' }, 403);
+      }
+    }
+
+    return c.json({
+      slug: row.slug,
+      version: row.version,
+      name: row.name,
+      description: row.description,
+      skillMd: row.skill_md ?? null,
+      schemaJson: row.schema_json ?? null,
+      executionLayer: row.execution_layer,
+      runtimeEnv: row.runtime_env ?? 'api',
+      portable: row.portable ?? false,
+      trustScore: parseFloat(row.trust_score) || 0.5,
+      verificationTier: row.verification_tier ?? 'unverified',
+      trustBadge: row.trust_badge ?? null,
+      status: row.status,
+      tags: row.tags ?? [],
+      categories: row.categories ?? [],
+      authRequirements: row.auth_requirements ?? null,
+      capabilitiesRequired: row.capabilities_required ?? [],
+      mcpUrl: row.mcp_url ?? null,
+      forkedFrom: row.forked_from ?? null,
+      source: row.source,
+    }, 200);
+  } catch (error) {
+    console.error('[SKILL PULL] Error:', error);
+    return c.json({ error: 'Failed to pull skill' }, 500);
+  }
+});
+
+// ── GET /v1/catalog/export — Offline Catalog Snapshot (v5.3) ──
+
+const catalogExportRoute = createRoute({
+  method: 'get',
+  path: '/v1/catalog/export',
+  tags: ['Skills'],
+  summary: 'Export catalog as NDJSON for offline use',
+  request: {
+    query: z.object({
+      portable: z.string().optional().openapi({ param: { name: 'portable', in: 'query' } }),
+      runtimeEnv: z.string().optional().openapi({ param: { name: 'runtimeEnv', in: 'query' } }),
+      minTrust: z.string().optional().openapi({ param: { name: 'minTrust', in: 'query' } }),
+    }),
+  },
+  responses: {
+    200: { description: 'NDJSON catalog export' },
+    500: { content: { 'application/json': { schema: ErrorResponseSchema } }, description: 'Server error' },
+  },
+});
+
+app.openapi(catalogExportRoute, async (c) => {
+  const pool = createPool(c.env);
+
+  try {
+    const portableParam = c.req.valid('query').portable;
+    const runtimeEnvParam = c.req.valid('query').runtimeEnv;
+    const minTrust = parseFloat(c.req.valid('query').minTrust || '0.5');
+
+    const conditions: string[] = [
+      "status = 'published'",
+      "visibility = 'public'",
+    ];
+    const params: any[] = [];
+    let paramCount = 0;
+
+    if (!isNaN(minTrust)) {
+      conditions.push(`COALESCE(trust_score, 0.5)::float >= $${++paramCount}`);
+      params.push(minTrust);
+    }
+
+    if (portableParam === 'true') {
+      conditions.push('portable = true');
+    }
+
+    if (runtimeEnvParam) {
+      const envs = runtimeEnvParam.split(',').map(s => s.trim()).filter(Boolean);
+      if (envs.length > 0) {
+        conditions.push(`runtime_env = ANY($${++paramCount}::text[])`);
+        params.push(envs);
+      }
+    }
+
+    const result = await pool.query(
+      `SELECT slug, version, name, description, agent_summary, skill_md,
+              schema_json, execution_layer, runtime_env, portable, trust_score,
+              tags, categories, mcp_url
+       FROM skills
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY COALESCE(trust_score, 0.5)::float DESC`,
+      params
+    );
+
+    const lines = result.rows.map((r: any) => JSON.stringify({
+      slug: r.slug,
+      version: r.version,
+      name: r.name,
+      description: r.description,
+      agentSummary: r.agent_summary,
+      skillMd: r.skill_md,
+      schemaJson: r.schema_json,
+      executionLayer: r.execution_layer,
+      runtimeEnv: r.runtime_env,
+      portable: r.portable,
+      trustScore: parseFloat(r.trust_score) || 0.5,
+      tags: r.tags ?? [],
+      categories: r.categories ?? [],
+      mcpUrl: r.mcp_url,
+    }));
+
+    return new Response(lines.join('\n'), {
+      headers: {
+        'Content-Type': 'application/x-ndjson',
+        'Content-Disposition': 'attachment; filename="runics-catalog.jsonl"',
+      },
+    });
+  } catch (error) {
+    console.error('[CATALOG EXPORT] Error:', error);
+    return c.json({ error: 'Failed to export catalog' }, 500);
   }
 });
 

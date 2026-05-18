@@ -49,6 +49,8 @@ interface FindSkillOptions {
   // v5.2
   runtimeEnv?: string[];
   visibility?: 'public' | 'private' | 'unlisted';
+  // v5.3
+  portable?: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -134,6 +136,7 @@ export class ConfidenceGate {
       contentSafetyRequired: true,
       runtimeEnv: options.runtimeEnv,
       visibility: options.visibility,
+      portable: options.portable,
     };
 
     // ── 4. Provider Search ──

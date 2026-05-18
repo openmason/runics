@@ -16,6 +16,7 @@ import { ConfidenceGate } from './intelligence/confidence-gate';
 import { rateLimiter } from './middleware/rate-limiter';
 import { adminAuth } from './middleware/admin-auth';
 import { publicGuard } from './middleware/public-guard';
+import { tenantContext } from './middleware/tenant-context';
 import { publishRoutes } from './publish/handler';
 import { authorRoutes } from './authors/handler';
 // OpenAPI route modules
@@ -62,6 +63,9 @@ app.use('*', cors());
 
 // Block write/admin endpoints on the public domain (api.runics.net)
 app.use('*', publicGuard());
+
+// Extract X-Tenant-Id header → c.get('tenantId') (defaults to 'default')
+app.use('*', tenantContext());
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Component Initialization Helper (used by admin routes below)

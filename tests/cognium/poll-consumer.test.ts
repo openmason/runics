@@ -77,6 +77,15 @@ vi.mock('../../src/cognium/finding-mapper', () => ({
   normalizeFindings: vi.fn((raw: any) => Array.isArray(raw) ? raw : []),
 }));
 
+// Mock rate-limiter (v5.3)
+vi.mock('../../src/cognium/rate-limiter', () => ({
+  CogniumRateLimiter: {
+    fromEnv: vi.fn(() => ({
+      tryAcquire: vi.fn(async () => true),
+    })),
+  },
+}));
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 describe('handleCogniumPollQueue', () => {

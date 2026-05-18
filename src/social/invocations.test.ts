@@ -41,7 +41,7 @@ describe('recordInvocations', () => {
     // Verify bulk INSERT
     const insertCall = mockPool.query.mock.calls[0];
     expect(insertCall[0]).toContain('INSERT INTO skill_invocations');
-    expect(insertCall[1].length).toBe(12); // 2 invocations × 6 params
+    expect(insertCall[1].length).toBe(14); // 2 invocations × 7 params
   });
 
   it('should chunk large batches', async () => {

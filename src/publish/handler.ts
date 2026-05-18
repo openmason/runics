@@ -36,6 +36,11 @@ export const publishRoutes = new OpenAPIHono<{ Bindings: Env }>();
 publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
   const input = c.req.valid('json');
 
+  // v5.3: tenant_id comes from middleware context (X-Tenant-Id header), not body.
+  // Cortex sets the header; body value is ignored for tenant enforcement.
+  const tenantId = (c.get as any)('tenantId') as string | undefined;
+  const effectiveTenantId = tenantId && tenantId !== 'default' ? tenantId : input.tenantId ?? null;
+
   // v5.4: DAG validation for composite skills
   const dagCheck = validateWorkflowDefinition(input.executionLayer, input.workflowDefinition);
   if (!dagCheck.valid) {
@@ -73,7 +78,7 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
         input.capabilitiesRequired ?? [],
         input.sourceUrl ?? null,
         input.trustScore ?? 0.5,
-        input.tenantId ?? null,
+        effectiveTenantId,
         input.tags ?? [],
         input.category ?? null,
         input.authorId ?? null,
@@ -159,7 +164,7 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
   try {
     // v5.2: Only draft skills are editable — fork to modify published skills
     const statusCheck = await pool.query(
-      `SELECT status, execution_layer FROM skills WHERE id = $1`,
+      `SELECT status, execution_layer, tenant_id FROM skills WHERE id = $1`,
       [skillId]
     );
     if (statusCheck.rows.length === 0) {
@@ -167,6 +172,13 @@ publishRoutes.put('/:id', zValidator('json', updateSkillSchema), async (c) => {
     }
     if (statusCheck.rows[0].status !== 'draft') {
       return c.json({ error: 'only draft skills are editable — fork to modify published skills' }, 400);
+    }
+
+    // v5.3: Tenant ownership — callers can only update their own skills
+    const callerTenant = (c.get as any)('tenantId') as string | undefined;
+    const skillTenant = statusCheck.rows[0].tenant_id;
+    if (callerTenant && callerTenant !== 'default' && skillTenant && skillTenant !== callerTenant) {
+      return c.json({ error: 'forbidden: skill belongs to another tenant' }, 403);
     }
 
     // Build dynamic SET clause
@@ -360,12 +372,19 @@ publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async
     // Status transition guard: owner can only toggle between published ↔ deprecated.
     // Cognium controls all other transitions (revoked, vulnerable, etc.).
     const currentResult = await pool.query(
-      `SELECT status, slug, version FROM skills WHERE id = $1`,
+      `SELECT status, slug, version, tenant_id FROM skills WHERE id = $1`,
       [skillId]
     );
 
     if (currentResult.rows.length === 0) {
       return c.json({ error: 'Skill not found' }, 404);
+    }
+
+    // v5.3: Tenant ownership — callers can only change status of their own skills
+    const callerTenant = (c.get as any)('tenantId') as string | undefined;
+    const skillTenant = currentResult.rows[0].tenant_id;
+    if (callerTenant && callerTenant !== 'default' && skillTenant && skillTenant !== callerTenant) {
+      return c.json({ error: 'forbidden: skill belongs to another tenant' }, 403);
     }
 
     const currentStatus = currentResult.rows[0].status;

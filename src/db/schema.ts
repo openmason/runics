@@ -140,6 +140,8 @@ export const skills = pgTable(
     runtimeEnv: text('runtime_env').notNull().default('api'),
     visibility: text('visibility').notNull().default('public'),
     environmentVariables: text('environment_variables').array(),
+    // v5.3: portable derived flag (generated column — never set manually)
+    portable: boolean('portable'),
     // v5.4: DAG workflow definition for composite skills
     workflowDefinition: jsonb('workflow_definition'),
     // v5.4: Circle-IR extended analysis columns
@@ -373,6 +375,7 @@ export const skillInvocations = pgTable(
     compositionId: uuid('composition_id').references(() => skills.id),
     tenantId: text('tenant_id').notNull(),
     callerType: text('caller_type').notNull().default('agent'),
+    source: text('source').notNull().default('cortex'), // v5.3: 'cortex' | 'local'
     durationMs: integer('duration_ms'),
     succeeded: boolean('succeeded').notNull(),
     invokedAt: timestamp('invoked_at').defaultNow(),
