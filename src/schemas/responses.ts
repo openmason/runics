@@ -67,6 +67,8 @@ const ScoredSkillSchema = z.object({
   tags: z.array(z.string()).optional(),
   category: z.string().nullable().optional(),
   executionLayer: z.string().optional(),
+  runtimeEnv: z.string().optional(),
+  visibility: z.string().optional(),
   source: z.string().optional(),
 });
 

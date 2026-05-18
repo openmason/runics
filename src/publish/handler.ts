@@ -25,6 +25,7 @@ import {
 import type { Env, CogniumSubmitMessage } from '../types';
 import { SearchCache } from '../cache/kv-cache';
 import { validateWorkflowDefinition } from './dag-validator';
+import { emitSkillEvent } from '../cognium/notification-trigger';
 
 export const publishRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
@@ -112,6 +113,11 @@ publishRoutes.post('/', zValidator('json', publishSkillSchema), async (c) => {
     } catch (queueErr) {
       console.error(`[PUBLISH] Queue send failed for ${inserted.id}: ${(queueErr as Error).message}`);
     }
+
+    // Emit skill.created event (non-blocking)
+    c.executionCtx.waitUntil(
+      emitSkillEvent(c.env, { id: inserted.id, slug: inserted.slug, version: inserted.version }, 'skill.created')
+    );
 
     // Upsert author (non-blocking)
     if (input.authorId) {
@@ -354,7 +360,7 @@ publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async
     // Status transition guard: owner can only toggle between published ↔ deprecated.
     // Cognium controls all other transitions (revoked, vulnerable, etc.).
     const currentResult = await pool.query(
-      `SELECT status, slug FROM skills WHERE id = $1`,
+      `SELECT status, slug, version FROM skills WHERE id = $1`,
       [skillId]
     );
 
@@ -364,6 +370,7 @@ publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async
 
     const currentStatus = currentResult.rows[0].status;
     const slug = currentResult.rows[0].slug;
+    const version = currentResult.rows[0].version;
     const validTransitions: Record<string, string[]> = {
       published: ['deprecated'],
       deprecated: ['published'],
@@ -391,8 +398,16 @@ publishRoutes.patch('/:id/status', zValidator('json', statusChangeSchema), async
     const cache = new SearchCache(c.env.SEARCH_CACHE, parseInt(c.env.CACHE_TTL_SECONDS || '120'));
     if (status === 'deprecated') {
       await cache.addRevokedSlug(slug);
+      // Emit skill.deprecated event (non-blocking)
+      c.executionCtx.waitUntil(
+        emitSkillEvent(c.env, { id: skillId, slug, version }, 'skill.deprecated', reason)
+      );
     } else if (status === 'published') {
       await cache.removeRevokedSlug(slug);
+      // Emit skill.published event (non-blocking)
+      c.executionCtx.waitUntil(
+        emitSkillEvent(c.env, { id: skillId, slug, version }, 'skill.published')
+      );
     }
 
     return c.json({ id: skillId, status });
@@ -445,7 +460,7 @@ publishRoutes.post('/:id/publish', async (c) => {
   try {
     // Fetch the skill
     const skillResult = await pool.query(
-      `SELECT id, status, description, skill_md, mcp_url, r2_bundle_key FROM skills WHERE id = $1`,
+      `SELECT id, slug, version, status, description, skill_md, mcp_url, r2_bundle_key FROM skills WHERE id = $1`,
       [skillId]
     );
 
@@ -483,6 +498,11 @@ publishRoutes.post('/:id/publish', async (c) => {
     } catch (queueErr) {
       console.error(`[PUBLISH] Queue send failed for publish ${skillId}: ${(queueErr as Error).message}`);
     }
+
+    // Emit skill.published event (non-blocking)
+    c.executionCtx.waitUntil(
+      emitSkillEvent(c.env, { id: skillId, slug: skill.slug, version: skill.version }, 'skill.published')
+    );
 
     return c.json({ id: skillId, status: 'published' });
   } catch (error) {

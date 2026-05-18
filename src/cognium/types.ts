@@ -38,8 +38,15 @@ export interface AnalysisPollMessage {
 }
 
 // v5.4: Skill lifecycle events emitted to SKILL_EVENTS queue for Cortex consumption
+export type SkillEventType =
+  | 'skill.created'
+  | 'skill.published'
+  | 'skill.deprecated'
+  | 'skill.revoked'
+  | 'skill.vulnerable';
+
 export interface SkillEventMessage {
-  type: 'skill.revoked' | 'skill.vulnerable';
+  type: SkillEventType;
   skillId: string;
   slug: string;
   version: string;

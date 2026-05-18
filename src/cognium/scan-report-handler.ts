@@ -201,13 +201,16 @@ export async function applyScanReport(
 }
 
 export async function markScanFailed(pool: Pool, skillId: string, reason: string): Promise<void> {
+  // Cap retry count at 20 to prevent runaway increments from transient failures.
+  // Skills past this cap will be permanently skipped until manually reset via
+  // POST /v1/admin/retry-failed.
   await pool.query(
     `UPDATE skills SET
       verification_tier = 'unverified',
       scan_failure_reason = $2,
       cognium_scanned_at = NULL,
       cognium_job_id = NULL,
-      scan_retry_count = COALESCE(scan_retry_count, 0) + 1,
+      scan_retry_count = LEAST(COALESCE(scan_retry_count, 0) + 1, 20),
       updated_at = NOW()
     WHERE id = $1`,
     [skillId, reason]

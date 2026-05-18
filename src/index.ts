@@ -2304,7 +2304,7 @@ export default {
              FROM skills
              WHERE cognium_job_id IS NOT NULL
              ORDER BY cognium_job_submitted_at ASC
-             LIMIT 10`
+             LIMIT 30`
           );
 
           let polled = 0;
@@ -2374,10 +2374,10 @@ export default {
             console.warn(`[CRON-POLL] Job ${status} for ${skill.slug}`);
           }
 
-          // Handle stale/error status checks (60 min timeout for GitHub repos)
+          // Handle stale/error status checks (50 min timeout — Circle-IR retains jobs for 1hr)
           for (const check of statusChecks.filter(c => c.status === 'error' || (c.status !== 'completed' && c.status !== 'failed' && c.status !== 'cancelled'))) {
             const ageMs = Date.now() - new Date(check.skill.cogniumJobSubmittedAt).getTime();
-            if (ageMs > 3600_000) {
+            if (ageMs > 3000_000) { // 50 min — must finish before Circle-IR's 1hr retention cleanup
               await markScanFailed(pool, check.skill.id, `Poll timeout after ${Math.round(ageMs / 60000)}min`);
               await pool.query(
                 `UPDATE skills SET cognium_job_id = NULL, cognium_job_submitted_at = NULL WHERE id = $1`,
@@ -2391,20 +2391,32 @@ export default {
             console.log(`[CRON] Poll phase: applied ${polled} scan results`);
           }
 
-          // ── Phase 2: Submit new skills (every 2 min) ──────────────────────
+          // ── Phase 2: Submit new skills (every minute) ─────────────────────
           // Fast path: skills without repo URL (Mode B inline, ~2s each)
           // Repo path: GitHub source OR has repository_url (Mode A, deferred)
-          if (minute % 2 !== 0) {
-            // Skip submit phase on odd-minute cycles (only poll above)
-          } else {
+          {
 
-          // ── Backpressure: skip submissions if too many jobs in-flight ──
+          // ── Backpressure: check Circle-IR capacity before submitting ──
+          let circleIrAvailable = true;
+          try {
+            const healthRes = await fetch(`${cogniumUrl}/health/jobs`);
+            if (healthRes.ok) {
+              const health = await healthRes.json() as { inflight: number; capacity: number; saturated: boolean };
+              if (health.saturated || health.inflight >= health.capacity * 0.9) {
+                console.log(`[CRON] Phase 2 skipped: Circle-IR saturated (${health.inflight}/${health.capacity})`);
+                circleIrAvailable = false;
+              }
+            }
+          } catch {
+            // If health check fails, proceed with DB-level backpressure
+          }
+
           const maxInflight = parseInt(env.COGNIUM_MAX_INFLIGHT ?? '20', 10);
           const inflightCount = await pool.query(
             `SELECT count(*)::int AS cnt FROM skills WHERE cognium_job_id IS NOT NULL`
           );
-          if (inflightCount.rows[0].cnt >= maxInflight) {
-            console.log(`[CRON] Phase 2 skipped: ${inflightCount.rows[0].cnt} jobs in-flight (max ${maxInflight})`);
+          if (!circleIrAvailable || inflightCount.rows[0].cnt >= maxInflight) {
+            if (circleIrAvailable) console.log(`[CRON] Phase 2 skipped: ${inflightCount.rows[0].cnt} jobs in-flight (max ${maxInflight})`);
           } else {
 
           const fastBatchSize = parseInt(env.COGNIUM_FAST_BATCH_SIZE ?? '10', 10);
@@ -2548,16 +2560,16 @@ export default {
           }
 
           } // end backpressure check
-          } // end Phase 2 (minute % 2 guard)
+          } // end Phase 2
 
           // ── Phase 3: Garbage collect orphaned job state ──────────────────
-          // Clean up skills stuck with cognium_job_id for >2h (KV TTL is 1h,
-          // so these are already expired in KV but orphaned in DB)
+          // Circle-IR retention is 1hr. Clean up DB refs after 55min so we
+          // don't poll jobs that have already been garbage-collected upstream.
           const orphaned = await pool.query(
             `UPDATE skills
              SET cognium_job_id = NULL, cognium_job_submitted_at = NULL
              WHERE cognium_job_id IS NOT NULL
-               AND cognium_job_submitted_at < NOW() - INTERVAL '2 hours'
+               AND cognium_job_submitted_at < NOW() - INTERVAL '55 minutes'
              RETURNING id, slug`
           );
           if (orphaned.rows.length > 0) {

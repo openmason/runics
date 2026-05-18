@@ -11,7 +11,7 @@
 // ══════════════════════════════════════════════════════════════════════════════
 
 import type { Env } from '../types';
-import type { SkillEventMessage } from './types';
+import type { SkillEventMessage, SkillEventType } from './types';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500; // 500ms, 1s, 2s
@@ -31,7 +31,7 @@ export async function triggerNotification(
   reason?: string,
 ): Promise<void> {
   // v5.4: Emit skill event to queue (independent of webhook)
-  await emitSkillEvent(env, skill, status, reason);
+  await emitSkillEvent(env, skill, `skill.${status}`, reason);
 
   // Activepieces webhook (existing behavior)
   const webhookUrl = env.ACTIVEPIECES_WEBHOOK_URL;
@@ -78,10 +78,10 @@ export async function triggerNotification(
   console.error(`[NOTIFY] Webhook failed after ${MAX_RETRIES} attempts for ${skill.id}:`, lastError?.message);
 }
 
-async function emitSkillEvent(
+export async function emitSkillEvent(
   env: Env,
   skill: { id: string; slug: string; version: string },
-  status: 'revoked' | 'vulnerable',
+  type: SkillEventType,
   reason?: string,
 ): Promise<void> {
   if (!env.SKILL_EVENTS) {
@@ -91,7 +91,7 @@ async function emitSkillEvent(
 
   try {
     const event: SkillEventMessage = {
-      type: `skill.${status}`,
+      type,
       skillId: skill.id,
       slug: skill.slug,
       version: skill.version,

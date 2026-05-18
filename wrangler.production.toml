@@ -193,9 +193,11 @@ SYNC_PULSEMCP_ENABLED = "true"
 SYNC_OPENCLAW_ENABLED = "true"
 
 # ── Scan Backpressure ────────────────────────────────────────────────────────
-COGNIUM_FAST_BATCH_SIZE = "25"
+COGNIUM_FAST_BATCH_SIZE = "20"
 COGNIUM_REPO_BATCH_SIZE = "10"
-COGNIUM_MAX_INFLIGHT = "50"
+COGNIUM_MAX_INFLIGHT = "60"
+COGNIUM_MAX_RETRIES = "5"
+COGNIUM_404_TOLERANCE = "5"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Setup Checklist — run these on the cognium account before first deploy
